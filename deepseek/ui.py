@@ -1912,9 +1912,20 @@ def prompt_input(depth: int = None) -> str:
         _depth = depth
 
     if not sys.stdin.isatty():
+        # stdin is a pipe/file (e.g. `curl ... | bash` exec'd us, or the user
+        # ran `dscli < file`). Read what we can; on EOF exit *loudly* so the
+        # user isn't left staring at a shell prompt wondering what happened.
         try:
             return console.input('[bold green]you > [/bold green]').strip()
         except (KeyboardInterrupt, EOFError):
+            console.print()
+            console.print('  [yellow]No interactive terminal attached '
+                          '(stdin reached EOF).[/yellow]')
+            console.print('  [dim]This happens when dscli is launched from a '
+                          'piped script, e.g. curl ... | bash.[/dim]')
+            console.print('  [dim]Run [bold]dscli[/bold] directly in your '
+                          'terminal to start chatting.[/dim]')
+            console.print()
             return '/exit'
 
     fd = sys.stdin.fileno()
@@ -2360,12 +2371,12 @@ ________                                            __
 \______ \   ____   ____ ______  ______ ____   ____ |  | __
  |    |  \_/ __ \_/ __ \\____ \/  ___// __ \_/ __ \|  |/ /
  |    `   \  ___/\  ___/|  |_> >___ \\  ___/\  ___/|    < 
-/_______  /\___  >\___  >   __/____  >\___  >\___  >__|_ \   [bold red]v7.7[/bold red]
+/_______  /\___  >\___  >   __/____  >\___  >\___  >__|_ \   [bold red]v__VER__[/bold red]
         \/     \/     \/|__|       \/     \/     \/     \/[/bold cyan]
 
-[dim]    DeepSeek CLI Agent v7.7[/dim]
+[dim]    DeepSeek CLI Agent v__VER__[/dim]
 [dim]    Developer : Xbibz Official[/dim]
-[dim]    Connectors : Telegram & Discord | Tools: 90+ | Smart Loop[/dim]
+[dim]    Connectors : Telegram & Discord | Tools: __NTOOLS__ | Smart Loop[/dim]
 """
 
 
@@ -2379,7 +2390,20 @@ def show_banner():
     # Skip the banner when dscli is being called recursively (e.g. via agent bash tool)
     if not sys.stdout.isatty() or os.environ.get('DEEPSEEK_NESTED') == '1':
         return
-    console.print(BANNER)
+    # Version and tool count are substituted at render time so the banner can
+    # never drift from the actual build (it used to hardcode "v7.7 / 90+").
+    banner = BANNER
+    try:
+        from .config import CLIENT_VERSION as _v
+        banner = banner.replace('__VER__', _v)
+    except Exception:
+        banner = banner.replace('__VER__', '?')
+    try:
+        from .toolkit import ToolRegistry as _TR
+        banner = banner.replace('__NTOOLS__', str(len(_TR().tools)))
+    except Exception:
+        banner = banner.replace('__NTOOLS__', 'many')
+    console.print(banner)
 
     # ── Update Available notice (driven by registry Gist's latest_version) ──
     try:

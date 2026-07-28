@@ -758,3 +758,146 @@ class TestLoginCommand:
         body = src[i:j]
         assert "/login" in body and "/logout" in body
         assert "interactive_login" in body
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Field report: "dscli exits instantly with no output"
+# (Linux Mint 22.3 / zsh, installed via `curl ... | bash`)
+# ══════════════════════════════════════════════════════════════════════
+
+class TestNonInteractiveStdin:
+    """`curl … | bash` exec'd dscli with the *script text* as stdin. The REPL
+    read EOF on its first prompt, returned '/exit', and quit — printing
+    nothing, because the banner is suppressed on a non-TTY."""
+
+    def test_installer_never_execs_without_a_tty(self):
+        sh = (ROOT / "install.sh").read_text()
+        assert "exec dscli </dev/tty" in sh, \
+            "auto-launch must re-attach the controlling terminal"
+        assert "exec dscli ;;" not in sh, \
+            "bare `exec dscli` inherits the pipe as stdin"
+
+    def test_installer_requires_real_tty_to_autolaunch(self):
+        sh = (ROOT / "install.sh").read_text()
+        assert "[ -e /dev/tty ]" in sh
+        assert "tty -s 0</dev/tty" in sh
+
+    def test_installer_tells_user_how_to_start_when_piped(self):
+        sh = (ROOT / "install.sh").read_text()
+        assert "Run ${R}${B}dscli" in sh
+
+    def test_wrapper_has_no_set_e(self):
+        """`set -e` in the launcher aborted before the CLI's own messages
+        (ban / quota / Ctrl-C) could be shown."""
+        sh = (ROOT / "install.sh").read_text()
+        i = sh.index("Launcher (venv)")
+        j = sh.index("WRAPPER_EOF", i)
+        wrapper = sh[i:j]
+        assert "set -euo pipefail" not in wrapper
+        assert "set -uo pipefail" in wrapper
+
+    def test_wrapper_reattaches_tty(self):
+        sh = (ROOT / "install.sh").read_text()
+        i = sh.index("Launcher (venv)")
+        j = sh.index("WRAPPER_EOF", i)
+        wrapper = sh[i:j]
+        assert "-t 0" in wrapper and "/dev/tty" in wrapper
+
+    def test_eof_exit_is_explained_not_silent(self):
+        """The user must never just get their shell back with no message."""
+        src = (PKG / "ui.py").read_text()
+        i = src.index("def prompt_input(")
+        j = src.index("\ndef ", i + 10)
+        body = src[i:j]
+        assert "stdin reached EOF" in body
+        assert "curl" in body
+
+
+class TestBannerIsNotHardcoded:
+    """Banner claimed 'v7.7' and 'Tools: 90+' on a v7.8 build with 88 tools."""
+
+    def test_banner_template_has_no_literal_version(self):
+        from deepseek.ui import BANNER
+        assert "v7.7" not in BANNER
+        assert "90+" not in BANNER
+        assert "__VER__" in BANNER and "__NTOOLS__" in BANNER
+
+    def test_banner_renders_live_values(self, capsys, monkeypatch):
+        import deepseek.ui as U
+        from deepseek.config import CLIENT_VERSION
+        from deepseek.toolkit import ToolRegistry
+        monkeypatch.setattr(U.sys.stdout, "isatty", lambda: True, raising=False)
+        U.show_banner()
+        out = capsys.readouterr().out
+        assert CLIENT_VERSION in out
+        assert str(len(ToolRegistry().tools)) in out
+        assert "__VER__" not in out and "__NTOOLS__" not in out
+
+
+class TestBackendUsernameSelfHeal:
+    """A record created before sign-in stayed stuck under `user@hostname`
+    because the CLI only pushed a username on first registration."""
+
+    def test_rename_is_pushed_when_backend_disagrees(self, monkeypatch):
+        import deepseek.config as C
+        sent = {}
+
+        class R:
+            def read(self):
+                return json.dumps({
+                    "banned": False, "limit_exceeded": False, "found": True,
+                    "usage": 10, "limit": 500000, "username": "anon@anon",
+                }).encode()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        def fake_urlopen(req, timeout=None):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            if "/api/update" in url:
+                sent["body"] = json.loads(req.data.decode())
+                class Ok:
+                    def __enter__(self): return self
+                    def __exit__(self, *a): return False
+                return Ok()
+            return R()
+
+        monkeypatch.setattr(C, "_resolve_api_url", lambda: ("https://x", None))
+        monkeypatch.setattr(C, "_get_public_ip", lambda: "1.2.3.4")
+        monkeypatch.setattr(C, "resolve_username", lambda force=False: "Bibzzzzz")
+        monkeypatch.setattr(C._urlreq, "urlopen", fake_urlopen)
+        C._last_access_check = 0.0
+        C.enforce_gist(force=True)
+        assert sent.get("body", {}).get("username") == "Bibzzzzz", \
+            "stale backend username was not corrected"
+
+    def test_no_pointless_write_when_names_match(self, monkeypatch):
+        import deepseek.config as C
+        calls = {"update": 0}
+
+        class R:
+            def read(self):
+                return json.dumps({
+                    "banned": False, "limit_exceeded": False, "found": True,
+                    "usage": 1, "limit": 500000, "username": "Bibzzzzz",
+                }).encode()
+
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+
+        def fake_urlopen(req, timeout=None):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            if "/api/update" in url:
+                calls["update"] += 1
+            return R()
+
+        monkeypatch.setattr(C, "_resolve_api_url", lambda: ("https://x", None))
+        monkeypatch.setattr(C, "_get_public_ip", lambda: "1.2.3.4")
+        monkeypatch.setattr(C, "resolve_username", lambda force=False: "Bibzzzzz")
+        monkeypatch.setattr(C._urlreq, "urlopen", fake_urlopen)
+        C._last_access_check = 0.0
+        C.enforce_gist(force=True)
+        assert calls["update"] == 0

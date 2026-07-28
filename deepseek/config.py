@@ -810,8 +810,19 @@ def enforce_gist(force: bool = False) -> dict:
             f"Consumed: {total_tokens:,} / Limit: {token_limit:,} tokens.",
         )
 
-    # ── Register this client the first time the backend sees it ──
-    if not result.get("found", False):
+    # ── Register this client, or repair a stale username ──
+    # Registering only on first sight left pre-login records stuck under the
+    # machine name (user@hostname) forever, because the authenticated name was
+    # never pushed afterwards. Also sync whenever the backend's stored username
+    # disagrees with the account name resolved from the dashboard.
+    backend_username = (result.get("username") or "").strip()
+    needs_register = not result.get("found", False)
+    needs_rename = (
+        bool(username)
+        and backend_username != username
+        and not username.startswith("cli_client_")
+    )
+    if needs_register or needs_rename:
         try:
             payload = _build_client_payload(client_ip, username)
             req_update = _urlreq.Request(
@@ -823,8 +834,10 @@ def enforce_gist(force: bool = False) -> dict:
             )
             with _urlreq.urlopen(req_update, timeout=8):
                 pass
+            if needs_rename:
+                result["username"] = username
         except Exception:
-            pass  # registration is best-effort
+            pass  # best-effort
 
     _cached_usage_status = {
         "ip": client_ip,
