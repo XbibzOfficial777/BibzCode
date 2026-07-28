@@ -8,7 +8,6 @@
 
 import json
 import os
-import sys
 import warnings
 # Monkey-patch warnings.warn to suppress duckduckgo_search renaming RuntimeWarnings
 _orig_warn = warnings.warn
@@ -27,7 +26,6 @@ import re
 import math
 import httpx
 from zoneinfo import ZoneInfo
-from typing import Any
 
 # MCP types for tool schema definitions
 try:
@@ -450,7 +448,6 @@ def tool_get_datetime(args: dict) -> str:
 
     # Use user-specified timezone or auto-detected local
     tz_name = tz_arg if tz_arg else local_tz_name
-    tz_display = tz_name  # For display
 
     try:
         tz = ZoneInfo(tz_name)
@@ -489,8 +486,8 @@ def tool_get_datetime(args: dict) -> str:
             f"ISO 8601: {now.isoformat()}",
             f"Timezone: {tz_name}",
             f"UTC Offset: {now.strftime('%z') or '+0000'}",
-            f"",
-            f"Details:",
+            "",
+            "Details:",
             f"  Week: {iso_week[1]} of {iso_week[0]} (ISO)",
             f"  Day of Year: {day_of_year} of {days_in_year}",
             f"  Days Remaining: {remaining}",
@@ -733,7 +730,6 @@ def tool_get_stock_price(args: dict) -> str:
         # Yahoo Finance via query1 API (free, no key)
         # For crypto like BTC-IDR, use BTC-USD and convert
         lookup_symbol = symbol
-        is_idr = False
 
         # Try to detect Indonesian stock (.JK suffix)
         if not lookup_symbol.endswith(('.JK', '-USD', '-IDR')):
@@ -837,7 +833,6 @@ def tool_get_holidays(args: dict) -> str:
             local = h.get('localName', '')
             fixed = h.get('fixed', True)
             global_h = h.get('global', True)
-            counties = h.get('counties', '')
             typ = h.get('types', [])
 
             flags = []
@@ -845,8 +840,6 @@ def tool_get_holidays(args: dict) -> str:
                 flags.append('movable')
             if not global_h:
                 flags.append('regional')
-
-            flag_str = f" ({', '.join(flags)})" if flags else ''
             lines.append(f"\n  {date} — {name}")
             if local and local != name:
                 lines.append(f"    Local: {local}")
@@ -943,7 +936,7 @@ def tool_get_countdown(args: dict) -> str:
         lines.append(f"  This event was {days_passed} days ago")
         lines.append(f"  Date: {target_date.strftime('%A, %B %d, %Y')}")
     elif diff.days == 0:
-        lines.append(f"  TODAY is the day!")
+        lines.append("  TODAY is the day!")
         lines.append(f"  Date: {target_date.strftime('%A, %B %d, %Y')}")
     else:
         weeks = diff.days // 7
@@ -1077,26 +1070,26 @@ def tool_get_day_info(args: dict) -> str:
     lines = [
         f"Date Info: {target.strftime('%A, %B %d, %Y')}",
         "=" * 45,
-        f"",
-        f"Calendar:",
+        "",
+        "Calendar:",
         f"  Day of Week: {day_names[target.weekday()]}",
         f"  Week Number: {iso[1]} (ISO), {week_number} (US)",
         f"  Day of Year: {day_of_year} of {days_in_year}",
         f"  Quarter: Q{(target.month - 1) // 3 + 1}",
         f"  Season: {season} (Northern Hemisphere)",
-        f"",
-        f"Astrology:",
+        "",
+        "Astrology:",
         f"  Zodiac Sign: {zodiac}",
         f"  Chinese Zodiac: {chinese} ({target.year})",
         f"  Birthstone: {birthstone}",
-        f"",
-        f"Year Info:",
+        "",
+        "Year Info:",
         f"  Leap Year: {'Yes' if cal_mod.isleap(target.year) else 'No'}",
         f"  Century: {(target.year - 1) // 100 + 1}",
     ]
 
     if days_from_now == 0:
-        lines.append(f"\n  ** TODAY **")
+        lines.append("\n  ** TODAY **")
     elif days_from_now > 0:
         lines.append(f"\n  {days_from_now} days from now")
     else:
@@ -1116,7 +1109,7 @@ def tool_get_ip_info(args: dict) -> str:
             return f"IP: {ip.strip()}\n(Geolocation not available)"
 
         lines = [
-            f"Network Information",
+            "Network Information",
             "=" * 40,
             f"  IP Address: {data.get('ip', 'N/A')}",
             f"  City: {data.get('city', 'N/A')}",
@@ -1249,7 +1242,7 @@ def tool_get_qibla(args: dict) -> str:
             f"Qibla & Prayer Times: {area_name}, {country}",
             f"Location: {lat:.4f}, {lon:.4f}",
             "=" * 45,
-            f"",
+            "",
             f"Qibla Direction: {qibla:.1f} degrees ({cardinal})",
         ]
 
@@ -1270,7 +1263,7 @@ def tool_get_qibla(args: dict) -> str:
                     'Maghrib': 'Maghrib',
                     'Isha': 'Isya',
                 }
-                lines.append(f"\nPrayer Times (today):")
+                lines.append("\nPrayer Times (today):")
                 for key, indo in prayer_names.items():
                     if key in timings:
                         time_str = timings[key].split(' ')[0]  # Remove timezone
@@ -1280,7 +1273,7 @@ def tool_get_qibla(args: dict) -> str:
                 if hijri:
                     lines.append(f"\nHijri Date: {hijri.get('date', 'N/A')} {hijri.get('month', {}).get('en', '')} {hijri.get('year', 'N/A')}")
         except Exception:
-            lines.append(f"\n(Prayer times unavailable)")
+            lines.append("\n(Prayer times unavailable)")
 
         return '\n'.join(lines)
 

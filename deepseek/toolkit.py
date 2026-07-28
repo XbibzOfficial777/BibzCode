@@ -30,16 +30,13 @@ import subprocess
 import math
 import random
 import datetime
-import time
 import shutil
 import platform
 import zipfile
-import struct
 import re
 import io
 import tempfile
 import traceback
-from typing import Any
 from pathlib import Path
 
 # Pydantic validation (graceful fallback if not installed)
@@ -72,6 +69,8 @@ class ToolRegistry:
         self.tools: dict[str, dict] = {}
         self._validation_models: dict[str, type] = {}
         self._memory = memory
+        # Tools the user approved for the rest of this session.
+        self._always_allow_tools: set = set()
         self._register_all()
         # Build Pydantic validation models for all registered tools
         if PYDANTIC_AVAILABLE:
@@ -141,16 +140,28 @@ class ToolRegistry:
             'object': dict,
         }
 
+        from typing import Optional as _Optional
+
         fields = {}
         for prop_name, prop_schema in properties.items():
             json_type = prop_schema.get('type', 'string')
             py_type = type_map.get(json_type, str)
             is_required = prop_name in required
-            default = ... if is_required else None
             description = prop_schema.get('description', '')
 
+            if is_required:
+                annotation = py_type
+                default = ...
+            else:
+                # An optional field defaults to None, so its annotation must
+                # actually admit None. Declaring `timeout: int = None` made
+                # Pydantic reject an explicit null that the model is entitled
+                # to send for an omitted argument.
+                annotation = _Optional[py_type]
+                default = None
+
             fields[prop_name] = (
-                py_type,
+                annotation,
                 FieldInfo(default=default, description=description)
             )
 
@@ -187,7 +198,36 @@ class ToolRegistry:
         except Exception as e:
             return args, f"Validation error for {tool_name}: {e}"
 
-    def execute(self, name: str, arguments: dict) -> str:
+    # ══════════════════════════════════════
+    # DANGEROUS-TOOL POLICY (single source of truth)
+    # ══════════════════════════════════════
+    # Any tool that writes, deletes, executes code, installs software, or
+    # drives a browser session must be confirmed by a human. This lives on
+    # the registry — NOT on Agent — so that every caller (main agent,
+    # sub-agents, connectors) is gated identically. Previously the sub-agent
+    # path called handlers directly and bypassed confirmation entirely.
+    DANGEROUS_TOOLS = frozenset({
+        # filesystem mutation
+        'write_file', 'edit_file', 'delete_file',
+        # arbitrary execution
+        'run_shell', 'run_code', 'install_package',
+        # document mutation
+        'create_pdf', 'pdf_edit', 'create_docx', 'edit_docx',
+        'create_xlsx', 'edit_xlsx', 'create_pptx', 'edit_pptx',
+        'create_csv', 'edit_csv', 'todowrite',
+        # browser / remote side effects
+        'browser_download', 'se_execute_js', 'se_upload', 'se_open_gui',
+    })
+
+    def is_dangerous(self, name: str) -> bool:
+        return name in self.DANGEROUS_TOOLS
+
+    def execute(self, name: str, arguments: dict, confirm: bool = True) -> str:
+        """Validate, optionally confirm, then run a tool.
+
+        `confirm=False` is only for callers that already obtained explicit
+        user approval for this exact invocation (the interactive Agent loop).
+        """
         if name not in self.tools:
             return f"[ERROR] Unknown tool '{name}'"
 
@@ -196,6 +236,17 @@ class ToolRegistry:
         if validation_error:
             # Return validation error but don't execute
             return f"[ERROR] {validation_error}"
+
+        # Drop keys Pydantic filled with None for omitted optional params.
+        # Leaving them in makes handlers' `args.get(k, default)` return None
+        # instead of the intended default (e.g. run_shell timeout -> no limit).
+        validated_args = {k: v for k, v in validated_args.items()
+                          if v is not None or k in (arguments or {})}
+
+        if confirm and self.is_dangerous(name):
+            verdict = self._confirm_dangerous(name, validated_args)
+            if verdict == 'reject':
+                return f"[Rejected by user] {name} not executed."
 
         try:
             result = self.tools[name]['handler'](validated_args)
@@ -213,6 +264,35 @@ class ToolRegistry:
             # Full traceback for debugging
             tb = traceback.format_exc()
             return f"[ERROR] {name} failed: {e}\n{tb}"
+
+    def _confirm_dangerous(self, name: str, args: dict) -> str:
+        """Ask the user to approve a dangerous tool.
+
+        Fails CLOSED: if we cannot ask (no TTY — e.g. a Telegram/Discord
+        connector thread or a piped session) the call is rejected rather than
+        silently executed. Session-wide approvals are remembered.
+        """
+        if name in self._always_allow_tools:
+            return 'allow_once'
+
+        # Non-interactive context: refuse instead of auto-running.
+        try:
+            import sys as _sys
+            if not (_sys.stdin.isatty() and _sys.stdout.isatty()):
+                return 'reject'
+        except Exception:
+            return 'reject'
+
+        try:
+            from .ui import confirm_action
+            verb = 'write' if any(x in name for x in ('write', 'edit', 'create')) else 'execute'
+            ans = confirm_action(name, args, verb=verb)
+        except Exception:
+            return 'reject'
+
+        if ans == 'always_allow':
+            self._always_allow_tools.add(name)
+        return ans
 
     def _register_all(self):
         self._register_file_tools()
@@ -232,6 +312,7 @@ class ToolRegistry:
         self._register_browser_tools()
         self._register_selenium_tools()
         self._register_doc_tools()
+        self._register_skill_tools()
         self._register_mcp_client_tools()
         self._register_agent_tools()
 
@@ -1671,7 +1752,7 @@ class ToolRegistry:
                 lines = [l for l in lines if filter_name.lower() in l.lower()]
             if len(lines) > 20:
                 lines = lines[:20]
-                lines.append(f"... (showing 20 of many, use filter to narrow)")
+                lines.append("... (showing 20 of many, use filter to narrow)")
             return '\n'.join(lines) if lines else "No processes found"
         except Exception as e:
             return f"Error: {e}"
@@ -1726,9 +1807,8 @@ class ToolRegistry:
         
         # AST-based safe evaluation for math expressions
         def safe_eval(node):
-            if isinstance(node, ast.Num):  # <number>
-                return node.n
-            elif isinstance(node, ast.Constant):  # Python 3.8+ Constant
+            # ast.Num is deprecated (removed in 3.14); ast.Constant covers it.
+            if isinstance(node, ast.Constant):
                 if isinstance(node.value, (int, float)):
                     return node.value
                 raise ValueError("Only numeric constants allowed")
@@ -3063,7 +3143,7 @@ class ToolRegistry:
         except subprocess.TimeoutExpired:
             return "Error: ffprobe timed out (file too large?)"
         except json.JSONDecodeError:
-            return f"Error: Could not parse ffprobe output"
+            return "Error: Could not parse ffprobe output"
         except Exception as e:
             return f"Video info error: {e}"
 
@@ -3321,7 +3401,7 @@ class ToolRegistry:
                     sources_used.append(f'DuckDuckGo ({len(ddgs_results)})')
             except Exception as e:
                 all_results.append({
-                    'title': f'[DuckDuckGo Error]',
+                    'title': '[DuckDuckGo Error]',
                     'url': '',
                     'body': str(e),
                     'source': 'DuckDuckGo'
@@ -3436,7 +3516,7 @@ class ToolRegistry:
                     result = f"Models from config ({len(filtered)} found):\n\n"
                     for i, m in enumerate(filtered[:max_results], 1):
                         result += f"  {i}. {m}\n"
-                    result += f"\n  [Source: config (API fetch returned empty)]"
+                    result += "\n  [Source: config (API fetch returned empty)]"
                     return result
                 return f"No models found for '{query}'. Try /live_models to see all available models."
 
@@ -3460,7 +3540,7 @@ class ToolRegistry:
             result = f"Live Models from {provider_name} ({len(filtered)} shown"
             if query:
                 result += f", filtered by '{query}'"
-            result += f"):\n\n"
+            result += "):\n\n"
 
             for i, m in enumerate(filtered, 1):
                 mid = m.get('id', '')
@@ -3593,14 +3673,14 @@ class ToolRegistry:
                 f"Canonical: {result.get('canonical', '')}",
             ]
             if result.get('meta'):
-                parts.append(f"\n--- Meta ---")
+                parts.append("\n--- Meta ---")
                 for k, v in list(result['meta'].items())[:10]:
                     parts.append(f"  {k}: {v}")
             if result.get('headings'):
                 parts.append(f"\n--- Headings ({len(result['headings'])}) ---")
                 for h in result['headings'][:20]:
                     parts.append(f"  {h['level']}: {h['text']}")
-            parts.append(f"\n--- Stats ---")
+            parts.append("\n--- Stats ---")
             parts.append(f"  Links: {result['links_count']} across {len(result.get('links_domains', []))} domains")
             parts.append(f"  Forms: {result['forms_count']}")
             parts.append(f"  Images: {result['images_count']}")
@@ -3612,11 +3692,11 @@ class ToolRegistry:
                     text = text[:5000] + '\n... (truncated)'
                 parts.append(f"\n--- Visible Text ---\n{text}")
             if result.get('links'):
-                parts.append(f"\n--- Top Links ---")
+                parts.append("\n--- Top Links ---")
                 for link in result['links'][:25]:
                     parts.append(f"  {link['text'][:60]} -> {link['url']}")
             if result.get('forms'):
-                parts.append(f"\n--- Forms ---")
+                parts.append("\n--- Forms ---")
                 for i, form in enumerate(result['forms'][:5], 1):
                     parts.append(f"  {i}. {form['method']} -> {form['action']}")
                     for field in form['fields'][:8]:
@@ -3773,10 +3853,48 @@ class ToolRegistry:
                     '\n'
                     'FIX: Use browser_navigate, browser_snapshot, and other browser_* tools instead.')
 
+    def _register_skill_tools(self):
+        """Skill tools. Registered unconditionally.
+
+        These were previously nested inside _register_selenium_tools(),
+        which returns early when Selenium is absent — silently dropping
+        both skill tools even though they have nothing to do with a
+        browser.
+        """
+        self.register(
+            'list_skills',
+            'List all installed agent skills with descriptions.',
+            {
+                'type': 'object',
+                'properties': {},
+                'required': [],
+            },
+            lambda args: self._list_skills()
+        )
+
+        self.register(
+            'read_skill',
+            'Read the content of an installed skill (SKILL.md). Use list_skills first to see available skills.',
+            {
+                'type': 'object',
+                'properties': {
+                    'name': {'type': 'string', 'description': 'Skill name (e.g. "find-skills", "pdf")'},
+                },
+                'required': ['name'],
+            },
+            lambda args: self._read_skill(args['name'])
+        )
+
+
     def _register_selenium_tools(self):
-        # Register Selenium tool entrypoints lazily.
-        # The heavy selenium_browser module is imported only when a selenium tool
-        # is actually called, which keeps normal CLI startup lighter.
+        # Check availability (don't register if missing)
+        try:
+            from .selenium_browser import SELENIUM_AVAILABLE
+            if not SELENIUM_AVAILABLE:
+                return
+        except ImportError:
+            return
+
         self.register(
             'se_navigate',
             'SELENIUM BROWSER: Open a URL in a real Firefox browser. '
@@ -4244,31 +4362,6 @@ class ToolRegistry:
             lambda args: self._se_get_session().close_tab(tab_index=args.get('tab_index', -1))
         )
 
-        # ── Skill Management Tools ──
-        self.register(
-            'list_skills',
-            'List all installed agent skills with descriptions.',
-            {
-                'type': 'object',
-                'properties': {},
-                'required': [],
-            },
-            lambda args: self._list_skills()
-        )
-
-        self.register(
-            'read_skill',
-            'Read the content of an installed skill (SKILL.md). Use list_skills first to see available skills.',
-            {
-                'type': 'object',
-                'properties': {
-                    'name': {'type': 'string', 'description': 'Skill name (e.g. "find-skills", "pdf")'},
-                },
-                'required': ['name'],
-            },
-            lambda args: self._read_skill(args['name'])
-        )
-
     # ── Selenium Tool Handler Implementations ───────────────
 
     def _se_get_session(self):
@@ -4480,7 +4573,7 @@ class ToolRegistry:
                 lines.append('[2FA] Two-factor authentication required')
                 lines.append('Call se_google_login again with otp_code parameter')
             else:
-                lines.append(f'[FAILED] Google login failed')
+                lines.append('[FAILED] Google login failed')
                 if result.get('message'):
                     lines.append(f'Reason: {result["message"]}')
                 if result.get('error'):
@@ -4537,7 +4630,7 @@ class ToolRegistry:
             if result.get('vnc_status'):
                 lines.append(f'VNC: {result["vnc_status"]}')
             if result.get('success'):
-                lines.append(f'Status: Browser opened')
+                lines.append('Status: Browser opened')
             if result.get('error'):
                 lines.append(f'Error: {result["error"]}')
             if result.get('instructions'):

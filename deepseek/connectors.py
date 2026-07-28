@@ -11,12 +11,9 @@
 
 import os
 import re
-import sys
 import time
 import json
 import threading
-import traceback
-from datetime import datetime
 
 # Telegram support — uses httpx (same HTTP library used by providers.py)
 # No separate 'requests' dependency needed
@@ -217,16 +214,34 @@ class TelegramBot:
         return text
 
     def _is_allowed(self, user_id: int) -> bool:
-        """Check if a user is allowed to interact with the bot."""
-        if self.allowed_users is None:
-            return True  # Allow all
-        return user_id in self.allowed_users
+        """Check if a user is allowed to interact with the bot.
+
+        SECURITY: deny by default. This bridge reaches agent.chat(), which can
+        run shell commands, so an empty whitelist previously meant *anyone*
+        who found the bot got remote code execution. An explicit whitelist is
+        now required; set it via /telegram or config.yaml.
+        """
+        if not self.allowed_users:
+            return False
+        try:
+            return int(user_id) in {int(u) for u in self.allowed_users}
+        except (TypeError, ValueError):
+            return False
 
     def start(self):
         """Start the bot in a background thread."""
         if self._running:
             return
         if not self.token:
+            return
+
+        # Refuse to expose an agent with shell access to the whole internet.
+        if not self.allowed_users:
+            self._last_error = (
+                'Refusing to start: no user whitelist configured. '
+                'This bot can execute commands, so an allow-list is mandatory. '
+                'Set it with /telegram (Set allowed users).'
+            )
             return
 
         # Validate token first
@@ -567,9 +582,10 @@ class DiscordBot:
 
     def _is_allowed(self, user_id: str) -> bool:
         """Check if a user is allowed."""
-        if self.allowed_users is None:
-            return True
-        return user_id in self.allowed_users
+        # SECURITY: deny by default — see TelegramBot._is_allowed.
+        if not self.allowed_users:
+            return False
+        return str(user_id) in {str(u) for u in self.allowed_users}
 
     def start(self):
         """Start the Discord bot in a background thread."""
@@ -578,6 +594,12 @@ class DiscordBot:
         if not self.token:
             return
         if not self.channel_id:
+            return
+        if not self.allowed_users:
+            self._last_error = (
+                'Refusing to start: no user whitelist configured. '
+                'Set it with /discord (Set allowed users).'
+            )
             return
 
         ok, info = self.validate_token()

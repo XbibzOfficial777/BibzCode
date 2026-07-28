@@ -1,14 +1,14 @@
 # DeepSeek CLI v7.7 — Multi-Agent System
 # Agent delegation, specialized profiles, and concurrent execution
 
-from __future__ import annotations
-
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .config import cfg
 from .memory import Memory
+from .toolkit import ToolRegistry
+from .providers import create_provider
 
 
 # ══════════════════════════════════════
@@ -115,7 +115,6 @@ class AgentWorker:
         pid = provider_id or cfg.active_provider
         provider_config = cfg.get_provider_config(pid)
         api_key = cfg.get_api_key(pid)
-        from .providers import create_provider
         self.provider = create_provider(pid, provider_config, api_key)
         self.model = model or cfg.get_provider_model(pid)
 
@@ -264,10 +263,10 @@ class MultiAgentManager:
         worker = AgentWorker(profile_id, task, tools, provider_id, model)
         self.history.append({'profile': profile_id, 'task': task, 'worker': worker})
 
-        console.print(f"\n[bold yellow]┌── Sub-agent delegation ──────────────────────────[/bold yellow]")
+        console.print("\n[bold yellow]┌── Sub-agent delegation ──────────────────────────[/bold yellow]")
         console.print(f"[bold yellow]│[/bold yellow] Profile: [cyan]{profile_id}[/cyan]")
         console.print(f"[bold yellow]│[/bold yellow] Task: [dim]{task}[/dim]")
-        console.print(f"[bold yellow]└──────────────────────────────────────────────────[/bold yellow]")
+        console.print("[bold yellow]└──────────────────────────────────────────────────[/bold yellow]")
         console.print("Choose action:")
         console.print("  [1] View Progress (default)")
         console.print("  [0] Run in Background (detach)")
@@ -315,7 +314,7 @@ class MultiAgentManager:
         }
 
         if choice == '0':
-            console.print(f"\n[bold green][INFO] Sub-agent delegated and running in background.[/bold green]")
+            console.print("\n[bold green][INFO] Sub-agent delegated and running in background.[/bold green]")
             return f"[INFO] Agent {profile_id} delegated and running in background."
 
         # Choice was 1 (View Progress)

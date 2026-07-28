@@ -13,13 +13,11 @@
 
 import os
 import sys
-import json
 import asyncio
 import logging
 import threading
-import subprocess
 from contextlib import contextmanager
-from typing import Any, Optional
+from typing import Optional
 
 
 @contextmanager

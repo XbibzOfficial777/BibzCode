@@ -24,10 +24,9 @@ from datetime import datetime
 from enum import Enum
 from rich.console import Console
 import select as _select
-import tty
 import termios
 
-from .config import MAX_TOKENS, TEMPERATURE, MAX_TOOL_ROUNDS
+from .config import MAX_TOOL_ROUNDS
 SMART_MAX_ROUNDS = MAX_TOOL_ROUNDS
 from .providers import BaseProvider
 from .memory import Memory
@@ -433,7 +432,6 @@ def parse_text_tool_calls(content: str, available_tools: dict) -> list:
         tool_name = m.group(1)
         if tool_name not in available_tools:
             continue
-        start = m.start()
         brace_count = 1
         i = m.end(2)  # position after the '{'
         while i < len(cleaned) and brace_count > 0:
@@ -445,7 +443,9 @@ def parse_text_tool_calls(content: str, available_tools: dict) -> list:
                 break
             i += 1
         if brace_count == 0 and i < len(cleaned) and cleaned[i] == ')':
-            json_str = cleaned[m.end(2)-1:i+1]
+            # Slice must stop AT the ')' — including it made json.loads fail
+            # with "Extra data", so this whole pattern never matched before.
+            json_str = cleaned[m.end(2)-1:i]
             try:
                 args = json.loads(json_str)
                 tool_calls.append({
@@ -516,6 +516,10 @@ class Agent:
         self._interrupted = False
         self._interrupt_monitor = None
         self._interrupt_monitor_running = False
+        # Timestamp of the last lone ESC seen by the fallback detector.
+        # Must exist before first use or _check_interrupt() raises
+        # AttributeError (silently swallowed, disabling the fallback).
+        self._interrupt_last_time = 0.0
         self._always_allow_tools = set()  # Tools user auto-approved this session
         self.created_files = []  # Files created during last chat() call
         
@@ -636,7 +640,7 @@ class Agent:
                 if hasattr(self.provider, 'validate_key'):
                     ok, msg = self.provider.validate_key()
                     if ok:
-                        console.print(f'  [bold green]\u2713 Reconnected[/bold green]')
+                        console.print('  [bold green]\u2713 Reconnected[/bold green]')
                         return True
             except Exception:
                 pass
@@ -767,9 +771,17 @@ class Agent:
         Returns {'content': str, 'tool_rounds': int, 'error': str|None,
                  'stopped_by': str|None, 'metrics': dict}
         """
-        from .config import enforce_gist
-        enforce_gist()
-        
+        # Re-validate access. enforce_gist() is TTL-cached and fail-open, so a
+        # network blip cannot kill an in-flight conversation. A SystemExit here
+        # is deliberate (ban / quota) and must propagate.
+        try:
+            from .config import enforce_gist
+            enforce_gist()
+        except SystemExit:
+            raise
+        except Exception:
+            pass
+
         try:
             res = self._chat_impl(user_message)
             return res
@@ -812,7 +824,7 @@ class Agent:
                     self.memory.active_plan = plan
                     console.print("\n  [bold cyan]Plan generated:[/bold cyan]")
                     for idx, step in enumerate(self.active_plan.steps):
-                        priority = f" [high]" if step.priority == 'high' else ""
+                        priority = " [high]" if step.priority == 'high' else ""
                         tool_hint = f" (tool: {step.tool_hint})" if step.tool_hint else ""
                         console.print(f"    [dim]{idx+1}.[/dim] [ ] {step.description}{tool_hint}{priority}")
                     console.print()
@@ -891,7 +903,7 @@ class Agent:
                 ):
                     # ── DOUBLE-ESC INTERRUPT CHECK ──
                     if self._check_interrupt():
-                        console.print(f'\n  [bold yellow]  [INTERRUPTED] Agent stopped by user (double-ESC)[/bold yellow]')
+                        console.print('\n  [bold yellow]  [INTERRUPTED] Agent stopped by user (double-ESC)[/bold yellow]')
                         self.renderer.show_done()
                         latency = time.time() - start_time
                         self.metrics.record_turn({
@@ -971,7 +983,7 @@ class Agent:
             # Retry round after successful reconnection — don't fall through
             # to empty-response handling with no streamed content.
             if needs_retry:
-                console.print(f'  [dim]Retrying request after reconnection...[/dim]')
+                console.print('  [dim]Retrying request after reconnection...[/dim]')
                 continue
 
             if has_error:
@@ -1021,14 +1033,14 @@ class Agent:
                     # Model sent reasoning-only — display thinking as the actual response
                     display_content = thinking_text.strip()
                     self.renderer.show_thinking_as_content(thinking_text)
-                    console.print(f'  [dim yellow](Reasoning-only response — thinking shown as answer)[/dim yellow]')
+                    console.print('  [dim yellow](Reasoning-only response — thinking shown as answer)[/dim yellow]')
                     console.print()
                 elif not full_content.strip():
                     # Model returned completely empty — this is a real bug scenario
                     display_content = '(No response received from model. Try switching provider/model with /provider or /model)'
                     self.renderer.show_done()
-                    console.print(f'  [bold yellow]Warning: Model returned an empty response![/bold yellow]')
-                    console.print(f'  [dim]Possible fixes: Switch model (/model), switch provider (/provider), or check your API key (/key)[/dim]')
+                    console.print('  [bold yellow]Warning: Model returned an empty response![/bold yellow]')
+                    console.print('  [dim]Possible fixes: Switch model (/model), switch provider (/provider), or check your API key (/key)[/dim]')
                     console.print()
                 else:
                     # v7.2: Render final response as Rich Markdown (replaces raw streamed text)
@@ -1058,7 +1070,7 @@ class Agent:
 
             # ── DOUBLE-ESC INTERRUPT CHECK before tool execution ──
             if self._check_interrupt():
-                console.print(f'\n  [bold yellow]  [INTERRUPTED] Agent stopped by user (double-ESC)[/bold yellow]')
+                console.print('\n  [bold yellow]  [INTERRUPTED] Agent stopped by user (double-ESC)[/bold yellow]')
                 self.renderer.show_done()
                 latency = time.time() - start_time
                 self.metrics.record_turn({
@@ -1131,13 +1143,9 @@ class Agent:
                     continue
 
                 # ── User confirmation for dangerous tools ──
-                _dangerous_tools = (
-                    'write_file', 'edit_file', 'run_shell', 'run_code',
-                    'create_pdf', 'create_docx', 'edit_docx', 'create_xlsx',
-                    'edit_xlsx', 'create_pptx', 'edit_pptx', 'create_csv',
-                    'edit_csv', 'todowrite'
-                )
-                if tool_name in _dangerous_tools and tool_name not in self._always_allow_tools:
+                # The authoritative list lives on the registry so that every
+                # execution path (agent, sub-agent, connector) shares it.
+                if self.tools.is_dangerous(tool_name) and tool_name not in self._always_allow_tools:
                     # Pause the tool spinner animation so it doesn't overwrite the prompt
                     self.renderer.pause_tool_spinner()
                     
@@ -1158,13 +1166,19 @@ class Agent:
                         continue
                     elif ans == 'always_allow':
                         self._always_allow_tools.add(tool_name)
+                        self.tools._always_allow_tools.add(tool_name)
                     
                     # Resume the tool spinner animation for actual execution
                     self.renderer.resume_tool_spinner()
 
-                handler = self.tools.tools[tool_name]['handler']
+                # Go through ToolRegistry.execute() so argument validation and
+                # None-stripping apply here too. Confirmation already happened
+                # above (with the richer inline UI), hence confirm=False.
+                def _run_validated(_a, _n=tool_name):
+                    return self.tools.execute(_n, _a, confirm=False)
+
                 try:
-                    result = safe_execute(handler, args,
+                    result = safe_execute(_run_validated, args,
                                           timeout=TOOL_TIMEOUT_DEFAULT,
                                           tool_name=tool_name)
                 except Exception as e:
@@ -1199,9 +1213,12 @@ class Agent:
                 self.memory.add_tool_result(tc_id, tool_name, result)
 
                 # Track created files for connector auto-send
-                if tool_name == 'write_file' and result.startswith('Written '):
+                # write_file returns "Written ..." for a new file but "[DIFF]..."
+                # when overwriting, so matching only "Written " silently dropped
+                # every overwritten file from connector auto-send.
+                if tool_name == 'write_file' and not result.startswith('[ERROR]'):
                     fpath = args.get('path', '')
-                    if fpath:
+                    if fpath and fpath not in self.created_files:
                         self.created_files.append(fpath)
 
                 _tool_call_history.append((tool_name, raw_args))
@@ -1210,7 +1227,7 @@ class Agent:
             if len(_tool_call_history) >= 4:
                 recent = _tool_call_history[-4:]
                 if all(c == recent[0] for c in recent):
-                    console.print(f'\n  [bold yellow]  [ANTI-STUCK] Same tool call repeated 4 times. Forcing stop.[/bold yellow]')
+                    console.print('\n  [bold yellow]  [ANTI-STUCK] Same tool call repeated 4 times. Forcing stop.[/bold yellow]')
                     stopped_by = 'anti_stuck'
                     break
 
@@ -1222,26 +1239,38 @@ class Agent:
                 # Brief pause so the spinner is visible to the user
                 time.sleep(0.15)
 
-        # ── MAX ROUNDS REACHED ──
-        console.print(f'\n  [bold yellow]  [MAX ROUNDS] Reached {SMART_MAX_ROUNDS} tool rounds — forcing stop[/bold yellow]')
-        self.memory.add_assistant(full_content + "\n\n[System: Stopped — max tool rounds reached]")
+        # ── LOOP ENDED WITHOUT A FINAL ANSWER ──
+        # Reachable either because anti-stuck broke the loop, or because a
+        # positive SMART_MAX_ROUNDS cap was hit. Report the real reason
+        # instead of always claiming "max rounds" (SMART_MAX_ROUNDS is 0 =
+        # unlimited by default, which made the old message nonsense).
+        if stopped_by == 'anti_stuck':
+            console.print('\n  [bold yellow]  [ANTI-STUCK] Stopped — the same tool call repeated with no progress.[/bold yellow]')
+            _note = "[System: Stopped — repeated tool call detected]"
+            _err = 'Anti-stuck triggered'
+        else:
+            stopped_by = 'max_rounds'
+            console.print(f'\n  [bold yellow]  [MAX ROUNDS] Reached {SMART_MAX_ROUNDS} tool rounds — forcing stop[/bold yellow]')
+            _note = "[System: Stopped — max tool rounds reached]"
+            _err = 'Max tool rounds reached'
+        self.memory.add_assistant((full_content or '') + "\n\n" + _note)
         self.renderer.show_done()
         latency = time.time() - start_time
         self.metrics.record_turn({
             'user_message': user_message[:200],
-            'round': SMART_MAX_ROUNDS,
+            'round': tool_rounds,
             'tool_rounds': tool_rounds,
             'tool_calls': round_tool_count,
             'errors': total_errors,
             'tools_used': tools_used[-10:],
             'latency': round(latency, 2),
-            'stopped_by': 'max_rounds',
-            'content_preview': full_content[:200],
+            'stopped_by': stopped_by,
+            'content_preview': (full_content or '')[:200],
         })
         self._cleanup_plan(success=False)
         self._stop_interrupt_monitor()
         return {'content': full_content, 'tool_rounds': tool_rounds,
-                'error': 'Max tool rounds reached', 'stopped_by': 'max_rounds',
+                'error': _err, 'stopped_by': stopped_by,
                 'metrics': self.metrics.get_summary()}
 
     def set_model(self, model: str):

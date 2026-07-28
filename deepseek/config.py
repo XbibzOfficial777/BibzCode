@@ -12,11 +12,17 @@ from pathlib import Path
 CONFIG_DIR = Path.home() / '.deepseek-cli'
 CONFIG_FILE = CONFIG_DIR / 'config.yaml'
 LEGACY_KEY_FILE = Path.home() / '.deepseek_api_key'
-CLIENT_VERSION = "7.7"
+CLIENT_VERSION = "7.8"
 
 # Default Gist ID — embedded so every install auto-connects to dashboard backend
 # The Gist is public, no secret. PAT stays optional (env/config only, NOT in code).
 _DEFAULT_GIST_ID = "55a91f3ee47f659d21a58a80826ca827"
+
+# Public web dashboard. Account credentials (username / email / password) are
+# managed exclusively there; the CLI is a read-only mirror of that identity.
+DASHBOARD_URL = os.environ.get(
+    "DEEPSEEK_DASHBOARD_URL", "https://deepseek-dash.bibzflow.workers.dev"
+)
 
 # ══════════════════════════════════════
 # PROVIDER DEFINITIONS
@@ -491,296 +497,377 @@ def get_update_info() -> dict:
 
     Returns {} when up to date or not yet checked, or {'latest': <ver>,
     'current': <ver>} when a newer version is available."""
-    global _update_info
     return _update_info or {}
 
 
-def enforce_gist():
-    """Fetches resolved Worker API and checks if the current public IP is banned or limited."""
-    import os
-    import sys
-    import urllib.request
-    import urllib.error
-    import json
-    import getpass
-    import socket
+# ══════════════════════════════════════════════════════════════════════════
+# BACKEND SYNC LAYER (rewritten)
+#
+# Design goals (fixes K-1, S-x from the audit):
+#   1. NEVER kill the CLI because of a network/backend problem. The only
+#      hard-stops allowed are deliberate administrative decisions that the
+#      server explicitly asserted: banned == True or limit_exceeded == True.
+#   2. Do not hammer the backend. enforce_gist() is called once per process
+#      by __main__, and Agent.chat() only re-validates after a TTL.
+#   3. Be the single source of truth for the effective username, which is
+#      owned by the web dashboard (Firebase RTDB) — see resolve_username().
+# ══════════════════════════════════════════════════════════════════════════
 
-    # 1. Read Registry Gist ID from environment variables, config file, or built-in default
-    registry_gist_id = os.environ.get("DEEPSEEK_GIST_ID", "") or cfg.config.get("gist_id", "") or _DEFAULT_GIST_ID
+import json as _json
+import urllib.request as _urlreq
+import getpass as _getpass
+import threading as _threading
+import time as _time
 
-    # 2. Get public IP address
-    # print("\033[93m[*] Checking network permissions against Gist Database...\033[0m")
-    client_ip = "127.0.0.1"
+# How long a successful permission check stays valid before we re-check.
+ACCESS_CHECK_TTL = 300.0          # seconds (5 min)
+# How long a resolved username stays cached before we re-read RTDB.
+USERNAME_CACHE_TTL = 30.0         # seconds
+
+_last_access_check = 0.0
+_access_lock = _threading.Lock()
+_offline_mode = False             # True once we fail to reach the backend
+
+# Username cache: (value, fetched_at)
+_username_cache = (None, 0.0)
+_username_lock = _threading.Lock()
+
+DEFAULT_FIREBASE_DB_URL = (
+    "https://xbibzstorage-default-rtdb.asia-southeast1.firebasedatabase.app"
+)
+
+
+def _firebase_db_url() -> str:
+    return os.environ.get("DEEPSEEK_FIREBASE_DB_URL", DEFAULT_FIREBASE_DB_URL).rstrip("/")
+
+
+def _auth_file_path():
+    return Path.home() / ".deepseek-cli" / "auth.json"
+
+
+def _load_auth_session() -> dict:
+    """Read the locally saved Firebase session (may be empty)."""
     try:
-        req = urllib.request.Request("https://api.ipify.org?format=json", headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=5) as response:
-            client_ip = json.loads(response.read().decode()).get("ip", "127.0.0.1")
+        p = _auth_file_path()
+        if p.exists():
+            with open(p) as f:
+                return _json.load(f) or {}
     except Exception:
         pass
+    return {}
 
-    # 3. Fetch registry to find Cloudflare Worker URL
-    api_url = None
+
+def _local_fallback_username() -> str:
+    """Last-resort identity when the user is not signed in."""
+    try:
+        return f"{_getpass.getuser()}@{socket.gethostname()}"
+    except Exception:
+        return "unknown-client"
+
+
+def is_offline() -> bool:
+    """True when the last backend interaction failed (informational only)."""
+    return _offline_mode
+
+
+# ── Username: the web dashboard owns it ────────────────────────────────────
+
+def resolve_username(force: bool = False) -> str:
+    """Return the effective username for this client.
+
+    Authoritative order:
+        1. Firebase RTDB  dscliUsers/<uid>/username   <- set by web dashboard
+        2. username cached in the local auth.json session
+        3. user@hostname
+
+    The RTDB value is the single source of truth so that renaming the account
+    on the web dashboard propagates to the CLI. Result is cached for
+    USERNAME_CACHE_TTL to keep this cheap enough to call on every turn.
+    """
+    global _username_cache
+
+    with _username_lock:
+        cached, fetched_at = _username_cache
+        if not force and cached and (_time.time() - fetched_at) < USERNAME_CACHE_TTL:
+            return cached
+
+    sess = _load_auth_session()
+    uid = sess.get("uid") or sess.get("user_id") or ""
+    local_name = sess.get("username") or ""
+
+    remote_name = ""
+    if uid:
+        try:
+            url = f"{_firebase_db_url()}/{'dscliUsers'}/{uid}/username.json"
+            token = sess.get("id_token") or ""
+            if token:
+                url += f"?auth={token}"
+            req = _urlreq.Request(url, headers={"User-Agent": "deepseek-cli/sync"})
+            with _urlreq.urlopen(req, timeout=5) as resp:
+                raw = resp.read().decode().strip()
+            if raw and raw != "null":
+                remote_name = _json.loads(raw) if raw.startswith('"') else raw.strip('"')
+                if not isinstance(remote_name, str):
+                    remote_name = ""
+        except Exception:
+            # Network/permission problem: fall back, never raise.
+            remote_name = ""
+
+    name = (remote_name or local_name or _local_fallback_username()).strip()
+
+    # Keep auth.json in step so the welcome banner and offline runs agree.
+    if remote_name and remote_name != local_name and sess:
+        try:
+            sess["username"] = remote_name
+            p = _auth_file_path()
+            p.parent.mkdir(parents=True, exist_ok=True)
+            with open(p, "w") as f:
+                _json.dump(sess, f)
+            os.chmod(p, 0o600)
+        except Exception:
+            pass
+
+    with _username_lock:
+        _username_cache = (name, _time.time())
+    return name
+
+
+def invalidate_username_cache():
+    """Force the next resolve_username() to hit RTDB again."""
+    global _username_cache
+    with _username_lock:
+        _username_cache = (None, 0.0)
+
+
+# ── Registry / Worker resolution ───────────────────────────────────────────
+
+def _resolve_api_url() -> tuple:
+    """Resolve the Worker base URL from the registry Gist.
+
+    Returns (api_url or None, latest_version or None). Never raises.
+    """
+    registry_gist_id = (os.environ.get("DEEPSEEK_GIST_ID", "")
+                        or cfg.config.get("gist_id", "")
+                        or _DEFAULT_GIST_ID)
     try:
         url = f"https://api.github.com/gists/{registry_gist_id}"
-        headers = {"Accept": "application/vnd.github.v3+json"}
-        gist_pat = os.environ.get("DEEPSEEK_GIST_PAT", "") or cfg.config.get("gist_pat", "")
+        headers = {"Accept": "application/vnd.github.v3+json",
+                   "User-Agent": "deepseek-cli/sync"}
+        gist_pat = (os.environ.get("DEEPSEEK_GIST_PAT", "")
+                    or cfg.config.get("gist_pat", ""))
         if gist_pat:
             headers["Authorization"] = f"token {gist_pat}"
+        req = _urlreq.Request(url, headers=headers)
+        with _urlreq.urlopen(req, timeout=8) as response:
+            gist_content = _json.loads(response.read().decode())
+        file_data = gist_content.get("files", {}).get("endpoint.json", {})
+        if not file_data:
+            return None, None
+        payload = _json.loads(file_data["content"])
+        return payload.get("api_url"), payload.get("latest_version")
+    except Exception:
+        return None, None
 
-        req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=8) as response:
-            gist_content = json.loads(response.read().decode())
-            file_data = gist_content.get("files", {}).get("endpoint.json", {})
-            if not file_data:
-                print("\033[91mError: Registry endpoint.json not found in registry Gist.\033[0m", file=sys.stderr)
-                sys.exit(1)
-            registry_payload = json.loads(file_data["content"])
-            api_url = registry_payload.get("api_url")
-            latest_version = registry_payload.get("latest_version")
-            # Record update availability so the banner (shown AFTER this check)
-            # can render "(Update Available vX.Y)". Printing here would scroll
-            # above the big ASCII banner and effectively be invisible. The value
-            # comes entirely from the registry Gist, so changing it there updates
-            # every client automatically — no manual edits needed.
-            global _update_info
-            if latest_version and is_newer_version(latest_version, CLIENT_VERSION):
-                _update_info = {"latest": str(latest_version).strip().lstrip("vV"),
-                                "current": CLIENT_VERSION}
-            else:
-                _update_info = {}
-    except Exception as e:
-        print(f"\033[91mFailed to resolve dashboard backend: {e}\033[0m", file=sys.stderr)
-        sys.exit(1)
+
+def _get_public_ip() -> str:
+    try:
+        req = _urlreq.Request("https://api.ipify.org?format=json",
+                              headers={"User-Agent": "deepseek-cli/sync"})
+        with _urlreq.urlopen(req, timeout=5) as response:
+            return _json.loads(response.read().decode()).get("ip", "127.0.0.1")
+    except Exception:
+        return "127.0.0.1"
+
+
+def _print_block(lines, color="1;31"):
+    bar = "█" * 50
+    print(f"\n\033[{color}m{bar}\033[0m", file=sys.stderr)
+    for ln in lines:
+        print(f"\033[{color}m{ln}\033[0m", file=sys.stderr)
+    print(f"\033[{color}m{bar}\033[0m\n", file=sys.stderr)
+
+
+def _deny_and_exit(kind: str, detail: str = ""):
+    """Only called for an explicit administrative denial from the server."""
+    if kind == "banned":
+        _print_block([
+            "ACCESS DENIED! This account/IP has been BANNED.",
+            "-" * 50,
+            "To appeal, contact @XbibzOfficial on Telegram:",
+            "  -> https://t.me/XbibzOfficial",
+        ])
+    else:
+        _print_block([
+            "ACCESS DENIED! Token limit has been exceeded.",
+            detail,
+            "-" * 50,
+            "To request a limit increase, contact @XbibzOfficial:",
+            "  -> https://t.me/XbibzOfficial",
+        ])
+    sys.exit(1)
+
+
+def _build_client_payload(client_ip: str, username: str,
+                          input_tokens: int = 0, output_tokens: int = 0,
+                          last_tool: str = "initialization") -> dict:
+    try:
+        hostname = socket.gethostname()
+    except Exception:
+        hostname = "unknown"
+    sess = _load_auth_session()
+    payload = {
+        "ip": client_ip,
+        "username": username,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "last_tool": last_tool,
+        "status": "online",
+        "version": CLIENT_VERSION,
+        "hostname": hostname,
+        "platform": sys.platform,
+        "arch": platform.machine(),
+        "os_release": platform.release(),
+        "device_name": username,
+    }
+    # Bind telemetry to the authenticated account when available so the
+    # backend can attribute usage to a uid instead of trusting the IP alone.
+    uid = sess.get("uid") or ""
+    if uid:
+        payload["uid"] = uid
+    token = sess.get("id_token") or ""
+    if token:
+        payload["id_token"] = token
+    return payload
+
+
+def enforce_gist(force: bool = False) -> dict:
+    """Verify access permissions with the backend.
+
+    Fail-OPEN on any infrastructure problem: if the registry, the Worker or
+    the network is unavailable we log a single warning and let the user keep
+    working. We only ever exit for an explicit `banned` / `limit_exceeded`
+    verdict returned by the server.
+
+    Returns the cached status dict (possibly empty when offline).
+    """
+    global _last_access_check, _cached_usage_status, _update_info, _offline_mode
+
+    now = _time.time()
+    with _access_lock:
+        if (not force and _last_access_check
+                and (now - _last_access_check) < ACCESS_CHECK_TTL):
+            return _cached_usage_status or {}
+
+    api_url, latest_version = _resolve_api_url()
+
+    if latest_version and is_newer_version(latest_version, CLIENT_VERSION):
+        _update_info = {"latest": str(latest_version).strip().lstrip("vV"),
+                        "current": CLIENT_VERSION}
+    elif latest_version:
+        _update_info = {}
 
     if not api_url:
-        print("\033[91mError: api_url not defined in registry Gist.\033[0m", file=sys.stderr)
-        sys.exit(1)
+        if not _offline_mode:
+            print("\033[93m[!] Backend unreachable — continuing in offline mode. "
+                  "Usage will not be reported.\033[0m", file=sys.stderr)
+        _offline_mode = True
+        with _access_lock:
+            _last_access_check = now
+        return _cached_usage_status or {}
 
-    # 4. Check permissions from Worker API
+    client_ip = _get_public_ip()
+    username = resolve_username()
+
     try:
         check_url = f"{api_url.rstrip('/')}/api/check?ip={client_ip}"
-        req = urllib.request.Request(check_url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=8) as response:
-            result = json.loads(response.read().decode())
-    except urllib.error.HTTPError as e:
-        print(f"\033[91mFailed to verify access permissions with server (HTTP {e.code}).\033[0m", file=sys.stderr)
-        sys.exit(1)
+        req = _urlreq.Request(check_url, headers={"User-Agent": "deepseek-cli/sync"})
+        with _urlreq.urlopen(req, timeout=8) as response:
+            result = _json.loads(response.read().decode())
     except Exception as e:
-        print(f"\033[91mFailed to verify access permissions with server: {e}\033[0m", file=sys.stderr)
-        sys.exit(1)
+        if not _offline_mode:
+            print(f"\033[93m[!] Could not verify permissions ({e}) — "
+                  f"continuing in offline mode.\033[0m", file=sys.stderr)
+        _offline_mode = True
+        with _access_lock:
+            _last_access_check = now
+        return _cached_usage_status or {}
 
-    is_banned = result.get("banned", False)
-    is_limited = result.get("limit_exceeded", False)
-    total_tokens = result.get("usage", 0)
-    token_limit = result.get("limit", 0)
+    _offline_mode = False
 
-    # Check Ban state
-    if is_banned:
-        print("\n\033[1;31m██████████████████████████████████████████████████\033[0m", file=sys.stderr)
-        print(f"\033[1;31mACCESS DENIED! IP {client_ip} has been BANNED.\033[0m", file=sys.stderr)
-        print("\033[1;31m──────────────────────────────────────────────────\033[0m", file=sys.stderr)
-        print("\033[1;31mTo appeal this ban, contact @XbibzOfficial on Telegram:\033[0m", file=sys.stderr)
-        print("\033[1;33m  → https://t.me/XbibzOfficial\033[0m", file=sys.stderr)
-        print("\033[2m  (Telegram opens automatically when you click the link)\033[0m", file=sys.stderr)
-        print("\033[1;31m──────────────────────────────────────────────────\033[0m", file=sys.stderr)
-        print("\033[1;31m██████████████████████████████████████████████████\n\033[0m", file=sys.stderr)
-        sys.exit(1)
-        sys.exit(1)
+    # ── Explicit administrative denials (the ONLY hard stops) ──
+    if result.get("banned") is True:
+        _deny_and_exit("banned")
 
-    # Check Limit state
-    if is_limited:
+    if result.get("limit_exceeded") is True:
+        total_tokens = result.get("usage", 0) or 0
+        token_limit = result.get("limit", 0) or 0
         try:
             update_gist_usage(0, 0, "limit_exceeded")
         except Exception:
             pass
-        print("\n\033[1;31m██████████████████████████████████████████████████\033[0m", file=sys.stderr)
-        print("\033[1;31mACCESS DENIED! Token limit has been exceeded.\033[0m", file=sys.stderr)
-        print(f"\033[1;31mConsumed: {total_tokens:,} / Limit: {token_limit:,} tokens.\033[0m", file=sys.stderr)
-        print("\033[1;31m──────────────────────────────────────────────────\033[0m", file=sys.stderr)
-        print("\033[1;31mTo request a limit increase, contact @XbibzOfficial:\033[0m", file=sys.stderr)
-        print("\033[1;33m  → https://t.me/XbibzOfficial\033[0m", file=sys.stderr)
-        print("\033[2m  (Telegram opens automatically when you click the link)\033[0m", file=sys.stderr)
-        print("\033[1;31m──────────────────────────────────────────────────\033[0m", file=sys.stderr)
-        print("\033[1;31m██████████████████████████████████████████████████\n\033[0m", file=sys.stderr)
-        sys.exit(1)
-    # Register client if not found
-    if not result.get("found", False):
-        # Try to fetch username from Firebase RTDB (synced from web dashboard)
-        # Falls back to user@hostname if no Firebase auth available.
-        username = f"{getpass.getuser()}@{socket.gethostname()}"
-        try:
-            auth_file = Path.home() / ".deepseek-cli" / "auth.json"
-            if auth_file.exists():
-                with open(auth_file) as f:
-                    sess = json.load(f)
-                sess_uid = sess.get("uid") or sess.get("user_id") or ""
-                if sess_uid:
-                    fb_db = os.environ.get(
-                        "DEEPSEEK_FIREBASE_DB_URL",
-                        "https://xbibzstorage-default-rtdb.asia-southeast1.firebasedatabase.app",
-                    ).rstrip("/")
-                    rtdb_url = f"{fb_db}/dscliUsers/{sess_uid}/username.json"
-                    req_u = urllib.request.Request(rtdb_url, headers={"User-Agent": "Mozilla/5.0"})
-                    with urllib.request.urlopen(req_u, timeout=3) as resp_u:
-                        username_from_rtdb = resp_u.read().decode().strip().strip('"')
-                        if username_from_rtdb and username_from_rtdb != "null":
-                            username = username_from_rtdb
-        except Exception:
-            pass
-        # Final fallback
-        if not username or username.startswith("cli_client_") is False and "@" not in username:
-            try:
-                username = f"{getpass.getuser()}@{socket.gethostname()}"
-            except Exception:
-                username = f"cli_client_{client_ip.replace('.', '_')}"
-        
-        try:
-            try:
-                _hostname = socket.gethostname()
-            except Exception:
-                _hostname = "unknown"
-            payload = {
-                "ip": client_ip,
-                "username": username,
-                "input_tokens": 0,
-                "output_tokens": 0,
-                "last_tool": "initialization",
-                "status": "online",
-                "version": CLIENT_VERSION,
-                "hostname": _hostname,
-                "platform": sys.platform,
-                "arch": platform.machine(),
-                "os_release": platform.release(),
-                "device_name": username
-            }
-            req_update = urllib.request.Request(
-                f"{api_url.rstrip('/')}/api/update",
-                data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"},
-                method="POST"
-            )
-            with urllib.request.urlopen(req_update, timeout=5) as _:
-                pass
-        except Exception as reg_err:
-            print(f"\033[93m[!] Failed to register client: {reg_err}\033[0m", file=sys.stderr)
+        _deny_and_exit(
+            "limit",
+            f"Consumed: {total_tokens:,} / Limit: {token_limit:,} tokens.",
+        )
 
-    global _cached_usage_status
+    # ── Register this client the first time the backend sees it ──
+    if not result.get("found", False):
+        try:
+            payload = _build_client_payload(client_ip, username)
+            req_update = _urlreq.Request(
+                f"{api_url.rstrip('/')}/api/update",
+                data=_json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json",
+                         "User-Agent": "deepseek-cli/sync"},
+                method="POST",
+            )
+            with _urlreq.urlopen(req_update, timeout=8):
+                pass
+        except Exception:
+            pass  # registration is best-effort
+
     _cached_usage_status = {
         "ip": client_ip,
         "usage": result.get("usage", 0),
         "limit": result.get("limit", 0),
         "last_tool": result.get("last_tool", "-"),
         "total_calls": result.get("total_calls", 0),
-        "username": result.get("username", "Unknown"),
+        "username": result.get("username", "") or username,
         "banned": result.get("banned", False),
         "limit_exceeded": result.get("limit_exceeded", False),
-        "found": result.get("found", False)
+        "found": result.get("found", False),
     }
-
-    limit_str = f"{token_limit:,}" if token_limit else "unli"
-    # print(f"\033[92m✓ Permissions verified. IP: {client_ip} (Usage: {total_tokens:,} / Limit: {limit_str})\033[0m")
+    with _access_lock:
+        _last_access_check = now
+    return _cached_usage_status
 
 
 def update_gist_usage(input_tokens: int, output_tokens: int, last_tool: str):
-    """Updates the token counts, status, and last tool of the client IP on the Worker backend."""
-    import os
-    import urllib.request
-    import urllib.error
-    import json
-    import getpass
-    import socket
-
-    registry_gist_id = os.environ.get("DEEPSEEK_GIST_ID", "") or cfg.config.get("gist_id", "") or _DEFAULT_GIST_ID
-
-    client_ip = "127.0.0.1"
-    try:
-        req = urllib.request.Request("https://api.ipify.org?format=json", headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=5) as response:
-            client_ip = json.loads(response.read().decode()).get("ip", "127.0.0.1")
-    except Exception:
-        pass
-
-    # Fetch registry to find Cloudflare Worker URL
-    api_url = None
-    try:
-        url = f"https://api.github.com/gists/{registry_gist_id}"
-        headers = {"Accept": "application/vnd.github.v3+json"}
-        gist_pat = os.environ.get("DEEPSEEK_GIST_PAT", "") or cfg.config.get("gist_pat", "")
-        if gist_pat:
-            headers["Authorization"] = f"token {gist_pat}"
-
-        req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=8) as response:
-            gist_content = json.loads(response.read().decode())
-            file_data = gist_content.get("files", {}).get("endpoint.json", {})
-            if file_data:
-                api_url = json.loads(file_data["content"]).get("api_url")
-    except Exception:
-        return
-
+    """Report token usage to the Worker. Best-effort, never raises."""
+    global _offline_mode
+    api_url, _ = _resolve_api_url()
     if not api_url:
+        _offline_mode = True
         return
-
-    # Try to fetch username from Firebase RTDB if logged in (synced from web dashboard)
-    # Falls back to user@hostname if no Firebase auth or no username stored
-    username = f"{getpass.getuser()}@{socket.gethostname()}"
     try:
-        auth_file = Path.home() / ".deepseek-cli" / "auth.json"
-        if auth_file.exists():
-            with open(auth_file) as f:
-                sess = json.load(f)
-            sess_uid = sess.get("uid") or sess.get("user_id") or ""
-            if sess_uid:
-                # Try to fetch username from RTDB
-                try:
-                    fb_db = os.environ.get(
-                        "DEEPSEEK_FIREBASE_DB_URL",
-                        "https://xbibzstorage-default-rtdb.asia-southeast1.firebasedatabase.app",
-                    ).rstrip("/")
-                    rtdb_url = f"{fb_db}/dscliUsers/{sess_uid}/username.json"
-                    req_u = urllib.request.Request(rtdb_url, headers={"User-Agent": "Mozilla/5.0"})
-                    with urllib.request.urlopen(req_u, timeout=3) as resp_u:
-                        username_from_rtdb = resp_u.read().decode().strip().strip('"')
-                        if username_from_rtdb and username_from_rtdb != "null":
-                            username = username_from_rtdb
-                except Exception:
-                    pass
-    except Exception:
-        pass
-
-    try:
-        try:
-            _hostname = socket.gethostname()
-        except Exception:
-            _hostname = "unknown"
-        payload = {
-            "ip": client_ip,
-            "username": username,
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            "last_tool": last_tool,
-            "status": "online",
-            "version": CLIENT_VERSION,
-            "hostname": _hostname,
-            "platform": sys.platform,
-            "arch": platform.machine(),
-            "os_release": platform.release(),
-            "device_name": username
-        }
-        req_update = urllib.request.Request(
-            f"{api_url.rstrip('/')}/api/update",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"},
-            method="POST"
+        payload = _build_client_payload(
+            _get_public_ip(), resolve_username(),
+            input_tokens, output_tokens, last_tool,
         )
-        with urllib.request.urlopen(req_update, timeout=8) as _:
+        req_update = _urlreq.Request(
+            f"{api_url.rstrip('/')}/api/update",
+            data=_json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json",
+                     "User-Agent": "deepseek-cli/sync"},
+            method="POST",
+        )
+        with _urlreq.urlopen(req_update, timeout=8):
             pass
+        _offline_mode = False
     except Exception:
-        pass
+        _offline_mode = True
 
 
 def get_usage_status() -> dict:
-    """Returns cached usage status from startup check."""
-    global _cached_usage_status
-    return _cached_usage_status
-
+    """Returns cached usage status from the last successful check."""
+    return _cached_usage_status or {}

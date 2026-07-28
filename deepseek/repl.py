@@ -9,8 +9,6 @@ import sys
 import traceback
 import threading
 import datetime
-import re
-from rich.console import Console
 from rich.table import Table
 from rich import box
 
@@ -57,31 +55,9 @@ def _reminder_worker(seconds, message):
     _reminders[:] = [r for r in _reminders if r['seconds'] != seconds or r['message'] != message]
 
 
-VERSION = '7.7'
-VERSION_BANNER = 'DeepSeek CLI Agent v7.7'
-VERSION_FEATURES = 'Multi-Provider | 7 AI Services | 80+ Tools | Real-Time Stream | Rich Markdown | Web Browser | Smart Loop | OCR | Telegram & Discord | Auth Automation'
-
-
-def _sync_active_profile_prompt(memory):
-    """Ensure only the currently active multi-agent profile prompt is attached once."""
-    from .multi_agent import AGENT_PROFILES, multi_agent_manager
-
-    prompt = memory.system_prompt or ''
-    for info in AGENT_PROFILES.values():
-        extra = (info.get('system_prompt_extra', '') or '').strip()
-        if extra:
-            prompt = prompt.replace('\n' + extra, '\n')
-            prompt = prompt.replace(extra + '\n', '\n')
-            prompt = prompt.replace(extra, '')
-
-    prompt = re.sub(r'\n{3,}', '\n\n', prompt).strip()
-    active_extra = (multi_agent_manager.get_system_extra() or '').strip()
-    if active_extra:
-        prompt = (prompt + '\n' + active_extra).strip()
-
-    memory.system_prompt = prompt
-    if memory.messages and memory.messages[0]['role'] == 'system':
-        memory.messages[0]['content'] = memory.system_prompt
+VERSION = '7.8'
+VERSION_BANNER = 'DeepSeek CLI Agent v7.8'
+VERSION_FEATURES = 'Multi-Provider | 8 AI Services | 88+ Tools | Real-Time Stream | Rich Markdown | Web Browser | Smart Loop | OCR | Telegram & Discord | Auth Automation'
 
 
 def main(session_id: str = None, memory=None, user=None):
@@ -115,7 +91,11 @@ def main(session_id: str = None, memory=None, user=None):
 
     # Initialize multi-agent profile
     from .multi_agent import multi_agent_manager
-    _sync_active_profile_prompt(memory)
+    profile_extra = multi_agent_manager.get_system_extra()
+    if profile_extra:
+        memory.system_prompt += '\n' + profile_extra
+        if memory.messages and memory.messages[0]['role'] == 'system':
+            memory.messages[0]['content'] = memory.system_prompt
 
     agent = Agent(memory, tools, provider, model, thinking_visible=True)
 
@@ -126,12 +106,23 @@ def main(session_id: str = None, memory=None, user=None):
     show_welcome(provider.name, model, bool(api_key))
 
     if not api_key:
-        console.print(f'  [yellow]No API key set. Use [bold]/key[/bold] or [bold]Ctrl+P[/bold] to set one.[/yellow]')
+        console.print('  [yellow]No API key set. Use [bold]/key[/bold] or [bold]Ctrl+P[/bold] to set one.[/yellow]')
         console.print(f'  [dim]Get a key: {provider_config.get("get_key_url", "")}[/dim]')
         console.print()
 
     profile_name = AGENT_PROFILES[multi_agent_manager.active_profile]['emoji'] + ' ' + AGENT_PROFILES[multi_agent_manager.active_profile]['name']
     sess_label = memory.session_name if memory.session_name else session_id
+    # Username is owned by the web dashboard; resolve it live rather than
+    # trusting whatever was cached in auth.json at login time.
+    try:
+        from .config import resolve_username
+        _live_name = resolve_username(force=True)
+    except Exception:
+        _live_name = ''
+    if _live_name:
+        if user is None:
+            user = {}
+        user['username'] = _live_name
     if user and (user.get('username') or user.get('email')):
         who = user.get('username') or user.get('email')
         console.print(f'  [dim]Account: [green]{who}[/green] | Session: [cyan]{sess_label}[/cyan] | Agent: [yellow]{profile_name}[/yellow][/dim]')
@@ -186,6 +177,31 @@ def main(session_id: str = None, memory=None, user=None):
     depth = 0
     subagent_idx = 0
 
+    # ── Live username sync ────────────────────────────────────────────────
+    # The web dashboard is the single source of truth for the account name.
+    # Poll RTDB in the background so a rename there shows up in this running
+    # session (and in telemetry) without needing a restart.
+    _sync_state = {'name': _live_name}
+
+    def _username_watcher():
+        import time as _t
+        from .config import resolve_username as _rn
+        while True:
+            _t.sleep(30)
+            try:
+                fresh = _rn(force=True)
+                if fresh and fresh != _sync_state.get('name'):
+                    _sync_state['name'] = fresh
+                    if user is not None:
+                        user['username'] = fresh
+                    console.print(
+                        f'\n  [dim]Account renamed on dashboard → '
+                        f'[green]{fresh}[/green][/dim]')
+            except Exception:
+                pass
+
+    threading.Thread(target=_username_watcher, daemon=True).start()
+
     while True:
         user_input = prompt_input(depth=depth)
 
@@ -199,11 +215,11 @@ def main(session_id: str = None, memory=None, user=None):
             if depth == 0:
                 depth = 1
                 console.print(f'  [dim]Session: [cyan]{session_id}[/cyan] | [cyan]{memory.count()}[/cyan] messages[/dim]')
-                console.print(f'  [dim]Ctrl+X or [bold]Up[/bold] to go back[/dim]')
-                console.print(f'  [dim][bold]Down[/bold] to view sub-agent history (Left/Right to switch)[/dim]')
+                console.print('  [dim]Ctrl+X or [bold]Up[/bold] to go back[/dim]')
+                console.print('  [dim][bold]Down[/bold] to view sub-agent history (Left/Right to switch)[/dim]')
             else:
                 depth = 0
-                console.print(f'  [dim]Back to main.[/dim]')
+                console.print('  [dim]Back to main.[/dim]')
             continue
 
         if user_input in (CTRL_DOWN_SENTINEL, CTRL_LEFT_SENTINEL, CTRL_RIGHT_SENTINEL):
@@ -258,7 +274,7 @@ def main(session_id: str = None, memory=None, user=None):
                     if output:
                         console.print(f"\n[dim]Result:[/dim]\n{output}")
                 else:
-                    console.print(f"  [bold red]Status:[/bold red] [red]x Error[/red]")
+                    console.print("  [bold red]Status:[/bold red] [red]x Error[/red]")
                     if output:
                         console.print(f"\n[red]{output}[/red]")
             elif worker:
@@ -269,7 +285,7 @@ def main(session_id: str = None, memory=None, user=None):
                 else:
                     console.print("\n[dim]Status:[/dim] Still running...")
 
-            console.print(f"  [dim cyan]-----------------------------------------------[/dim cyan]\n")
+            console.print("  [dim cyan]-----------------------------------------------[/dim cyan]\n")
             continue
 
         if not user_input:
@@ -397,6 +413,10 @@ def handle_command(cmd: str, agent: Agent, memory: Memory, tools: ToolRegistry) 
     args = parts[1].strip() if len(parts) > 1 else ''
 
     # ── Bare "/" → show help ──────────
+    # NOTE: show_help is imported at module scope. A local `from .ui import
+    # show_help` here would make the name function-local for the WHOLE
+    # function body, so the `/help` branch below would raise
+    # UnboundLocalError. Do not re-import it inside this function.
     if command == '/':
         show_help()
         return ''
@@ -432,12 +452,12 @@ def handle_command(cmd: str, agent: Agent, memory: Memory, tools: ToolRegistry) 
     # ── /system ───────────────────────
     elif command == '/system':
         if not args:
-            console.print(f'  [dim]Current system prompt:[/dim]')
+            console.print('  [dim]Current system prompt:[/dim]')
             console.print(f'  {memory.system_prompt[:200]}')
-            console.print(f'  [dim]Usage: /system <new prompt>[/dim]')
+            console.print('  [dim]Usage: /system <new prompt>[/dim]')
         else:
             memory.add_system(args)
-            console.print(f'  [green]System prompt updated.[/green]')
+            console.print('  [green]System prompt updated.[/green]')
             console.print()
 
     # ── /provider (with optional args) ─
@@ -510,7 +530,7 @@ def handle_command(cmd: str, agent: Agent, memory: Memory, tools: ToolRegistry) 
     # ── /compact ──────────────────────
     elif command == '/compact':
         compact_memory(memory)
-        console.print(f'  [green]Conversation compacted (system + last 10).[/green]')
+        console.print('  [green]Conversation compacted (system + last 10).[/green]')
         console.print()
 
     # ── /remind ──────────────────────────
@@ -549,6 +569,33 @@ def handle_command(cmd: str, agent: Agent, memory: Memory, tools: ToolRegistry) 
             console.print(f'  [green]Reminder set for {seconds}s:[/green] [bold yellow]{message or "Time\'s up!"}[/bold yellow]')
             console.print()
 
+    # ── /account ────────────────────────
+    # Read-only view. Credentials live on the web dashboard.
+    elif command in ('/account', '/whoami'):
+        _settings_account_info()
+
+    # ── /sync ───────────────────────────
+    # Force-refresh the username from the dashboard (RTDB).
+    elif command == '/sync':
+        from .config import invalidate_username_cache, resolve_username, is_offline
+        invalidate_username_cache()
+        with with_spinner('Syncing account from dashboard'):
+            name = resolve_username(force=True)
+        if is_offline():
+            console.print(f'  [yellow]Offline — using cached username:[/yellow] [bold]{name}[/bold]')
+        else:
+            console.print(f'  [green]Synced.[/green] Username: [bold cyan]{name}[/bold cyan]')
+        console.print()
+
+    # ── /logout ─────────────────────────
+    elif command == '/logout':
+        from .auth import logout
+        from .config import invalidate_username_cache
+        logout()
+        invalidate_username_cache()
+        console.print('  [green]Signed out.[/green] You will be asked to sign in next launch.')
+        console.print()
+
     # ── /connectors ─────────────────────
     elif command == '/connectors':
         show_connectors_status()
@@ -580,13 +627,17 @@ def handle_command(cmd: str, agent: Agent, memory: Memory, tools: ToolRegistry) 
         if args:
             arg = args.strip().lower()
             if arg == 'list':
-                console.print(f'  [bold cyan]Agent Profiles[/bold cyan]')
+                console.print('  [bold cyan]Agent Profiles[/bold cyan]')
                 for pid, info in AGENT_PROFILES.items():
                     active = ' [green](active)[/green]' if pid == multi_agent_manager.active_profile else ''
                     console.print(f'  {info["emoji"]} [bold]{pid}[/bold] — {info["description"]}{active}')
             elif arg in AGENT_PROFILES:
                 multi_agent_manager.set_profile(arg)
-                _sync_active_profile_prompt(memory)
+                extra = multi_agent_manager.get_system_extra()
+                if extra:
+                    memory.system_prompt += '\n' + extra
+                    if memory.messages and memory.messages[0]['role'] == 'system':
+                        memory.messages[0]['content'] = memory.system_prompt
                 console.print(f'  [green]Switched to {AGENT_PROFILES[arg]["emoji"]} {AGENT_PROFILES[arg]["name"]} agent.[/green]')
             else:
                 console.print(f'  [yellow]Unknown profile: {arg}. Use /agent list[/yellow]')
@@ -603,7 +654,11 @@ def handle_command(cmd: str, agent: Agent, memory: Memory, tools: ToolRegistry) 
             if idx >= 0:
                 selected = names[idx]
                 multi_agent_manager.set_profile(selected)
-                _sync_active_profile_prompt(memory)
+                extra = multi_agent_manager.get_system_extra()
+                if extra:
+                    memory.system_prompt += '\n' + extra
+                    if memory.messages and memory.messages[0]['role'] == 'system':
+                        memory.messages[0]['content'] = memory.system_prompt
                 console.print(f'  [green]Switched to {AGENT_PROFILES[selected]["emoji"]} {AGENT_PROFILES[selected]["name"]} agent.[/green]')
         console.print()
 
@@ -636,8 +691,8 @@ def handle_command(cmd: str, agent: Agent, memory: Memory, tools: ToolRegistry) 
             console.print(f'  [bold]{name}[/bold]')
             console.print(f'    [dim]ID: {sid}  |  {n} msgs  |  {c}[/dim]')
         console.print()
-        console.print(f'  [dim]Resume: dscli -s <session_id>[/dim]')
-        console.print(f'  [dim]Delete: /session delete <session_id>[/dim]')
+        console.print('  [dim]Resume: dscli -s <session_id>[/dim]')
+        console.print('  [dim]Delete: /session delete <session_id>[/dim]')
         console.print()
 
     # ── /rename ───────────────────────
@@ -645,35 +700,21 @@ def handle_command(cmd: str, agent: Agent, memory: Memory, tools: ToolRegistry) 
         from .memory import _session_path
         from rich.markup import escape
         import json
+        rparts = args.split(maxsplit=1)
         if not args:
             console.print('  [yellow]Usage: /rename <new_name> or /rename <session_id> <new_name>[/yellow]')
             console.print()
             return ''
-
-        current_sid = getattr(memory, '_current_session_id', None)
-        rparts = args.split(maxsplit=1)
-        candidate_sid = rparts[0] if rparts else ''
-        candidate_path = _session_path(candidate_sid) if candidate_sid else ''
-
         if len(rparts) == 1:
-            sid = current_sid
-            new_name = args.strip()
-        elif candidate_sid and os.path.exists(candidate_path):
-            sid = candidate_sid
-            new_name = rparts[1].strip()
+            sid = getattr(memory, '_current_session_id', None)
+            new_name = rparts[0]
         else:
-            sid = current_sid
-            new_name = args.strip()
-
+            sid = rparts[0]
+            new_name = rparts[1]
         if not sid:
             console.print('  [red]No current session.[/red]')
             console.print()
             return ''
-        if not new_name:
-            console.print('  [red]New session name cannot be empty.[/red]')
-            console.print()
-            return ''
-
         path = _session_path(sid)
         if not os.path.exists(path):
             console.print(f'  [red]Session {sid} not found.[/red]')
@@ -684,7 +725,7 @@ def handle_command(cmd: str, agent: Agent, memory: Memory, tools: ToolRegistry) 
         data['session_name'] = new_name
         with open(path, 'w') as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
-        if sid == current_sid:
+        if sid == getattr(memory, '_current_session_id', None):
             memory.session_name = new_name
             memory._session_named = True
         console.print(f'  [green]Session renamed to:[/green] [bold yellow]{escape(new_name)}[/bold yellow]')
@@ -692,7 +733,7 @@ def handle_command(cmd: str, agent: Agent, memory: Memory, tools: ToolRegistry) 
 
     else:
         console.print(f'  [yellow]Unknown command: {command}[/yellow]')
-        console.print(f'  [dim]Type /help for available commands.[/dim]')
+        console.print('  [dim]Type /help for available commands.[/dim]')
         console.print()
 
     return ''
@@ -705,107 +746,250 @@ def handle_command(cmd: str, agent: Agent, memory: Memory, tools: ToolRegistry) 
 def open_settings_panel(agent, memory, session_id=None):
     """
     Full settings panel accessible via Ctrl+P.
-    Interactive menu with arrow-key navigation.
-    Loop until user cancels (Esc).
+
+    Every slash command in SLASH_COMMANDS is reachable from here, grouped into
+    categories so the list stays navigable. Selecting a category opens a
+    submenu; selecting an action runs the exact same handler the slash command
+    uses, so the two entry points can never drift apart.
+
+    Credential-related entries are intentionally read-only: API keys are set
+    from here, but the *account* identity (username/email/password) is owned by
+    the web dashboard and cannot be edited from the CLI.
     """
     while True:
         pid = cfg.active_provider
         pconfig = cfg.get_provider_config(pid)
         model = cfg.get_provider_model(pid)
         has_key = bool(cfg.get_api_key(pid))
-        thinking = agent.thinking_visible
         key_display = mask_key(cfg.get_api_key(pid))
+        thinking = agent.thinking_visible
 
-        # Build settings menu items
         tg_running = connector_manager.telegram.is_running if connector_manager.telegram else False
         dc_running = connector_manager.discord.is_running if connector_manager.discord else False
-        connector_status = []
+        conn_bits = []
         if tg_running:
-            connector_status.append('TG:ON')
+            conn_bits.append('TG:ON')
         if dc_running:
-            connector_status.append('DC:ON')
-        conn_label = ' '.join(connector_status) if connector_status else 'OFF'
+            conn_bits.append('DC:ON')
+        conn_label = ' '.join(conn_bits) if conn_bits else 'OFF'
+
+        try:
+            from .config import resolve_username, is_offline
+            account_label = resolve_username()
+            if is_offline():
+                account_label += '  (offline)'
+        except Exception:
+            account_label = '(unknown)'
+
+        profile_id = multi_agent_manager.active_profile
+        profile_label = AGENT_PROFILES.get(profile_id, {}).get('name', profile_id)
 
         items = [
-            f'Provider     {pconfig.get("name", pid)}',
-            f'Model        {model}',
-            f'API Key      {key_display if has_key else "(not set)"}',
-            f'Thinking     {"ON" if thinking else "OFF"}',
-            f'Connectors   {conn_label}',
-            'MCP Servers    Connect external MCP servers',
-            'System Prompt  Edit system prompt',
-            'Config Info    Show configuration',
-            'Agent Profile  Switch agent profile',
-            'Live Search    Toggle live search',
-            'Sessions       List/delete sessions',
-            'Clear Chat     Clear conversation',
+            f'Account         {account_label}',
+            f'Provider        {pconfig.get("name", pid)}',
+            f'Model           {model}',
+            f'API Key         {key_display if has_key else "(not set)"}',
+            f'Agent Profile   {profile_label}',
+            f'Thinking        {"ON" if thinking else "OFF"}',
+            f'Connectors      {conn_label}',
+            'Models …        List / fetch / search models',
+            'Session …       Sessions, export, clear, compact',
+            'Project …       Tools, skills, init, live search',
+            'MCP Servers …   Connect external MCP servers',
+            'System Prompt   Edit system prompt',
+            'Info …          Config info, context usage, version',
+            'Help            Show all commands',
         ]
 
         idx = interactive_select(items, title='-- Settings Panel --', active_index=0)
 
         if idx == -1:
-            # Esc — back to chat
             break
-
         elif idx == 0:
-            # Switch provider
-            _settings_switch_provider(agent)
-
+            console.print()
+            _settings_account_info()
         elif idx == 1:
-            # Switch model
-            _settings_switch_model(agent)
-
+            _settings_switch_provider(agent)
         elif idx == 2:
-            # Set API key
+            _settings_switch_model(agent)
+        elif idx == 3:
             console.print()
             set_api_key(agent)
-
-        elif idx == 3:
-            # Toggle thinking
-            toggle_thinking(agent)
-
         elif idx == 4:
-            # Connectors — full interactive sub-menu
-            console.print()
-            _settings_connectors()
-
-        elif idx == 5:
-            # MCP Servers
-            console.print()
-            mcp_menu(agent.tools)
-
-        elif idx == 6:
-            # Edit system prompt
-            console.print()
-            _settings_edit_system(memory)
-
-        elif idx == 7:
-            # Show info
-            console.print()
-            show_info(agent, memory)
-
-        elif idx == 8:
-            # Agent profile
             console.print()
             _settings_switch_profile(agent, memory)
-
+        elif idx == 5:
+            toggle_thinking(agent)
+        elif idx == 6:
+            console.print()
+            _settings_connectors()
+        elif idx == 7:
+            console.print()
+            _settings_models_menu(agent)
+        elif idx == 8:
+            console.print()
+            _settings_session_menu(agent, memory, session_id)
         elif idx == 9:
-            # Live search toggle
             console.print()
-            _toggle_live_search(agent)
-
+            _settings_project_menu(agent, memory)
         elif idx == 10:
-            # Sessions
             console.print()
-            _list_sessions_cli(agent, memory, session_id)
-
+            mcp_menu(agent.tools)
         elif idx == 11:
-            # Clear conversation
-            memory.clear()
-            console.print('  [green]Conversation cleared.[/green]')
             console.print()
+            _settings_edit_system(memory)
+        elif idx == 12:
+            console.print()
+            _settings_info_menu(agent, memory)
+        elif idx == 13:
+            console.print()
+            show_help()
 
         console.print()
+
+
+def _settings_account_info():
+    """Show the signed-in account. Read-only by design.
+
+    Account credentials (username, email, password) are managed exclusively by
+    the web dashboard. The CLI mirrors them and must never mutate them.
+    """
+    from .config import resolve_username, is_offline, DASHBOARD_URL
+    sess = {}
+    try:
+        from . import auth as _auth_mod
+        sess = getattr(_auth_mod, '_current_session', {}) or {}
+    except Exception:
+        pass
+
+    username = resolve_username(force=True)
+
+    table = Table(box=box.ROUNDED, show_header=False, border_style='cyan',
+                  title='Account', title_style='bold cyan')
+    table.add_column('Key', style='bold cyan', min_width=14)
+    table.add_column('Value', style='white')
+    table.add_row('Username', username)
+    table.add_row('Email', sess.get('email', '') or '(unknown)')
+    table.add_row('UID', sess.get('uid', '') or '(unknown)')
+    table.add_row('Sync', 'offline (cached)' if is_offline() else 'live from dashboard')
+    console.print(table)
+    console.print(f'  [dim]Credentials are managed on the web dashboard:[/dim] [cyan]{DASHBOARD_URL}[/cyan]')
+    console.print('  [dim]The CLI mirrors your username and cannot change it.[/dim]')
+    console.print()
+
+
+def _settings_models_menu(agent):
+    """Submenu: everything model related."""
+    items = [
+        'Switch model            (/model)',
+        'List popular models     (/models)',
+        'Fetch live models       (/live_models)',
+        'Search models           (/search_model)',
+    ]
+    idx = interactive_select(items, title='-- Models --', active_index=0)
+    console.print()
+    if idx == 0:
+        switch_model(agent)
+    elif idx == 1:
+        list_models(agent)
+    elif idx == 2:
+        do_live_models(agent)
+    elif idx == 3:
+        try:
+            query = console.input('  [bold]Search query (blank = list all):[/bold] ').strip()
+        except (KeyboardInterrupt, EOFError):
+            console.print()
+            return
+        console.print()
+        if query:
+            do_search_model(agent, query)
+        else:
+            do_live_models(agent)
+
+
+def _settings_session_menu(agent, memory, session_id):
+    """Submenu: session lifecycle."""
+    items = [
+        'List / delete sessions  (/session)',
+        'Export chat             (/export)',
+        'Compact conversation    (/compact)',
+        'Clear conversation      (/clear)',
+    ]
+    idx = interactive_select(items, title='-- Session --', active_index=0)
+    console.print()
+    if idx == 0:
+        _list_sessions_cli(agent, memory, session_id)
+    elif idx == 1:
+        try:
+            fname = console.input('  [bold]Filename (blank = auto):[/bold] ').strip()
+        except (KeyboardInterrupt, EOFError):
+            console.print()
+            return
+        console.print()
+        export_chat(memory, fname)
+    elif idx == 2:
+        compact_memory(memory)
+        console.print('  [green]Conversation compacted (system + last 10).[/green]')
+    elif idx == 3:
+        memory.clear()
+        console.print('  [green]Conversation cleared.[/green]')
+
+
+def _settings_project_menu(agent, memory):
+    """Submenu: project / tooling."""
+    items = [
+        'Show all tools          (/tools)',
+        'Manage skills           (/skills)',
+        'Install a skill         (/install)',
+        'Scan project → AGENTS.md (/init)',
+        'Live web search         (/live_search)',
+    ]
+    idx = interactive_select(items, title='-- Project & Tools --', active_index=0)
+    console.print()
+    if idx == 0:
+        show_tools(agent.tools)
+    elif idx == 1:
+        manage_skills()
+    elif idx == 2:
+        try:
+            pkg = console.input('  [bold]Skill/package to install:[/bold] ').strip()
+        except (KeyboardInterrupt, EOFError):
+            console.print()
+            return
+        console.print()
+        if pkg:
+            do_install_skill(pkg)
+    elif idx == 3:
+        do_init_project(agent, memory)
+    elif idx == 4:
+        try:
+            query = console.input('  [bold]Search query:[/bold] ').strip()
+        except (KeyboardInterrupt, EOFError):
+            console.print()
+            return
+        console.print()
+        if query:
+            do_live_search(query)
+
+
+def _settings_info_menu(agent, memory):
+    """Submenu: diagnostics."""
+    items = [
+        'Config info             (/info)',
+        'Context / token usage   (/k)',
+        'Version & capabilities  (/version)',
+        'Connectors status       (/connectors)',
+    ]
+    idx = interactive_select(items, title='-- Info --', active_index=0)
+    console.print()
+    if idx == 0:
+        show_info(agent, memory)
+    elif idx == 1:
+        show_context_usage(agent, memory)
+    elif idx == 2:
+        show_version_info()
+    elif idx == 3:
+        show_connectors_status()
 
 
 def _toggle_live_search(agent):
@@ -836,7 +1020,7 @@ def _list_sessions_cli(agent, memory, current_session_id):
         console.print(f'  [bold]{name}{marker}[/bold]')
         console.print(f'    [dim]ID: {sid}  |  {n} msgs  |  {c}[/dim]')
     console.print()
-    console.print(f'  [dim]Resume: dscli -s <session_id>[/dim]')
+    console.print('  [dim]Resume: dscli -s <session_id>[/dim]')
     console.print()
 
 
@@ -854,7 +1038,11 @@ def _settings_switch_profile(agent, memory):
     if idx >= 0:
         selected = names[idx]
         multi_agent_manager.set_profile(selected)
-        _sync_active_profile_prompt(memory)
+        extra = multi_agent_manager.get_system_extra()
+        if extra:
+            memory.system_prompt += '\n' + extra
+            if memory.messages and memory.messages[0]['role'] == 'system':
+                memory.messages[0]['content'] = memory.system_prompt
         console.print(f'  [green]Switched to {AGENT_PROFILES[selected]["emoji"]} {AGENT_PROFILES[selected]["name"]} agent.[/green]')
     else:
         console.print('  [dim]Cancelled.[/dim]')
@@ -1048,7 +1236,7 @@ def _settings_discord_menu():
 
 def _settings_edit_system(memory):
     """Edit system prompt from settings panel."""
-    console.print(f'  [dim]Current system prompt:[/dim]')
+    console.print('  [dim]Current system prompt:[/dim]')
     current = memory.system_prompt
     if len(current) > 300:
         console.print(f'  {current[:300]}...')
@@ -1064,7 +1252,7 @@ def _settings_edit_system(memory):
 
     if new_prompt:
         memory.add_system(new_prompt)
-        console.print(f'  [green]System prompt updated.[/green]')
+        console.print('  [green]System prompt updated.[/green]')
 
 
 # ══════════════════════════════════════
@@ -1084,12 +1272,18 @@ def show_version_info():
         table.add_row('Version', VERSION_BANNER)
     table.add_row('Developer', 'Xbibz Official')
     table.add_row('Features', VERSION_FEATURES)
-    table.add_row('Providers', 'OpenRouter, Gemini, HuggingFace, OpenAI, Anthropic, Groq, Together')
+    table.add_row('Providers', ', '.join(p['name'] for p in cfg.get_all_providers()))
     rounds_str = 'unlimited' if MAX_TOOL_ROUNDS <= 0 else f'{MAX_TOOL_ROUNDS}'
     table.add_row('Max Tool Rounds', f'{rounds_str} (smart loop)')
-    table.add_row('Loop Detection', f'max_same_tool={3}, anti_stuck=ON')
+    table.add_row('Loop Detection', 'anti-stuck: stops after 4 identical tool calls')
     table.add_row('Validation', 'Pydantic (with fallback)')
     table.add_row('Logging', '~/.deepseek-cli/logs/')
+    try:
+        from .toolkit import ToolRegistry as _TR
+        _n = len(_TR().tools)
+        table.add_row('Tools Registered', f'{_n} (Selenium adds ~24 more when installed)')
+    except Exception:
+        pass
     table.add_row('Tool Categories', 'File, Web, Code, System, Math, Utility, PDF, DOCX, Image, Video, APK, OCR, Live Search, Browser, Connectors')
     table.add_row('Response Style', 'Rich Markdown (bold, italic, code, syntax highlight)')
     console.print(table)
@@ -1215,7 +1409,7 @@ def _do_switch_provider(agent: Agent, provider_id: str):
 
     console.print(f'  [green]Switched to {provider.name}[/green]')
     if not api_key:
-        console.print(f'  [yellow]No API key. Use /key to set one.[/yellow]')
+        console.print('  [yellow]No API key. Use /key to set one.[/yellow]')
         console.print(f'  [dim]Get key: {pconfig.get("get_key_url", "")}[/dim]')
     console.print(f'  [dim]Model: {model}[/dim]')
     console.print()
@@ -1269,7 +1463,7 @@ def _do_switch_model(agent: Agent, model_input: str):
         if 0 <= idx < len(popular):
             model_input = popular[idx]
         else:
-            console.print(f'  [red]Invalid model number.[/red]')
+            console.print('  [red]Invalid model number.[/red]')
             return
     except ValueError:
         pass
@@ -1327,7 +1521,7 @@ def list_models(agent: Agent):
         models = agent.provider.fetch_models()
 
     if not models:
-        console.print(f'  [yellow]No models found or unable to fetch.[/yellow]')
+        console.print('  [yellow]No models found or unable to fetch.[/yellow]')
         pid = cfg.active_provider
         pconfig = cfg.get_provider_config(pid)
         popular = pconfig.get('popular_models', [])
@@ -1586,7 +1780,7 @@ def do_init_project(agent, memory):
     lines.append(f'# {info["project_name"]}')
     lines.append('')
     if info['language']:
-        lines.append(f'## Language & Framework')
+        lines.append('## Language & Framework')
         lines.append(f'- Language: {info["language"]}')
         if info['framework']:
             lines.append(f'- Framework: {info["framework"]}')
@@ -1657,7 +1851,7 @@ def do_install_skill(args: str):
                     console.print(f'    [dim]{line}[/dim]')
             console.print('  [dim]Restart the session to load new skill.[/dim]')
         else:
-            console.print(f'  [red]✗ Failed:[/red]')
+            console.print('  [red]✗ Failed:[/red]')
             for line in result.stderr.strip().split('\n'):
                 console.print(f'    [dim]{line}[/dim]')
             # Fallback: npx install
@@ -1665,13 +1859,13 @@ def do_install_skill(args: str):
             r2 = subprocess.run(['npm', 'install', '-g', package],
                                 capture_output=True, text=True, timeout=120)
             if r2.returncode == 0:
-                console.print(f'  [green]✓ Installed globally.[/green]')
+                console.print('  [green]✓ Installed globally.[/green]')
             else:
                 console.print(f'  [red]✗ {r2.stderr.strip()}[/red]')
     except FileNotFoundError:
         console.print(f'  [yellow]npx not found. Try: npm install -g {package}[/yellow]')
     except subprocess.TimeoutExpired:
-        console.print(f'  [red]✗ Timed out (120s).[/red]')
+        console.print('  [red]✗ Timed out (120s).[/red]')
     console.print()
 
 
@@ -1747,7 +1941,7 @@ def _confirm_delete_skill(skill_name: str, skills_dir):
     from .ui import confirm_action
     ans = confirm_action(skill_name, {'skill': skill_name}, verb='delete')
     if ans == 'reject':
-        console.print(f'  [dim]Canceled.[/dim]')
+        console.print('  [dim]Canceled.[/dim]')
         return
     import shutil
     skill_path = skills_dir / skill_name
@@ -1839,7 +2033,7 @@ def do_search_model(agent: Agent, query: str):
         models = agent.provider.fetch_models()
 
     if not models:
-        console.print(f'  [yellow]Unable to fetch models. Showing config matches:[/yellow]')
+        console.print('  [yellow]Unable to fetch models. Showing config matches:[/yellow]')
         popular = pconfig.get('popular_models', [])
         filtered = [m for m in popular if query.lower() in m.lower()]
         if filtered:
@@ -2077,7 +2271,7 @@ def _do_telegram(action: str):
         else:
             console.print(f'  [yellow]{msg}[/yellow]')
             if 'not configured' in msg:
-                console.print(f'  [dim]Use /telegram setup to configure.[/dim]')
+                console.print('  [dim]Use /telegram setup to configure.[/dim]')
         console.print()
 
     elif action == 'stop':
@@ -2086,8 +2280,8 @@ def _do_telegram(action: str):
         console.print()
 
     elif action == 'setup':
-        console.print(f'  [cyan]Telegram Bot Setup[/cyan]')
-        console.print(f'  [dim]Get a bot token from @BotFather on Telegram.[/dim]')
+        console.print('  [cyan]Telegram Bot Setup[/cyan]')
+        console.print('  [dim]Get a bot token from @BotFather on Telegram.[/dim]')
         console.print()
 
         _flush_stdin_safe()
@@ -2133,8 +2327,8 @@ def _do_telegram(action: str):
         console.print()
 
     elif action == 'allow':
-        console.print(f'  [cyan]Set Allowed Users[/cyan]')
-        console.print(f'  [dim]Enter Telegram user IDs (comma separated). Leave empty to allow all.[/dim]')
+        console.print('  [cyan]Set Allowed Users[/cyan]')
+        console.print('  [dim]Enter Telegram user IDs (comma separated). Leave empty to allow all.[/dim]')
         _flush_stdin_safe()
         try:
             users_input = console.input('  [bold]User IDs:[/bold] ').strip()
@@ -2150,17 +2344,17 @@ def _do_telegram(action: str):
                     connector_manager.telegram.allowed_users = user_ids
                 console.print(f'  [green]Allowed users set: {user_ids}[/green]')
             except ValueError:
-                console.print(f'  [red]Invalid user IDs. Use comma-separated numbers.[/red]')
+                console.print('  [red]Invalid user IDs. Use comma-separated numbers.[/red]')
         else:
             cfg.set_connector_config('telegram', 'allowed_users', '')
             if connector_manager.telegram:
                 connector_manager.telegram.allowed_users = None
-            console.print(f'  [green]All users allowed (whitelist disabled).[/green]')
+            console.print('  [green]All users allowed (whitelist disabled).[/green]')
         console.print()
 
     else:
         console.print(f'  [yellow]Unknown action: {action}[/yellow]')
-        console.print(f'  [dim]Use: start, stop, setup, allow[/dim]')
+        console.print('  [dim]Use: start, stop, setup, allow[/dim]')
         console.print()
 
 
@@ -2200,7 +2394,7 @@ def _do_discord(action: str):
         else:
             console.print(f'  [yellow]{msg}[/yellow]')
             if 'not configured' in msg:
-                console.print(f'  [dim]Use /discord setup to configure.[/dim]')
+                console.print('  [dim]Use /discord setup to configure.[/dim]')
         console.print()
 
     elif action == 'stop':
@@ -2209,9 +2403,9 @@ def _do_discord(action: str):
         console.print()
 
     elif action == 'setup':
-        console.print(f'  [cyan]Discord Bot Setup[/cyan]')
-        console.print(f'  [dim]Get a bot token from Discord Developer Portal.[/dim]')
-        console.print(f'  [dim]Channel ID: Right-click channel -> Copy ID (enable Developer Mode first).[/dim]')
+        console.print('  [cyan]Discord Bot Setup[/cyan]')
+        console.print('  [dim]Get a bot token from Discord Developer Portal.[/dim]')
+        console.print('  [dim]Channel ID: Right-click channel -> Copy ID (enable Developer Mode first).[/dim]')
         console.print()
 
         _flush_stdin_safe()
@@ -2262,8 +2456,8 @@ def _do_discord(action: str):
         console.print()
 
     elif action == 'allow':
-        console.print(f'  [cyan]Set Allowed Users[/cyan]')
-        console.print(f'  [dim]Enter Discord user IDs (comma separated). Leave empty to allow all.[/dim]')
+        console.print('  [cyan]Set Allowed Users[/cyan]')
+        console.print('  [dim]Enter Discord user IDs (comma separated). Leave empty to allow all.[/dim]')
         _flush_stdin_safe()
         try:
             users_input = console.input('  [bold]User IDs:[/bold] ').strip()
@@ -2281,12 +2475,12 @@ def _do_discord(action: str):
             cfg.set_connector_config('discord', 'allowed_users', '')
             if connector_manager.discord:
                 connector_manager.discord.allowed_users = None
-            console.print(f'  [green]All users allowed (whitelist disabled).[/green]')
+            console.print('  [green]All users allowed (whitelist disabled).[/green]')
         console.print()
 
     else:
         console.print(f'  [yellow]Unknown action: {action}[/yellow]')
-        console.print(f'  [dim]Use: start, stop, setup, allow[/dim]')
+        console.print('  [dim]Use: start, stop, setup, allow[/dim]')
         console.print()
 
 
@@ -2355,7 +2549,7 @@ def _do_mcp(action: str, tools):
             _mcp_remove_server(tools)
     else:
         console.print(f'  [yellow]Unknown MCP action: {sub}[/yellow]')
-        console.print(f'  [dim]Use: list, connect, status, disconnect, remove[/dim]')
+        console.print('  [dim]Use: list, connect, status, disconnect, remove[/dim]')
         console.print()
 
 
@@ -2396,8 +2590,8 @@ def _mcp_list_popular():
         console.print(f'      [dim]Tools: {", ".join(info.get("tools_hint", [])[:4])}[/dim]')
 
     console.print()
-    console.print(f'  [dim]Usage: /mcp connect <server_id>[/dim]')
-    console.print(f'  [dim]Example: /mcp connect context7[/dim]')
+    console.print('  [dim]Usage: /mcp connect <server_id>[/dim]')
+    console.print('  [dim]Example: /mcp connect context7[/dim]')
     console.print()
 
 
@@ -2446,7 +2640,7 @@ def _mcp_connect_by_id(server_id: str, tools, env_value: str = None):
 
     if server_id not in POPULAR_MCP_SERVERS:
         console.print(f'  [red]Unknown server: {server_id}[/red]')
-        console.print(f'  [dim]Use /mcp list to see available servers.[/dim]')
+        console.print('  [dim]Use /mcp list to see available servers.[/dim]')
         return
 
     info = POPULAR_MCP_SERVERS[server_id]
@@ -2465,11 +2659,11 @@ def _mcp_connect_by_id(server_id: str, tools, env_value: str = None):
             if info.get('help_text'):
                 console.print(f'  [dim]{info["help_text"]}[/dim]')
             if server_id == 'canva':
-                console.print(f'  [dim]Your Canva App ID: AAHAALoYlkA[/dim]')
-                console.print(f'  [dim]App Origin: https://app-aahaaloylka.canva-apps.com[/dim]')
-                console.print(f'  [dim]HMAR: enabled[/dim]')
-                console.print(f'  [dim]To get API key: go to Canva Developer Console → Apps → AAHAALoYlkA → Credentials[/dim]')
-                console.print(f'  [dim]Or visit: https://www.canva.com/developer/apps/AAHAALoYlkA/credentials[/dim]')
+                console.print('  [dim]Your Canva App ID: AAHAALoYlkA[/dim]')
+                console.print('  [dim]App Origin: https://app-aahaaloylka.canva-apps.com[/dim]')
+                console.print('  [dim]HMAR: enabled[/dim]')
+                console.print('  [dim]To get API key: go to Canva Developer Console → Apps → AAHAALoYlkA → Credentials[/dim]')
+                console.print('  [dim]Or visit: https://www.canva.com/developer/apps/AAHAALoYlkA/credentials[/dim]')
             try:
                 _flush_stdin_safe()
                 env_value = console.input(f'  [bold]{info["env_key"]}:[/bold] ').strip()
@@ -2477,7 +2671,7 @@ def _mcp_connect_by_id(server_id: str, tools, env_value: str = None):
                 console.print('\n  [dim]Cancelled.[/dim]')
                 return
             if not env_value:
-                console.print(f'  [yellow]No key provided. Server may fail to connect.[/yellow]')
+                console.print('  [yellow]No key provided. Server may fail to connect.[/yellow]')
 
     # Get config
     config = get_server_config(server_id, env_value)
@@ -2525,7 +2719,7 @@ def _mcp_connect_by_id(server_id: str, tools, env_value: str = None):
 def _mcp_add_stdio(tools):
     """Add a custom stdio MCP server."""
     console.print()
-    console.print(f'  [cyan]Add Custom MCP Server (stdio)[/cyan]')
+    console.print('  [cyan]Add Custom MCP Server (stdio)[/cyan]')
     console.print()
 
     try:
@@ -2601,7 +2795,7 @@ def _mcp_add_stdio(tools):
 def _mcp_add_sse(tools):
     """Add a custom SSE MCP server."""
     console.print()
-    console.print(f'  [cyan]Add Custom MCP Server (SSE)[/cyan]')
+    console.print('  [cyan]Add Custom MCP Server (SSE)[/cyan]')
     console.print()
 
     try:
@@ -2673,7 +2867,7 @@ def _mcp_show_connected():
     console.print()
     servers = cfg.get_mcp_servers()
     if not servers:
-        console.print(f'  [dim]No MCP servers configured. Use /mcp connect to add one.[/dim]')
+        console.print('  [dim]No MCP servers configured. Use /mcp connect to add one.[/dim]')
         console.print()
         return
 

@@ -14,7 +14,7 @@
 import json
 import re
 import httpx
-from typing import Generator, Optional
+from typing import Generator
 
 from .config import MAX_TOKENS, TEMPERATURE, TIMEOUT
 

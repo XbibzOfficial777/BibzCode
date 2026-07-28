@@ -17,13 +17,10 @@ import os
 import re
 import json
 import time
-import base64
-import hashlib
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from urllib.parse import urlparse
 from datetime import datetime
 
 # Selenium imports
@@ -1280,7 +1277,7 @@ class SeleniumBrowserSession:
                         elem = driver.find_element(By.XPATH, xpath)
                         if elem.is_displayed():
                             elem.click()
-                            log.append(f'Step 2: Clicked Google button (XPath)')
+                            log.append('Step 2: Clicked Google button (XPath)')
                             break
                     except Exception:
                         continue
@@ -1301,7 +1298,7 @@ class SeleniumBrowserSession:
         try:
             # Check if we're on Google login page
             if 'accounts.google.com' in driver.current_url:
-                log.append(f'Step 3: On Google login page')
+                log.append('Step 3: On Google login page')
 
                 # Handle email/identifier input
                 email_selectors = [

@@ -23,9 +23,8 @@
 #   browser_cookies     — View/manage session cookies
 
 import re
-import json
 import os
-from urllib.parse import urljoin, urlparse, parse_qs, urlencode
+from urllib.parse import urljoin, urlparse
 
 # httpx is required for webcontrol — graceful error if missing
 try:

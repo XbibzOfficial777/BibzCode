@@ -6,7 +6,6 @@ import json
 import os
 import secrets
 import glob as globmod
-import re
 
 
 def _detect_local_timezone() -> str:
@@ -128,7 +127,7 @@ class Memory:
                 mcp_context = (
                     "\nCONNECTED MCP SERVERS (external tools you can use):\n"
                     + '\n'.join(mcp_servers) + '\n'
-                    + f"    Use these tools directly when relevant.\n"
+                    + "    Use these tools directly when relevant.\n"
                 )
         except Exception:
             pass
@@ -327,10 +326,10 @@ class Memory:
                         lines.append(f"\n[Tool Call: {fn.get('name', '?')}]")
                         lines.append(fn.get('arguments', '{}'))
                 if content:
-                    lines.append(f"\n[Assistant]")
+                    lines.append("\n[Assistant]")
                     lines.append(content)
             elif role == 'USER':
-                lines.append(f"\n[User]")
+                lines.append("\n[User]")
                 lines.append(content)
         return '\n'.join(lines)
 

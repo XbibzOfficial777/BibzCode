@@ -12,16 +12,13 @@
 #   python-docx  — Word files (edit)
 #   Pillow       — Image handling in PPTX
 
-import os
 import json
 import re
-import io
 import csv
 import zipfile
 import traceback
 from pathlib import Path
-from datetime import datetime, timedelta
-from typing import Any
+from datetime import datetime
 
 # ═══════════════════════════════════════════════════════════════
 # PPTX STUBS — module-level Emu/Pt for cross-module imports
@@ -763,8 +760,7 @@ def pptx_info(path: str) -> str:
                     tbl_count += 1
                 if shape.shape_type == 13:  # PICTURE
                     img_count += 1
-                if shape.name == 'Title 1' or (hasattr(shape, 'is_placeholder') and shape.has_text_frame and shape == slide.shapes.title):
-                    has_title = True
+                # (title detection removed: the result was never used)
 
             total_images += img_count
             total_tables += tbl_count
@@ -1338,7 +1334,6 @@ def edit_xlsx(path: str, output: str = '', operations_json: str = '') -> str:
                     chart_title = add_chart.get('title', 'Chart')
                     data_range = add_chart.get('data_range', '')
                     categories = add_chart.get('categories', '')
-                    values = add_chart.get('values', '')
                     position = add_chart.get('position', 'E2')
 
                     if chart_type == 'bar':
@@ -1726,7 +1721,6 @@ def edit_docx(path: str, output: str = '', operations_json: str = '') -> str:
             # We need to delete XML elements
             try:
                 body = doc.element.body
-                paras = list(body)
                 to_remove = []
                 para_count = 0
                 for child in body:
@@ -1825,7 +1819,7 @@ def read_csv(path: str, delimiter: str = ',', max_rows: int = 200, encoding: str
         except Exception as e:
             return f"CSV read error: {e}"
 
-    return f"Error: Could not decode file with any encoding"
+    return "Error: Could not decode file with any encoding"
 
 
 def create_csv(path: str, data_json: str = '', headers_json: str = '', delimiter: str = ',', encoding: str = 'utf-8') -> str:

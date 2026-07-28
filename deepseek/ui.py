@@ -60,16 +60,11 @@ import time
 import tty
 import termios
 import select as _select
-from rich.console import Console, Group
-from rich.live import Live
+from rich.console import Console
 from rich.markup import escape
 
-from rich.panel import Panel
-from rich.text import Text
 from rich.table import Table
 from rich import box
-from rich.syntax import Syntax
-from rich.progress import Progress, BarColumn, TextColumn, SpinnerColumn, TimeElapsedColumn
 from rich.status import Status
 
 console = Console()
@@ -88,108 +83,39 @@ _input_history: list = []
 _input_history_idx: int = -1
 _input_temp_buffer: str = ''
 
-# ── Slash command reference / completion ──
-HELP_SECTIONS = [
-    (
-        'Navigation',
-        [
-            ('Ctrl+P', 'Open the interactive settings panel'),
-            ('Ctrl+X', 'Toggle session/sub-agent history view'),
-        ],
-    ),
-    (
-        'Core',
-        [
-            ('/help, /h, /?', 'Show help and command reference'),
-            ('/version', 'Show version and runtime capabilities'),
-            ('/info', 'Show current provider, model, tools, and usage status'),
-            ('/thinking', 'Toggle visibility of reasoning / thinking output'),
-            ('/clear', 'Clear the current conversation'),
-            ('/compact', 'Keep system prompt + last 10 conversation messages'),
-            ('/export [file]', 'Export chat to .txt, .md, or .html'),
-            ('/system <prompt>', 'Append/update the system prompt'),
-            ('/exit, /quit, /q', 'Exit the CLI'),
-        ],
-    ),
-    (
-        'Project & skills',
-        [
-            ('/init', 'Scan the current project and generate AGENTS.md'),
-            ('/install <package>', 'Install a skill via npx/npm'),
-            ('/skills', 'List and manage installed skills'),
-            ('/tools', 'List all available built-in tools'),
-        ],
-    ),
-    (
-        'Provider & model',
-        [
-            ('/provider [id]', 'Switch AI provider interactively or directly'),
-            ('/model [id]', 'Switch model interactively or directly'),
-            ('/models', 'List available models for the current provider'),
-            ('/key', 'Set or replace API key for the current provider'),
-            ('/k, /context', 'Show estimated context/token usage'),
-            ('/live_models', 'Fetch live models from the provider API'),
-            ('/search_model <query>', 'Search/filter provider models'),
-        ],
-    ),
-    (
-        'Agent, search & automation',
-        [
-            ('/live_search <query>', 'Run a live web search'),
-            ('/agent [profile|list]', 'Switch or inspect multi-agent profiles'),
-            ('/mcp [action]', 'Manage MCP servers and tools'),
-            ('/connectors', 'Show Telegram/Discord connector status'),
-            ('/telegram [action]', 'Manage the Telegram connector'),
-            ('/discord [action]', 'Manage the Discord connector'),
-        ],
-    ),
-    (
-        'Sessions & utilities',
-        [
-            ('/session', 'List saved sessions or delete one'),
-            ('/rename <name>', 'Rename the current session'),
-            ('/rename <session_id> <name>', 'Rename a specific saved session'),
-            ('/remind <seconds> [message]', 'Create an in-terminal reminder'),
-        ],
-    ),
-]
-
+# ── Slash commands list for Tab completion ──
 SLASH_COMMANDS = [
-    ('/help', 'Show help and command reference'),
-    ('/h', 'Alias of /help'),
-    ('/?', 'Alias of /help'),
-    ('/version', 'Show version and runtime capabilities'),
-    ('/k', 'Show estimated context/token usage'),
-    ('/context', 'Alias of /k'),
-    ('/init', 'Scan project and create AGENTS.md'),
-    ('/install', 'Install a skill via npx/npm'),
-    ('/skills', 'List/manage installed skills'),
-    ('/tools', 'Show all available tools'),
-    ('/clear', 'Clear conversation history'),
-    ('/export', 'Export chat to file'),
-    ('/system', 'Update system prompt'),
-    ('/provider', 'Switch AI provider'),
-    ('/model', 'Switch model'),
-    ('/key', 'Set API key'),
-    ('/models', 'List available models'),
-    ('/info', 'Show current config info'),
-    ('/thinking', 'Toggle thinking visibility'),
-    ('/compact', 'Compact conversation memory'),
-    ('/live_search', 'Live web search'),
-    ('/live_models', 'Fetch models from provider API'),
-    ('/search_model', 'Search/filter provider models'),
-    ('/agent', 'Switch agent profile'),
-    ('/session', 'List/delete saved sessions'),
-    ('/sessions', 'Alias of /session'),
-    ('/rename', 'Rename a session'),
-    ('/remind', 'Create an in-terminal reminder'),
-    ('/connectors', 'Show connectors status'),
-    ('/telegram', 'Telegram connector menu'),
-    ('/discord', 'Discord connector menu'),
-    ('/mcp', 'MCP server management'),
-    ('/exit', 'Exit the CLI'),
-    ('/quit', 'Alias of /exit'),
-    ('/q', 'Alias of /exit'),
+    ('/help',          'Show this help message'),
+    ('/version',       'Show version and capabilities'),
+    ('/k',             'Show token/context usage'),
+    ('/context',       'Show token/context usage'),
+    ('/init',          'Scan project & create AGENTS.md'),
+    ('/install',       'Install a skill (npx skills add)'),
+    ('/skills',        'List/manage installed skills'),
+    ('/tools',         'Show all available tools'),
+    ('/clear',         'Clear conversation history'),
+    ('/export',        'Export chat to text file'),
+    ('/system',        'Update system prompt'),
+    ('/provider',      'Switch AI provider'),
+    ('/model',         'Switch model'),
+    ('/key',           'Set API key'),
+    ('/models',        'List available models'),
+    ('/info',          'Show current config info'),
+    ('/thinking',      'Toggle thinking/reasoning visibility'),
+    ('/compact',       'Compact conversation (keep system + last 10)'),
+    ('/live_search',   'Live web search'),
+    ('/live_models',   'Fetch all models from provider API'),
+    ('/search_model',  'Search/filter models from provider API'),
+    ('/agent',         'Switch agent profile'),
+    ('/session',       'List/delete saved sessions'),
+    ('/account',       'Show signed-in account (managed on web dashboard)'),
+    ('/logout',        'Sign out of this device'),
+    ('/sync',          'Re-sync username from the web dashboard'),
+    ('/connectors',    'Show connectors status'),
+    ('/telegram',      'Telegram connector menu'),
+    ('/discord',       'Discord connector menu'),
+    ('/mcp',           'MCP server management'),
+    ('/exit',          'Exit the CLI'),
 ]
 
 # ══════════════════════════════════════
@@ -789,7 +715,7 @@ class StreamRenderer:
                         code_lines = [f'[green]{line}[/green]' for line in code_content.split('\n')]
                     for cl in code_lines:
                         formatted_lines.append(f'  [dim]│[/dim] {cl}')
-                    formatted_lines.append(f'  [dim]└──────────────────────────────────┘[/dim]')
+                    formatted_lines.append('  [dim]└──────────────────────────────────┘[/dim]')
                     formatted_lines.append('')
                     in_code_block = False
                     code_block_lines = []
@@ -1415,7 +1341,7 @@ class ToolProcessingIndicator:
     def _build_message(self) -> str:
         """Build a professional status message."""
         parts = []
-        parts.append(f'Processing tool results')
+        parts.append('Processing tool results')
         if self.max_rounds and self.max_rounds > 0:
             parts.append(f'[dim]round {self.round_num}/{self.max_rounds}[/dim]')
         else:
@@ -1516,9 +1442,23 @@ def confirm_action(tool_name: str, args: dict, verb: str = 'execute') -> str:
         ('Always Allow', 'green'),
         ('Reject', 'red'),
     ]
+    # Fail CLOSED when there is no terminal to prompt on. Without this the
+    # bare termios.tcgetattr() below raises "Inappropriate ioctl for device"
+    # from a connector/background thread and the caller's error handling
+    # decides the outcome — which is exactly how a confirmation gate turns
+    # into an accidental auto-approve.
+    try:
+        if not (sys.stdin.isatty() and sys.stdout.isatty()):
+            return 'reject'
+    except Exception:
+        return 'reject'
+
     fd = sys.stdin.fileno()
     out_fd = sys.stdout.fileno()
-    old_settings = termios.tcgetattr(fd)
+    try:
+        old_settings = termios.tcgetattr(fd)
+    except Exception:
+        return 'reject'
     arg_summary = ', '.join(f'{k}={v}' for k, v in list(args.items())[:3])
     if len(args) > 3:
         arg_summary += '...'
@@ -1530,7 +1470,7 @@ def confirm_action(tool_name: str, args: dict, verb: str = 'execute') -> str:
             ccode = {'red': '31', 'yellow': '33', 'green': '32'}.get(color, '0')
             line2_parts.append(f'\033[{ccode}m[{i}] {label}\033[0m')
         line2 = '  '.join(line2_parts) + '\n'
-        line3 = f'  number to select  •  Enter = Allow Once  •  Esc/Ctrl+C = cancel\033[K'
+        line3 = '  number to select  •  Enter = Allow Once  •  Esc/Ctrl+C = cancel\033[K'
         os.write(out_fd, (line1 + line2 + line3).encode())
         sys.stdout.flush()
 
@@ -1906,7 +1846,7 @@ def _reverse_search(fd, out_fd, saved_buffer):
             match_pos = -1
 
     def _display():
-        nonlocal match_pos
+        # match_pos is only read here; no `nonlocal` needed.
         if matches and match_pos >= 0:
             matched = _input_history[matches[match_pos]]
             os.write(out_fd, f'\r\033[2m(reverse-i-search)\033[0m `{query}`: \033[36m{matched}\033[0m\033[K'.encode())
@@ -1982,7 +1922,7 @@ def prompt_input(depth: int = None) -> str:
 
     buffer = ''
     cursor_pos = 0
-    global _input_history, _input_history_idx, _input_temp_buffer
+    global _input_history_idx, _input_temp_buffer
 
     PROMPT_TEXT = 'you > ' if _depth == 0 else '\033[1;33m[session]\033[0m > '
     PROMPT_ANSI = '\033[1;32m' + PROMPT_TEXT + '\033[0m'
@@ -2034,7 +1974,7 @@ def prompt_input(depth: int = None) -> str:
             return
         _menu_active = True
         items = [f'{c}  —  {d}' for c, d in matches]
-        idx = interactive_filter_select(items, title=f'Commands')
+        idx = interactive_filter_select(items, title='Commands')
         if idx >= 0:
             buffer = matches[idx][0]
             cursor_pos = len(buffer)
@@ -2487,23 +2427,18 @@ def show_welcome(provider_name: str, model: str, has_key: bool):
 
 
 def show_help():
-    """Display a complete help/reference table for all user-facing commands."""
-    console.print(Panel.fit(
-        '[bold cyan]DeepSeek CLI Command Reference[/bold cyan]\n'
-        '[dim]Tip:[/dim] type [bold]/[/bold] or press [bold]Tab[/bold] after a slash for command completion.',
-        border_style='cyan',
-    ))
-    console.print()
+    """Display help / available commands."""
+    table = Table(title='Commands', box=box.ROUNDED, show_lines=False,
+                  border_style='cyan', title_style='bold cyan')
+    table.add_column('Command', style='bold green', min_width=18)
+    table.add_column('Description', style='white')
 
-    for section, rows in HELP_SECTIONS:
-        table = Table(title=section, box=box.ROUNDED, show_lines=False,
-                      border_style='cyan', title_style='bold cyan')
-        table.add_column('Command', style='bold green', min_width=28)
-        table.add_column('Description', style='white')
-        for cmd, desc in rows:
-            table.add_row(cmd, desc)
-        console.print(table)
-        console.print()
+    table.add_row('Ctrl+P', 'Open settings panel')
+    for cmd, desc in SLASH_COMMANDS:
+        table.add_row(cmd, desc)
+
+    console.print(table)
+    console.print()
 
 
 def show_version():
@@ -2511,12 +2446,12 @@ def show_version():
     version_table = Table(box=box.SIMPLE, show_header=False, border_style='cyan')
     version_table.add_column('Key', style='bold cyan', min_width=20)
     version_table.add_column('Value', style='white')
-    version_table.add_row('Version', 'DeepSeek CLI Agent v7.7')
+    version_table.add_row('Version', 'DeepSeek CLI Agent v7.8')
     version_table.add_row('Developer', 'Xbibz Official')
     version_table.add_row('TUI', 'Full Real-Time Stream | Rich Markdown | Smooth Buffer')
-    version_table.add_row('Features', '90+ Tools | 8 Providers | Smart Loop | OCR | Connectors')
+    version_table.add_row('Features', '88 core tools (+24 with Selenium) | 8 Providers | Smart Loop | OCR | Connectors')
     version_table.add_row('Providers', 'OpenRouter, Gemini, HuggingFace, OpenAI, Anthropic, Groq, Together, Agnes AI')
-    version_table.add_row('Max Tool Rounds', '12 (smart loop with text-based fallback)')
+    version_table.add_row('Max Tool Rounds', 'unlimited (anti-stuck guard + text-based fallback)')
     version_table.add_row('Tool Categories', 'File, Web, Code, System, Math, Utility, PDF, DOCX, Image, Video, Browser')
     console.print(version_table)
     console.print()

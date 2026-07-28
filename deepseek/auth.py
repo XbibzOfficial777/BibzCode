@@ -425,9 +425,18 @@ def _try_restore_session() -> dict:
     info = fb_lookup(sess["id_token"])
     if not info.get("emailVerified"):
         return {}
-    if _is_banned(sess["uid"], sess["id_token"]):
+
+    # Pull the authoritative profile from RTDB. The web dashboard owns the
+    # username, so a rename there must be reflected here immediately rather
+    # than reusing the stale value cached in auth.json.
+    prof = rtdb_get_user(sess["uid"], sess["id_token"])
+    if prof.get("banned"):
         console.print("  [bold red]Your account has been banned.[/bold red]")
         sys.exit(1)
+    remote_username = prof.get("username") or ""
+    if remote_username:
+        sess["username"] = remote_username
+
     rtdb_patch_user(sess["uid"], {"last_login": int(time.time() * 1000)}, sess["id_token"])
     _save_session(sess)
     return sess

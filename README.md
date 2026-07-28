@@ -330,8 +330,6 @@ deepseek/
 | `/info` | Show current configuration |
 | `/compact` | Compact conversation (keep system + last 10) |
 | `/session` | List/manage saved sessions |
-| `/rename` | Rename the current or a saved session |
-| `/remind <seconds> [message]` | Set an in-terminal reminder |
 | `/live_search <query>` | Real-time web search (multi-source) |
 | `/live_models` | Fetch all models from provider API |
 | `/search_model` | Search/filter models from provider API |
@@ -512,7 +510,7 @@ Distributed under the MIT License. See `LICENSE` for more information.
 [![GitHub Forks](https://img.shields.io/github/forks/XbibzOfficial777/deepseek-cli?style=social)](https://github.com/XbibzOfficial777/deepseek-cli)
 
 ## Stargazers over time
-[![Star History Chart](https://api.star-history.com/svg?repos=XbibzOfficial777/deepseek-cli&type=Date)](https://star-history.com/#XbibzOfficial777/deepseek-cli&Date)
+[![Stargazers over time](https://starchart.cc/XbibzOfficial777/deepseek-cli.svg?variant=adaptive)](https://starchart.cc/XbibzOfficial777/deepseek-cli)
 
 [⬆ Back to Top](#-deepseek-cli-agent-v77)
 
