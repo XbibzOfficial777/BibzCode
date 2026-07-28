@@ -895,6 +895,27 @@ class StreamRenderer:
             self._line_buffer = ''
             self._at_line_start = True
 
+    def retract_content(self, text: str):
+        """Un-print answer text that turned out to be reasoning.
+
+        Reasoning models that emit a bare closing </think> only reveal the
+        split *after* we have already streamed part of it as the answer. We
+        cannot un-write arbitrary scrollback, so we clear the current line and
+        re-render the text into the dim thinking block instead of leaving a
+        duplicate paragraph on screen.
+        """
+        try:
+            self._flush_line_buffer()
+            # Clear the line we are on so a partially printed answer doesn't
+            # linger next to the reasoning block.
+            sys.stdout.write('\r\033[2K')
+            sys.stdout.flush()
+        except Exception:
+            pass
+        self._at_line_start = True
+        if text.strip():
+            self.append_thinking(text)
+
     def show_thinking_as_content(self, thinking_text: str):
         """Reasoning-only fallback (empty content). If thinking was hidden,
         surface it now as the answer; otherwise it already streamed live."""

@@ -1064,3 +1064,174 @@ class TestSkipAuthCannotBypassOnInstalledClient:
         window = src[i:i + 900]
         assert "site-packages" in window and ".local" in window, \
             "SKIP_AUTH must not work on an installed client"
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Field report: reasoning bocor + jawaban tampil dua kali
+#   you > pp
+#     ─── thinking ───
+#     User repeatedly sent "pp"... </think>
+#     "pp" - is there something specific...      <- muncul 2x
+# ══════════════════════════════════════════════════════════════════════
+
+class TestUnpairedThinkTag:
+    """Reasoning models often emit only the CLOSING </think> because the
+    opening tag lives in the chat template. That leaked raw chain-of-thought
+    and the literal tag onto the screen."""
+
+    def _run(self, chunks):
+        from deepseek.agent import ThinkTagStreamParser
+        p = ThinkTagStreamParser()
+        out = []
+        for c in chunks:
+            out += p.feed(c)
+        out += p.flush()
+        return out
+
+    def _joined(self, out, kind):
+        """Replay the stream the way the agent does, honouring retractions."""
+        buf = ""
+        for k, v in out:
+            if k == "retract_content" and kind == "content":
+                if buf.endswith(v):
+                    buf = buf[: -len(v)]
+            elif k == kind:
+                buf += v
+        return buf
+
+    def test_unpaired_closer_splits_reasoning(self):
+        out = self._run(['User sent "pp"... testing.\n\n</think>\n\n"pp" - need help?'])
+        assert "testing" in self._joined(out, "thinking")
+        content = self._joined(out, "content")
+        assert "need help?" in content
+        assert "</think>" not in content
+        assert "User sent" not in content
+
+    def test_paired_form_still_works(self):
+        out = self._run(["<think>nalar</think>jawaban"])
+        assert self._joined(out, "thinking") == "nalar"
+        assert self._joined(out, "content") == "jawaban"
+
+    def test_plain_text_untouched(self):
+        out = self._run(["halo dunia"])
+        assert self._joined(out, "content") == "halo dunia"
+
+    def test_unpaired_closer_split_across_chunks(self):
+        """Opening text is buffered briefly, so a late </think> reclassifies it
+        as reasoning with nothing flashing on screen first."""
+        out = self._run(["nalar ", "lanjut</thi", "nk>JAWABAN"])
+        assert self._joined(out, "content") == "JAWABAN"
+        assert "nalar lanjut" in self._joined(out, "thinking")
+
+    def test_long_answer_still_streams_before_any_tag(self):
+        """The grace buffer must not stall a normal (tagless) reply."""
+        long_text = "x" * 400
+        out = self._run([long_text])
+        assert self._joined(out, "content") == long_text
+
+    def test_retraction_path_still_works_past_grace(self):
+        """If reasoning exceeds the buffer it does get shown, and must then be
+        explicitly retracted when </think> finally arrives."""
+        out = self._run(["r" * 300, "</think>JAWAB"])
+        assert any(k == "retract_content" for k, _ in out)
+        assert self._joined(out, "content") == "JAWAB"
+
+    def test_literal_closer_after_a_real_pair_is_kept(self):
+        """Once a proper <think>…</think> pair has been seen, a later
+        </think> in prose must not swallow the answer."""
+        out = self._run(["<think>a</think>jawab lalu bahas </think> literal"])
+        assert "jawab lalu bahas" in self._joined(out, "content")
+
+    def test_renderer_can_retract(self):
+        from deepseek.ui import StreamRenderer
+        r = StreamRenderer(thinking_visible=True)
+        assert callable(r.retract_content)
+        r.retract_content("teks reasoning")   # must not raise
+
+    def test_final_content_never_contains_think_tag(self):
+        src = (PKG / "agent.py").read_text()
+        assert r"</\s*think\s*>" in src, "missing final think-tag scrub"
+
+
+class TestNoDoubleAnswer:
+    """The reasoning pre-pass ran for EVERY model. On a native reasoning
+    model that made it answer twice — once as 'thinking', once for real."""
+
+    def _agent(self, model):
+        from deepseek.agent import Agent
+        from deepseek.memory import Memory
+
+        class P:
+            supports_tools = False
+            default_model = "m"
+
+        class T:
+            tools = {}
+
+            def get_openai_tools(self):
+                return []
+
+            def is_dangerous(self, n):
+                return False
+
+        return Agent(Memory(), T(), P(), model, thinking_visible=True)
+
+    @pytest.mark.parametrize("model", [
+        "deepseek/deepseek-r1-0528:free",
+        "qwen/qwq-32b",
+        "anthropic/claude-sonnet-4",
+        "openai/o3-mini",
+    ])
+    def test_prepass_skipped_for_reasoning_models(self, model):
+        assert self._agent(model)._model_has_native_reasoning() is True
+
+    @pytest.mark.parametrize("model", ["gpt-4.1-mini", "agnes-2.0-flash",
+                                       "llama-3.3-70b-versatile"])
+    def test_prepass_kept_for_plain_models(self, model):
+        assert self._agent(model)._model_has_native_reasoning() is False
+
+    def test_detection_is_sticky_once_reasoning_seen(self):
+        a = self._agent("some-unknown-model")
+        assert a._model_has_native_reasoning() is False
+        a._seen_native_reasoning = True
+        assert a._model_has_native_reasoning() is True
+
+    def test_reasoning_model_calls_llm_once_per_turn(self, monkeypatch):
+        """The regression itself: one user turn must be one answer."""
+        import deepseek.agent as A
+        import deepseek.config as C
+        monkeypatch.setattr(C, "enforce_gist", lambda *a, **k: {})
+        monkeypatch.setattr(C, "update_gist_usage", lambda *a, **k: None)
+
+        calls = {"n": 0}
+
+        class P:
+            supports_tools = False
+            default_model = "m"
+
+            def chat_stream(self, **kw):
+                calls["n"] += 1
+                yield {"type": "thinking", "data": "menimbang..."}
+                yield {"type": "content", "data": "jawaban tunggal"}
+                yield {"type": "done", "data": None}
+
+        from deepseek.memory import Memory
+
+        class T:
+            tools = {}
+
+            def get_openai_tools(self):
+                return []
+
+            def is_dangerous(self, n):
+                return False
+
+        a = A.Agent(Memory(), T(), P(), "deepseek/deepseek-r1-0528:free",
+                    thinking_visible=True)
+        monkeypatch.setattr(a, "_start_interrupt_monitor", lambda: None)
+        monkeypatch.setattr(a, "_stop_interrupt_monitor", lambda: None)
+        monkeypatch.setattr(a, "_check_interrupt", lambda: False)
+        res = a.chat("pp")
+        assert calls["n"] == 1, f"model was queried {calls['n']}x for one turn"
+        assert res["content"].strip() == "jawaban tunggal"
+        assert res["content"].count("jawaban tunggal") == 1

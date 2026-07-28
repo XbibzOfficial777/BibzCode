@@ -139,14 +139,35 @@ REASONING_PREFILL = "Baik, berikut proses berpikir saya sebelum menjawab:\n"
 class ThinkTagStreamParser:
     """Splits a streamed *content* flow into ('thinking', text) / ('content', text)
     segments based on <think> ... </think> tags. Robust to a tag being split
-    across multiple chunks (a partial tag tail is held back until completed)."""
+    across multiple chunks (a partial tag tail is held back until completed).
+
+    Handles the UNPAIRED form too. Many reasoning models (DeepSeek-R1, Qwen,
+    QwQ, several OpenRouter mirrors) put the opening <think> in the chat
+    template, so the stream contains reasoning text followed by a bare
+    </think> and then the answer — no opening tag at all. Treating that as
+    plain content leaked both the raw chain-of-thought and the literal
+    '</think>' onto the user's screen.
+    """
 
     OPEN = '<think>'
     CLOSE = '</think>'
+    # Longest tag we may need to hold back while waiting for more input.
+    _MAX_TAG = max(len(OPEN), len(CLOSE))
+
+    # While no tag has been seen yet we buffer this many characters before
+    # emitting, so an unpaired </think> arriving shortly after the start can
+    # reclassify them as reasoning without anything flashing on screen.
+    _GRACE_CHARS = 240
 
     def __init__(self):
         self.in_think = False
         self._pending = ''  # held-back tail that might be the start of a tag
+        # True once we've emitted anything, so a later </think> is known to be
+        # a genuine unpaired closer rather than the tail of a normal pair.
+        self._saw_open = False
+        self._emitted_content = ''
+        self._grace = ''          # buffered opening content
+        self._grace_done = False  # True once we stop buffering
 
     @staticmethod
     def _partial_tail(data: str, tag: str) -> int:
@@ -162,28 +183,86 @@ class ThinkTagStreamParser:
         data = self._pending + chunk
         self._pending = ''
         while data:
-            tag = self.CLOSE if self.in_think else self.OPEN
-            idx = data.find(tag)
+            if self.in_think:
+                tag, idx = self.CLOSE, data.find(self.CLOSE)
+            else:
+                open_i = data.find(self.OPEN)
+                close_i = data.find(self.CLOSE)
+                # An unpaired </think> arriving before any <think> means the
+                # model opened its reasoning in the prompt template. Everything
+                # streamed so far was reasoning, not an answer.
+                if close_i != -1 and (open_i == -1 or close_i < open_i) \
+                        and not self._saw_open:
+                    before = data[:close_i]
+                    # Drop content segments produced earlier in THIS call —
+                    # they were reasoning, so the caller must never see them.
+                    out = [(k, v) for (k, v) in out if k != 'content']
+                    # Buffered opening text was reasoning — drop it silently.
+                    if self._grace:
+                        before = self._grace + before
+                        self._grace = ''
+                    self._grace_done = True
+                    # Text already handed over in a previous feed() has to be
+                    # retracted explicitly by the renderer.
+                    if self._emitted_content:
+                        out.append(('retract_content', self._emitted_content))
+                        self._emitted_content = ''
+                    if before:
+                        out.append(('thinking', before))
+                    data = data[close_i + len(self.CLOSE):]
+                    self.in_think = False
+                    self._saw_open = True   # don't re-trigger on a later closer
+                    continue
+                tag, idx = self.OPEN, open_i
             if idx != -1:
                 before = data[:idx]
+                if self._grace and not self.in_think:
+                    before = self._grace + before
+                    self._grace = ''
+                self._grace_done = True
                 if before:
-                    out.append(('thinking' if self.in_think else 'content', before))
+                    kind = 'thinking' if self.in_think else 'content'
+                    out.append((kind, before))
+                    if kind == 'content':
+                        self._emitted_content += before
+                if not self.in_think:
+                    self._saw_open = True
                 self.in_think = not self.in_think
                 data = data[idx + len(tag):]
                 continue
-            hold = self._partial_tail(data, tag)
+            if self.in_think:
+                hold = self._partial_tail(data, self.CLOSE)
+            else:
+                # Could be the start of either tag — hold the longer candidate.
+                hold = max(self._partial_tail(data, self.OPEN),
+                           self._partial_tail(data, self.CLOSE))
             if hold:
                 self._pending = data[len(data) - hold:]
                 emit = data[:len(data) - hold]
             else:
                 emit = data
             if emit:
-                out.append(('thinking' if self.in_think else 'content', emit))
+                kind = 'thinking' if self.in_think else 'content'
+                if kind == 'content' and not self._grace_done and not self._saw_open:
+                    self._grace += emit
+                    if len(self._grace) >= self._GRACE_CHARS:
+                        out.append(('content', self._grace))
+                        self._emitted_content += self._grace
+                        self._grace = ''
+                        self._grace_done = True
+                else:
+                    out.append((kind, emit))
+                    if kind == 'content':
+                        self._emitted_content += emit
             data = ''
         return out
 
     def flush(self):
         out = []
+        if self._grace:
+            out.append(('thinking' if self.in_think else 'content', self._grace))
+            self._grace = ''
+            self._grace_done = True
         if self._pending:
             out.append(('thinking' if self.in_think else 'content', self._pending))
             self._pending = ''
@@ -521,6 +600,8 @@ class Agent:
         # AttributeError (silently swallowed, disabling the fallback).
         self._interrupt_last_time = 0.0
         self._always_allow_tools = set()  # Tools user auto-approved this session
+        # Set once the provider streams a real reasoning delta.
+        self._seen_native_reasoning = False
         self.created_files = []  # Files created during last chat() call
         
         try:
@@ -528,6 +609,24 @@ class Agent:
             self.planner = Planner(self.provider)
         except Exception:
             self.planner = None
+
+    # Models that emit their own reasoning stream (either a `reasoning` /
+    # `reasoning_content` delta, or <think> tags inside content). For these the
+    # extra pre-pass is pure waste and causes a duplicated answer.
+    _NATIVE_REASONING_HINTS = (
+        'deepseek-r1', 'deepseek-reasoner', 'r1-', ':thinking', '-thinking',
+        'qwq', 'qwen3', 'o1-', 'o3-', 'o4-', 'gpt-5', 'magistral',
+        'reasoning', 'sonnet-4', 'opus-4', 'gemini-2.5', 'grok-4',
+    )
+
+    def _model_has_native_reasoning(self) -> bool:
+        """True when the active model streams its own chain of thought."""
+        # Sticky: once a model has actually emitted reasoning we trust that
+        # over any name-based guess.
+        if getattr(self, '_seen_native_reasoning', False):
+            return True
+        name = (self.model or '').lower()
+        return any(h in name for h in self._NATIVE_REASONING_HINTS)
 
     def _run_thinking_pass(self, user_message: str):
         """Reasoning pre-pass: one short, tool-less streaming call that surfaces
@@ -839,11 +938,16 @@ class Agent:
         tools_used = []
         start_time = time.time()
 
-        # Visible thought process (provider-agnostic). Runs once per user turn,
-        # before the answer/tool loop, so even content-only models (Agnes AI)
-        # show their reasoning live in the dim thinking block. Kept separate from
-        # the per-round thinking_text (it is already streamed to the screen here).
-        if self.thinking_visible:
+        # Visible thought process for models that have no native reasoning
+        # channel (e.g. Agnes AI, plain OpenAI-compatible endpoints).
+        #
+        # This costs a whole extra LLM call, so we only pay it when the model
+        # cannot show its own reasoning. Native reasoning models (DeepSeek-R1,
+        # Qwen/QwQ, o-series, Claude thinking) already stream a `reasoning`
+        # field or <think> tags; running the pre-pass for them made the model
+        # answer the question TWICE — once as "reasoning", once for real — which
+        # is exactly the duplicated reply users were seeing.
+        if self.thinking_visible and not self._model_has_native_reasoning():
             self._run_thinking_pass(user_message)
 
         stopped_by = None
@@ -880,7 +984,20 @@ class Agent:
                 <function=...> / <tool_call> ... </tool_call> markup never
                 appears on screen — only the clean tool call via show_tool_call()."""
                 nonlocal full_content, thinking_text
+                # Hold the very first content burst back briefly. Reasoning
+                # models that use a bare </think> only reveal the split when
+                # that tag arrives, and printing before then flashes raw
+                # chain-of-thought on screen before we can retract it.
                 for kind, seg in think_parser.feed(text):
+                    if kind == 'retract_content':
+                        # A late unpaired </think> revealed that text we already
+                        # streamed as the answer was really reasoning. Move it
+                        # to the thinking block instead of leaving it in place.
+                        if full_content.endswith(seg):
+                            full_content = full_content[:-len(seg)]
+                        thinking_text += seg
+                        self.renderer.retract_content(seg)
+                        continue
                     if kind == 'thinking':
                         thinking_text += seg
                         self.renderer.append_thinking(seg)
@@ -929,6 +1046,9 @@ class Agent:
                     chunk_data = chunk['data']
 
                     if chunk_type == 'thinking':
+                        # Native reasoning confirmed — skip the pre-pass from
+                        # now on so we never answer twice.
+                        self._seen_native_reasoning = True
                         thinking_text += chunk_data
                         self.renderer.append_thinking(chunk_data)
                     elif chunk_type == 'content':
@@ -973,7 +1093,12 @@ class Agent:
 
             # Flush any content held back by the <think> parser (partial tag tail)
             for kind, seg in think_parser.flush():
-                if kind == 'thinking':
+                if kind == 'retract_content':
+                    if full_content.endswith(seg):
+                        full_content = full_content[:-len(seg)]
+                    thinking_text += seg
+                    self.renderer.retract_content(seg)
+                elif kind == 'thinking':
                     thinking_text += seg
                     self.renderer.append_thinking(seg)
                 else:
@@ -1022,6 +1147,20 @@ class Agent:
                 r'|<invoke>|</invoke>|<result>|</result>|<action>|</action>',
                 '', full_content
             )
+            # Last-resort net for reasoning tags. If a stray <think>/</think>
+            # (or the </think> variants some models emit) still survived the
+            # stream parser, drop everything up to the final closer — that part
+            # is chain-of-thought, not the answer — and never let the literal
+            # tag reach the user.
+            _m = list(re.finditer(r'</\s*think\s*>', full_content, re.I))
+            if _m:
+                _tail = full_content[_m[-1].end():]
+                if _tail.strip():
+                    full_content = _tail
+                else:
+                    full_content = full_content[:_m[-1].start()]
+            full_content = re.sub(r'</?\s*think\s*>', '', full_content, flags=re.I)
+            full_content = full_content.lstrip('\n')
 
             # ── NO TOOL CALLS → Agent is done speaking ──
             if not tool_calls_list:
