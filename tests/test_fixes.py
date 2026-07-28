@@ -1235,3 +1235,101 @@ class TestNoDoubleAnswer:
         assert calls["n"] == 1, f"model was queried {calls['n']}x for one turn"
         assert res["content"].strip() == "jawaban tunggal"
         assert res["content"].count("jawaban tunggal") == 1
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Field report: "Login failed: <urlopen error _ssl.c:983: handshake timed out>"
+# ══════════════════════════════════════════════════════════════════════
+
+class TestAuthNetworkResilience:
+    """A single TLS hiccup used to fail the login outright, show a raw C-level
+    error string, and make the user retype their email."""
+
+    def test_transient_errors_are_recognised(self):
+        from deepseek.auth import _is_transient
+        for e in ["<urlopen error _ssl.c:983: The handshake operation timed out>",
+                  "timed out", "Connection reset by peer",
+                  "[Errno -2] Name or service not known",
+                  "EOF occurred in violation of protocol"]:
+            assert _is_transient(e), e
+
+    def test_real_auth_verdicts_are_not_transient(self):
+        from deepseek.auth import _is_transient
+        for e in ["INVALID_LOGIN_CREDENTIALS", "USER_DISABLED",
+                  "EMAIL_NOT_FOUND", "WEAK_PASSWORD"]:
+            assert not _is_transient(e), e
+
+    def test_transient_failure_is_retried(self, monkeypatch):
+        import deepseek.auth as A
+        calls = {"n": 0}
+
+        def flaky(req, timeout=None):
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise OSError("_ssl.c:983: The handshake operation timed out")
+
+            class R:
+                def read(self_inner):
+                    return b'{"idToken":"t","localId":"u"}'
+
+                def __enter__(self_inner):
+                    return self_inner
+
+                def __exit__(self_inner, *a):
+                    return False
+            return R()
+
+        monkeypatch.setattr(A.urllib.request, "urlopen", flaky)
+        monkeypatch.setattr(A.time, "sleep", lambda s: None)
+        out = A._post_json("https://x", {"a": 1})
+        assert out["idToken"] == "t"
+        assert calls["n"] == 3, "should have retried twice before succeeding"
+
+    def test_credential_errors_are_not_retried(self, monkeypatch):
+        """A wrong password is an answer, not a failure — retrying it would
+        just slow the user down and risk rate limiting."""
+        import deepseek.auth as A
+        calls = {"n": 0}
+
+        def denied(req, timeout=None):
+            calls["n"] += 1
+            raise A.urllib.error.HTTPError(
+                "u", 400, "Bad Request", {},
+                io.BytesIO(b'{"error":{"message":"INVALID_LOGIN_CREDENTIALS"}}'))
+
+        monkeypatch.setattr(A.urllib.request, "urlopen", denied)
+        monkeypatch.setattr(A.time, "sleep", lambda s: None)
+        with pytest.raises(A.FirebaseError) as ei:
+            A._post_json("https://x", {})
+        assert "INVALID_LOGIN_CREDENTIALS" in str(ei.value)
+        assert calls["n"] == 1
+
+    def test_raw_ssl_error_is_humanised(self):
+        from deepseek.auth import _friendly_error
+        msg = _friendly_error(
+            "<urlopen error _ssl.c:983: The handshake operation timed out>")
+        assert "_ssl.c" not in msg
+        assert "network" in msg.lower() or "connection" in msg.lower()
+        assert "not rejected" in msg.lower(), \
+            "must make clear the credentials were fine"
+
+    def test_disabled_account_tells_user_how_to_appeal(self):
+        from deepseek.auth import _friendly_error
+        msg = _friendly_error("USER_DISABLED")
+        assert "disabled" in msg.lower()
+        assert "t.me" in msg or "Telegram" in msg
+
+    def test_email_is_remembered_between_attempts(self):
+        src = (PKG / "auth.py").read_text()
+        i = src.index("def _do_login(")
+        j = src.index("\ndef ", i + 10)
+        body = src[i:j]
+        assert "_last_email" in body, \
+            "a failed attempt must not force the user to retype their email"
+
+    def test_default_timeout_is_generous(self):
+        import inspect
+        from deepseek.auth import _post_json
+        sig = inspect.signature(_post_json)
+        assert sig.parameters["timeout"].default >= 30
+        assert sig.parameters["retries"].default >= 1

@@ -56,27 +56,66 @@ def is_signed_in() -> bool:
 # Low-level HTTP helpers
 # ════════════════════════════════════════════════════════════════════════════
 
-def _post_json(url: str, payload: dict, timeout: int = 15) -> dict:
-    """POST JSON and return parsed dict. Raises FirebaseError on API errors."""
+# Transient network failures that deserve a retry rather than "login failed".
+# Mobile links, captive portals and slow DNS routinely produce these; without a
+# retry a single hiccup forced the user back to the menu to retype everything.
+_TRANSIENT_MARKERS = (
+    "timed out", "timeout", "handshake", "temporarily unavailable",
+    "connection reset", "connection refused", "connection aborted",
+    "name or service not known", "nodename nor servname",
+    "network is unreachable", "eof occurred", "ssl", "_ssl.c",
+    "bad handshake", "record layer failure", "try again",
+)
+
+
+def _is_transient(err: str) -> bool:
+    low = str(err).lower()
+    return any(m in low for m in _TRANSIENT_MARKERS)
+
+
+def _post_json(url: str, payload: dict, timeout: int = 30,
+               retries: int = 2) -> dict:
+    """POST JSON and return parsed dict. Raises FirebaseError on API errors.
+
+    Retries transient network/TLS failures with a short backoff. Auth errors
+    from the API (wrong password, disabled account, ...) are NOT retried —
+    they are answers, not failures.
+    """
     data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        url, data=data,
-        headers={"Content-Type": "application/json", "User-Agent": "deepseek-cli-auth/1.0"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode())
-    except urllib.error.HTTPError as e:
-        body = {}
+    last_err = None
+
+    for attempt in range(retries + 1):
+        req = urllib.request.Request(
+            url, data=data,
+            headers={"Content-Type": "application/json",
+                     "User-Agent": "deepseek-cli-auth/1.0"},
+            method="POST",
+        )
         try:
-            body = json.loads(e.read().decode())
-        except Exception:
-            pass
-        msg = body.get("error", {}).get("message", f"HTTP {e.code}")
-        raise FirebaseError(msg)
-    except Exception as e:
-        raise FirebaseError(str(e))
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read().decode())
+        except urllib.error.HTTPError as e:
+            # A real API verdict — surface it immediately.
+            body = {}
+            try:
+                body = json.loads(e.read().decode())
+            except Exception:
+                pass
+            msg = body.get("error", {}).get("message", f"HTTP {e.code}")
+            raise FirebaseError(msg)
+        except Exception as e:
+            last_err = e
+            if attempt < retries and _is_transient(e):
+                wait = 1.5 * (attempt + 1)
+                console.print(
+                    f"  [dim]Network hiccup ({type(e).__name__}) — retrying "
+                    f"in {wait:.0f}s… [{attempt + 1}/{retries}][/dim]"
+                )
+                time.sleep(wait)
+                continue
+            break
+
+    raise FirebaseError(str(last_err))
 
 
 class FirebaseError(Exception):
@@ -91,7 +130,7 @@ def _friendly_error(msg: str) -> str:
         "INVALID_PASSWORD": "Incorrect password.",
         "INVALID_LOGIN_CREDENTIALS": "Invalid email or password.",
         "INVALID_EMAIL": "That email address is not valid.",
-        "USER_DISABLED": "This account has been disabled by the administrator.",
+        "USER_DISABLED": ("This account has been disabled by the administrator. Contact @XbibzOfficial on Telegram (https://t.me/XbibzOfficial) to appeal."),
         "WEAK_PASSWORD : Password should be at least 6 characters": "Password must be at least 6 characters.",
         "MISSING_PASSWORD": "Password is required.",
         "TOO_MANY_ATTEMPTS_TRY_LATER": "Too many attempts. Please try again later.",
@@ -100,6 +139,14 @@ def _friendly_error(msg: str) -> str:
     for key, val in table.items():
         if msg.startswith(key):
             return val
+
+    # Network/TLS failures reach here as raw Python exception text like
+    # "<urlopen error _ssl.c:983: The handshake operation timed out>", which
+    # tells the user nothing actionable. Translate it.
+    if _is_transient(msg):
+        return ("Could not reach the authentication server (network/TLS "
+                "timeout). Check your connection and try again — your "
+                "credentials were not rejected.")
     return msg
 
 
@@ -370,10 +417,22 @@ def _await_verification(session: dict, username: str) -> dict:
         console.print("  [yellow]Email not verified yet. Check your inbox (and spam), then choose Continue.[/yellow]")
 
 
+_last_email = ""
+
+
 def _do_login() -> dict:
     """Login with email + password. Requires verified email."""
+    global _last_email
     console.print("  [bold]Log in[/bold]")
-    email = _prompt("Email       :")
+    # Remember the address across attempts so a network failure doesn't force
+    # the user to retype it. Enter accepts the remembered value.
+    if _last_email:
+        entered = _prompt(f"Email       : [{_last_email}] ")
+        email = entered or _last_email
+    else:
+        email = _prompt("Email       :")
+    if email:
+        _last_email = email
     password = _prompt_password("Password    :")
     if not email or not password:
         console.print("  [red]Email and password are required.[/red]")
@@ -381,7 +440,14 @@ def _do_login() -> dict:
     try:
         resp = fb_sign_in(email, password)
     except FirebaseError as e:
-        console.print(f"  [red]Login failed: {_friendly_error(str(e))}[/red]")
+        raw = str(e)
+        friendly = _friendly_error(raw)
+        if _is_transient(raw):
+            # Not a credential problem — say so, and don't imply the password
+            # was wrong.
+            console.print(f"  [yellow]{friendly}[/yellow]")
+        else:
+            console.print(f"  [red]Login failed: {friendly}[/red]")
         return {}
 
     # Pull existing username from RTDB if present
