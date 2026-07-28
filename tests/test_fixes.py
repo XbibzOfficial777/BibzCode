@@ -99,9 +99,9 @@ class TestSettingsPanel:
 
     def test_panel_submenu_helpers_exist(self):
         import deepseek.repl as R
-        for fn in ("_settings_account_info", "_settings_models_menu",
-                   "_settings_session_menu", "_settings_project_menu",
-                   "_settings_info_menu"):
+        for fn in ("_settings_account_info", "_settings_account_menu",
+                   "_settings_models_menu", "_settings_session_menu",
+                   "_settings_project_menu", "_settings_info_menu"):
             assert callable(getattr(R, fn)), f"missing {fn}"
 
     def test_panel_covers_every_command_category(self):
@@ -130,8 +130,8 @@ class TestSettingsPanel:
             "/live_search": "_settings_project_menu",
             "/info": "_settings_info_menu", "/k": "_settings_info_menu",
             "/context": "_settings_info_menu", "/version": "_settings_info_menu",
-            "/account": "_settings_account_info", "/logout": "_settings_account_info",
-            "/sync": "_settings_account_info",
+            "/account": "_settings_account_menu", "/logout": "_settings_account_menu",
+            "/sync": "_settings_account_menu", "/login": "_settings_account_menu",
             "/telegram": "_settings_connectors", "/discord": "_settings_connectors",
         }
         unreachable = []
@@ -148,14 +148,23 @@ class TestSettingsPanel:
         import deepseek.repl as R
         src = (PKG / "repl.py").read_text()
         tree = ast.parse(src)
-        for name in ("_settings_models_menu", "_settings_session_menu",
-                     "_settings_project_menu", "_settings_info_menu"):
+        for name in ("_settings_account_menu", "_settings_models_menu",
+                     "_settings_session_menu", "_settings_project_menu",
+                     "_settings_info_menu"):
             fn = next(n for n in tree.body
                       if isinstance(n, ast.FunctionDef) and n.name == name)
+            # Names bound by imports inside the function are valid too.
+            local_names = set()
+            for node in ast.walk(fn):
+                if isinstance(node, ast.ImportFrom):
+                    for a in node.names:
+                        local_names.add(a.asname or a.name)
             for node in ast.walk(fn):
                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
                     called = node.func.id
                     if called in ("interactive_select", "print", "len", "str"):
+                        continue
+                    if called in local_names:
                         continue
                     assert hasattr(R, called), f"{name} calls missing {called}()"
 
@@ -571,12 +580,15 @@ class TestCredentialsAreDashboardOnly:
 
     def test_account_view_is_readonly(self):
         src = (PKG / "repl.py").read_text()
+        for fn in ("_settings_account_info(", "_settings_account_menu("):
+            i = src.index("def " + fn)
+            j = src.index("\ndef ", i + 10)
+            body = src[i:j]
+            assert "rtdb_put_user" not in body, fn
+            assert "rtdb_patch_user" not in body, fn
         i = src.index("def _settings_account_info(")
         j = src.index("\ndef ", i + 10)
-        body = src[i:j]
-        assert "rtdb_put_user" not in body
-        assert "rtdb_patch_user" not in body
-        assert "dashboard" in body.lower()
+        assert "dashboard" in src[i:j].lower()
 
     def test_dashboard_url_exposed(self):
         from deepseek.config import DASHBOARD_URL
@@ -663,3 +675,86 @@ class TestCodebaseHealth:
                      'open("/etc/passwd").read()',
                      "(1).__class__.__mro__"):
             assert "error" in c({"expression": evil}).lower()
+
+
+# ══════════════════════════════════════════════════════════════════════
+# /login — sign in without restarting the CLI
+# ══════════════════════════════════════════════════════════════════════
+
+class TestLoginCommand:
+    """`/logout` existed with no `/login`, stranding the user until restart."""
+
+    def test_login_is_a_registered_command(self):
+        from deepseek.ui import SLASH_COMMANDS
+        cmds = [c for c, _ in SLASH_COMMANDS]
+        assert "/login" in cmds
+        assert "/logout" in cmds
+
+    def test_login_has_a_handler(self):
+        src = (PKG / "repl.py").read_text()
+        i = src.index("def handle_command(")
+        j = src.index("\ndef ", i + 10)
+        assert "'/login'" in src[i:j]
+
+    def test_auth_exposes_reusable_login(self):
+        from deepseek import auth
+        assert callable(auth.interactive_login)
+        assert callable(auth.get_current_session)
+        assert callable(auth.is_signed_in)
+
+    def test_interactive_login_can_be_cancelled_without_exiting(self, monkeypatch):
+        """allow_exit=False must return {} rather than killing the REPL."""
+        from deepseek import auth
+        monkeypatch.setattr(auth, "_banner_auth", lambda: None)
+        monkeypatch.setattr(auth, "_prompt", lambda label: "4")
+        assert auth.interactive_login(allow_exit=False) == {}
+
+    def test_startup_gate_still_exits_on_quit(self, monkeypatch):
+        from deepseek import auth
+        monkeypatch.setattr(auth, "_banner_auth", lambda: None)
+        monkeypatch.setattr(auth, "_prompt", lambda label: "4")
+        with pytest.raises(SystemExit):
+            auth.interactive_login(allow_exit=True)
+
+    def test_logout_clears_in_memory_session(self, monkeypatch, tmp_path):
+        from deepseek import auth
+        monkeypatch.setattr(auth, "AUTH_FILE", tmp_path / "auth.json")
+        auth._set_current_session({"uid": "u1", "username": "alice"})
+        assert auth.is_signed_in() is True
+        auth.logout()
+        assert auth.is_signed_in() is False
+        assert auth.get_current_session() == {}
+
+    def test_login_sets_session_for_banner(self, monkeypatch, tmp_path):
+        """Fresh login (not just silent restore) must populate the session so
+        the welcome banner and /account show the real user."""
+        from deepseek import auth
+        monkeypatch.setattr(auth, "AUTH_FILE", tmp_path / "auth.json")
+        auth._set_current_session({})
+        monkeypatch.setattr(auth, "fb_sign_in", lambda e, p: {
+            "localId": "u9", "email": e, "idToken": "tok",
+            "refreshToken": "r", "expiresIn": "3600"})
+        monkeypatch.setattr(auth, "rtdb_get_user", lambda *a, **k: {"username": "bob"})
+        monkeypatch.setattr(auth, "fb_lookup", lambda t: {"emailVerified": True})
+        monkeypatch.setattr(auth, "rtdb_patch_user", lambda *a, **k: True)
+        monkeypatch.setattr(auth, "_exit_if_banned", lambda *a, **k: None)
+        monkeypatch.setattr(auth, "_prompt", lambda label: "bob@example.com")
+        monkeypatch.setattr(auth, "_prompt_password", lambda label: "secret")
+        sess = auth._do_login()
+        assert sess.get("uid") == "u9"
+        assert auth.is_signed_in() is True
+        assert auth.get_current_session()["username"] == "bob"
+
+    def test_no_duplicate_auth_menu(self):
+        """ensure_authenticated must delegate to interactive_login, not carry
+        its own copy of the menu."""
+        src = (PKG / "auth.py").read_text()
+        assert src.count(") Log in    [cyan]2[/cyan]) Register") == 1
+
+    def test_account_menu_offers_login_when_signed_out(self):
+        src = (PKG / "repl.py").read_text()
+        i = src.index("def _settings_account_menu(")
+        j = src.index("\ndef ", i + 10)
+        body = src[i:j]
+        assert "/login" in body and "/logout" in body
+        assert "interactive_login" in body

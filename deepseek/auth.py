@@ -31,6 +31,26 @@ SECURETOKEN_BASE = "https://securetoken.googleapis.com/v1/token"
 AUTH_DIR = Path.home() / ".deepseek-cli"
 AUTH_FILE = AUTH_DIR / "auth.json"
 
+# The session for the currently signed-in user, or {} when signed out.
+# Read by ui.show_welcome() and repl._settings_account_info(). Kept in sync by
+# _set_current_session() on every auth transition (login, register, restore,
+# logout) so the banner can never show a stale or missing account.
+_current_session: dict = {}
+
+
+def _set_current_session(sess: dict):
+    global _current_session
+    _current_session = sess or {}
+
+
+def get_current_session() -> dict:
+    """Return the active session dict ({} when signed out)."""
+    return _current_session
+
+
+def is_signed_in() -> bool:
+    return bool(_current_session.get("uid"))
+
 
 # ════════════════════════════════════════════════════════════════════════════
 # Low-level HTTP helpers
@@ -194,12 +214,13 @@ def _load_session() -> dict:
 
 
 def logout():
-    """Clear the locally stored session."""
+    """Clear the locally stored session and the in-memory copy."""
     try:
         if AUTH_FILE.exists():
             AUTH_FILE.unlink()
     except Exception:
         pass
+    _set_current_session({})
 
 
 def _build_session(auth_resp: dict, username: str = "") -> dict:
@@ -344,6 +365,7 @@ def _await_verification(session: dict, username: str) -> dict:
                             session["id_token"])
             _exit_if_banned(session["uid"], session["id_token"])
             _save_session(session)
+            _set_current_session(session)
             return session
         console.print("  [yellow]Email not verified yet. Check your inbox (and spam), then choose Continue.[/yellow]")
 
@@ -390,6 +412,7 @@ def _do_login() -> dict:
                         session["id_token"])
 
     _save_session(session)
+    _set_current_session(session)
     console.print(f"  [green]✓ Welcome back, {session['username'] or email}![/green]")
     return session
 
@@ -448,7 +471,9 @@ def ensure_authenticated() -> dict:
     Login persists across runs; the user is only prompted when there is no valid
     saved session. Honors DEEPSEEK_SKIP_AUTH=1 for offline/dev use."""
     if os.environ.get("DEEPSEEK_SKIP_AUTH") == "1":
-        return {"username": "dev", "email": "", "uid": "dev", "offline": True}
+        dev = {"username": "dev", "email": "", "uid": "dev", "offline": True}
+        _set_current_session(dev)
+        return dev
 
     # 1) Silent restore
     sess = _try_restore_session()
@@ -457,10 +482,21 @@ def ensure_authenticated() -> dict:
         # (saved as a side-effect for the welcome banner to pick up).
         # We no longer print a separate "Signed in as" line — it was redundant
         # with the welcome message and cluttered recursive invocations.
-        setattr(sys.modules[__name__], '_current_session', sess)
+        _set_current_session(sess)
         return sess
 
     # 2) Interactive auth menu
+    return interactive_login()
+
+
+def interactive_login(allow_exit: bool = True) -> dict:
+    """Run the interactive sign-in menu and return the session ({} if aborted).
+
+    Shared by the startup gate and the in-REPL /login command so both behave
+    identically. With allow_exit=False the "Exit" choice returns {} instead of
+    terminating the process — the REPL is already running and must survive a
+    cancelled sign-in.
+    """
     _banner_auth()
     while True:
         console.print("  [cyan]1[/cyan]) Log in    [cyan]2[/cyan]) Register    [cyan]3[/cyan]) Forgot password    [cyan]4[/cyan]) Exit")
@@ -478,8 +514,11 @@ def ensure_authenticated() -> dict:
         elif choice in ("3", "forgot", "reset", "f"):
             _do_forgot()
         elif choice in ("4", "exit", "quit", "q"):
-            console.print("  [dim]Goodbye.[/dim]")
-            sys.exit(0)
+            if allow_exit:
+                console.print("  [dim]Goodbye.[/dim]")
+                sys.exit(0)
+            console.print("  [dim]Sign-in cancelled.[/dim]")
+            return {}
         else:
             console.print("  [yellow]Please choose 1–4.[/yellow]")
         console.print()

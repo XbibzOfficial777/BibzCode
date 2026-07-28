@@ -587,13 +587,46 @@ def handle_command(cmd: str, agent: Agent, memory: Memory, tools: ToolRegistry) 
             console.print(f'  [green]Synced.[/green] Username: [bold cyan]{name}[/bold cyan]')
         console.print()
 
+    # ── /login ──────────────────────────
+    # Sign in without restarting. Reuses the same interactive flow as startup
+    # (log in / register / forgot password) so behaviour cannot drift.
+    elif command in ('/login', '/signin'):
+        from .auth import interactive_login, is_signed_in, get_current_session
+        from .config import invalidate_username_cache, resolve_username
+
+        if is_signed_in():
+            who = get_current_session().get('username') or get_current_session().get('email')
+            console.print(f'  [yellow]Already signed in as[/yellow] [bold cyan]{who}[/bold cyan].')
+            console.print('  [dim]Use /logout first to switch accounts.[/dim]')
+            console.print()
+            return ''
+
+        # allow_exit=False: cancelling must return to the REPL, not kill it.
+        sess = interactive_login(allow_exit=False)
+        if not sess:
+            console.print('  [dim]Not signed in.[/dim]')
+            console.print()
+            return ''
+
+        invalidate_username_cache()
+        name = resolve_username(force=True)
+        console.print(f'  [green]Signed in as[/green] [bold cyan]{name}[/bold cyan]')
+        console.print()
+
     # ── /logout ─────────────────────────
     elif command == '/logout':
-        from .auth import logout
+        from .auth import logout, is_signed_in
         from .config import invalidate_username_cache
+
+        if not is_signed_in():
+            console.print('  [yellow]You are not signed in.[/yellow] [dim]Use /login.[/dim]')
+            console.print()
+            return ''
+
         logout()
         invalidate_username_cache()
-        console.print('  [green]Signed out.[/green] You will be asked to sign in next launch.')
+        console.print('  [green]Signed out.[/green]')
+        console.print('  [dim]Use [bold]/login[/bold] to sign in again, or restart dscli.[/dim]')
         console.print()
 
     # ── /connectors ─────────────────────
@@ -775,9 +808,13 @@ def open_settings_panel(agent, memory, session_id=None):
 
         try:
             from .config import resolve_username, is_offline
-            account_label = resolve_username()
-            if is_offline():
-                account_label += '  (offline)'
+            from .auth import is_signed_in
+            if is_signed_in():
+                account_label = resolve_username()
+                if is_offline():
+                    account_label += '  (offline)'
+            else:
+                account_label = '(not signed in)'
         except Exception:
             account_label = '(unknown)'
 
@@ -807,7 +844,7 @@ def open_settings_panel(agent, memory, session_id=None):
             break
         elif idx == 0:
             console.print()
-            _settings_account_info()
+            _settings_account_menu()
         elif idx == 1:
             _settings_switch_provider(agent)
         elif idx == 2:
@@ -848,6 +885,52 @@ def open_settings_panel(agent, memory, session_id=None):
         console.print()
 
 
+def _settings_account_menu():
+    """Account submenu: view details, sign in/out, force re-sync.
+
+    Editing credentials is deliberately absent — the web dashboard owns them.
+    """
+    from .auth import is_signed_in
+
+    signed = is_signed_in()
+    items = [
+        'View account details    (/account)',
+        'Re-sync from dashboard  (/sync)',
+        ('Sign out                (/logout)' if signed
+         else 'Sign in                 (/login)'),
+    ]
+    idx = interactive_select(items, title='-- Account --', active_index=0)
+    console.print()
+    if idx == 0:
+        _settings_account_info()
+    elif idx == 1:
+        from .config import invalidate_username_cache, resolve_username, is_offline
+        invalidate_username_cache()
+        with with_spinner('Syncing account from dashboard'):
+            name = resolve_username(force=True)
+        if is_offline():
+            console.print(f'  [yellow]Offline — cached username:[/yellow] [bold]{name}[/bold]')
+        else:
+            console.print(f'  [green]Synced.[/green] Username: [bold cyan]{name}[/bold cyan]')
+        console.print()
+    elif idx == 2:
+        from .auth import logout, interactive_login
+        from .config import invalidate_username_cache, resolve_username
+        if signed:
+            logout()
+            invalidate_username_cache()
+            console.print('  [green]Signed out.[/green] [dim]Use /login to sign in again.[/dim]')
+        else:
+            sess = interactive_login(allow_exit=False)
+            if sess:
+                invalidate_username_cache()
+                console.print(f'  [green]Signed in as[/green] '
+                              f'[bold cyan]{resolve_username(force=True)}[/bold cyan]')
+            else:
+                console.print('  [dim]Not signed in.[/dim]')
+        console.print()
+
+
 def _settings_account_info():
     """Show the signed-in account. Read-only by design.
 
@@ -855,13 +938,16 @@ def _settings_account_info():
     the web dashboard. The CLI mirrors them and must never mutate them.
     """
     from .config import resolve_username, is_offline, DASHBOARD_URL
-    sess = {}
-    try:
-        from . import auth as _auth_mod
-        sess = getattr(_auth_mod, '_current_session', {}) or {}
-    except Exception:
-        pass
+    from .auth import get_current_session, is_signed_in
 
+    if not is_signed_in():
+        console.print('  [yellow]Not signed in.[/yellow]')
+        console.print('  [dim]Use [bold]/login[/bold] to sign in.[/dim]')
+        console.print(f'  [dim]Manage your account at:[/dim] [cyan]{DASHBOARD_URL}[/cyan]')
+        console.print()
+        return
+
+    sess = get_current_session()
     username = resolve_username(force=True)
 
     table = Table(box=box.ROUNDED, show_header=False, border_style='cyan',

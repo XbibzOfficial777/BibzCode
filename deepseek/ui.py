@@ -109,6 +109,7 @@ SLASH_COMMANDS = [
     ('/agent',         'Switch agent profile'),
     ('/session',       'List/delete saved sessions'),
     ('/account',       'Show signed-in account (managed on web dashboard)'),
+    ('/login',         'Sign in to your account'),
     ('/logout',        'Sign out of this device'),
     ('/sync',          'Re-sync username from the web dashboard'),
     ('/connectors',    'Show connectors status'),
@@ -2413,8 +2414,8 @@ def show_welcome(provider_name: str, model: str, has_key: bool):
     # the logged-in account on the same line as the provider info.
     sess = {}
     try:
-        from . import auth as _auth_mod
-        sess = getattr(_auth_mod, '_current_session', {}) or {}
+        from .auth import get_current_session
+        sess = get_current_session()
     except Exception:
         pass
     who = sess.get('username') or sess.get('email') or ''
