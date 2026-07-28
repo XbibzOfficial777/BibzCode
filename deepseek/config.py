@@ -642,11 +642,23 @@ def invalidate_username_cache():
 
 # ── Registry / Worker resolution ───────────────────────────────────────────
 
-def _resolve_api_url() -> tuple:
+_API_URL_CACHE = {"url": None, "version": None, "at": 0.0}
+API_URL_CACHE_TTL = 900.0    # 15 min — the registry almost never changes
+
+
+def _resolve_api_url(force: bool = False) -> tuple:
     """Resolve the Worker base URL from the registry Gist.
+
+    Cached for API_URL_CACHE_TTL: the access check now runs on every chat turn,
+    and re-fetching a static Gist each time wasted a round-trip and burned
+    GitHub's 60 req/hour unauthenticated budget.
 
     Returns (api_url or None, latest_version or None). Never raises.
     """
+    if not force:
+        c = _API_URL_CACHE
+        if c["url"] and (_time.time() - c["at"]) < API_URL_CACHE_TTL:
+            return c["url"], c["version"]
     registry_gist_id = (os.environ.get("DEEPSEEK_GIST_ID", "")
                         or cfg.config.get("gist_id", "")
                         or _DEFAULT_GIST_ID)
@@ -665,8 +677,16 @@ def _resolve_api_url() -> tuple:
         if not file_data:
             return None, None
         payload = _json.loads(file_data["content"])
-        return payload.get("api_url"), payload.get("latest_version")
+        api_url = payload.get("api_url")
+        latest = payload.get("latest_version")
+        if api_url:
+            _API_URL_CACHE.update({"url": api_url, "version": latest,
+                                   "at": _time.time()})
+        return api_url, latest
     except Exception:
+        # Fall back to a stale-but-known URL rather than dropping offline.
+        if _API_URL_CACHE["url"]:
+            return _API_URL_CACHE["url"], _API_URL_CACHE["version"]
         return None, None
 
 
@@ -954,6 +974,11 @@ def enforce_gist(force: bool = False) -> dict:
     }
     with _access_lock:
         _last_access_check = now
+    # Keep the live meter aligned with the server's authoritative totals.
+    try:
+        seed_meter(result.get("usage", 0), result.get("limit", 0))
+    except Exception:
+        pass
     return _cached_usage_status
 
 
@@ -981,6 +1006,105 @@ def update_gist_usage(input_tokens: int, output_tokens: int, last_tool: str):
         _offline_mode = False
     except Exception:
         _offline_mode = True
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# LIVE QUOTA METER
+#
+# Usage used to be estimated (len(text)//3) and pushed once per turn, so the
+# server only learned about consumption after the fact — a single long
+# generation could blow far past the limit before anything noticed.
+#
+# The meter below keeps a local running total seeded from the server, is
+# updated with the provider's REAL token counts, and is checked mid-stream so
+# generation can be cut off the moment the quota is exhausted.
+# ══════════════════════════════════════════════════════════════════════════
+
+_meter_lock = _threading.Lock()
+_meter = {
+    "usage": 0,        # tokens consumed this cycle (server truth + local delta)
+    "limit": 0,        # 0 = unlimited
+    "pending_in": 0,   # not yet reported to the server
+    "pending_out": 0,
+    "synced_at": 0.0,
+}
+
+
+class QuotaExceeded(Exception):
+    """Raised mid-generation when the token budget is exhausted."""
+
+    def __init__(self, usage: int, limit: int):
+        self.usage = usage
+        self.limit = limit
+        super().__init__(f"Token limit reached: {usage:,}/{limit:,}")
+
+
+def seed_meter(usage: int, limit: int):
+    """Seed the local meter from an authoritative server response."""
+    with _meter_lock:
+        _meter["usage"] = int(usage or 0)
+        _meter["limit"] = int(limit or 0)
+        _meter["pending_in"] = 0
+        _meter["pending_out"] = 0
+        _meter["synced_at"] = _time.time()
+
+
+def meter_snapshot() -> dict:
+    with _meter_lock:
+        used = _meter["usage"] + _meter["pending_in"] + _meter["pending_out"]
+        limit = _meter["limit"]
+        return {
+            "usage": used,
+            "limit": limit,
+            "remaining": max(0, limit - used) if limit > 0 else None,
+            "exceeded": bool(limit > 0 and used >= limit),
+            "pct": (used / limit * 100) if limit > 0 else 0.0,
+        }
+
+
+def meter_add(input_tokens: int = 0, output_tokens: int = 0):
+    """Record consumption locally. Returns the fresh snapshot."""
+    with _meter_lock:
+        _meter["pending_in"] += max(0, int(input_tokens or 0))
+        _meter["pending_out"] += max(0, int(output_tokens or 0))
+    return meter_snapshot()
+
+
+def meter_check(raise_on_exceed: bool = True) -> dict:
+    """Check the budget. Raises QuotaExceeded when spent."""
+    snap = meter_snapshot()
+    if snap["exceeded"] and raise_on_exceed:
+        raise QuotaExceeded(snap["usage"], snap["limit"])
+    return snap
+
+
+def meter_flush(last_tool: str = "none") -> dict:
+    """Report pending usage to the server and re-seed from its answer.
+
+    This is the authoritative sync point: the server's total wins, so several
+    machines sharing one account converge instead of drifting apart.
+    """
+    with _meter_lock:
+        pin, pout = _meter["pending_in"], _meter["pending_out"]
+        _meter["pending_in"] = 0
+        _meter["pending_out"] = 0
+        _meter["usage"] += pin + pout
+
+    if pin or pout:
+        update_gist_usage(pin, pout, last_tool)
+
+    # Re-seed from the server, but reuse the TTL-cached check: chat() already
+    # forces a fresh verdict at the START of each turn, so forcing another one
+    # here would double every turn's network cost for no extra safety.
+    try:
+        status = enforce_gist()
+        if status:
+            seed_meter(status.get("usage", 0), status.get("limit", 0))
+    except SystemExit:
+        raise
+    except Exception:
+        pass
+    return meter_snapshot()
 
 
 def get_usage_status() -> dict:

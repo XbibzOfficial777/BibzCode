@@ -1451,3 +1451,290 @@ class TestDashboardLabelsAreUnambiguous:
         t = (ROOT / "dashboard-react" / "src" / "components" / "CliUsersModal.tsx").read_text()
         assert "Ban Account" in t
         assert "suspends the whole ACCOUNT" in t
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Realtime access check + live token metering
+#   * every chat turn re-checks ban/unban with the server (no TTL cache)
+#   * token counts come from the provider, not len(text)//3
+#   * generation is CUT OFF mid-stream when the quota runs out
+# ══════════════════════════════════════════════════════════════════════
+
+class TestLiveTokenMeter:
+
+    @pytest.fixture(autouse=True)
+    def _reset(self):
+        import deepseek.config as C
+        C.seed_meter(0, 0)
+        yield
+        C.seed_meter(0, 0)
+
+    def test_snapshot_reports_remaining(self):
+        import deepseek.config as C
+        C.seed_meter(usage=400_000, limit=500_000)
+        s = C.meter_snapshot()
+        assert s["remaining"] == 100_000
+        assert s["exceeded"] is False
+        assert 79 < s["pct"] < 81
+
+    def test_add_accumulates_locally(self):
+        import deepseek.config as C
+        C.seed_meter(usage=100, limit=1000)
+        C.meter_add(50, 25)
+        assert C.meter_snapshot()["usage"] == 175
+
+    def test_check_raises_when_spent(self):
+        import deepseek.config as C
+        C.seed_meter(usage=999, limit=1000)
+        C.meter_add(0, 5)
+        with pytest.raises(C.QuotaExceeded) as ei:
+            C.meter_check()
+        assert ei.value.limit == 1000
+
+    def test_zero_limit_means_unlimited(self):
+        import deepseek.config as C
+        C.seed_meter(usage=10_000_000, limit=0)
+        assert C.meter_check()["exceeded"] is False
+        assert C.meter_snapshot()["remaining"] is None
+
+    def test_server_total_wins_on_reseed(self):
+        """Two machines on one account must converge on the server's number."""
+        import deepseek.config as C
+        C.seed_meter(usage=100, limit=1000)
+        C.meter_add(0, 500)
+        C.seed_meter(usage=800, limit=1000)   # server says otherwise
+        assert C.meter_snapshot()["usage"] == 800
+
+    def test_negative_input_ignored(self):
+        import deepseek.config as C
+        C.seed_meter(usage=100, limit=1000)
+        C.meter_add(-50, -50)
+        assert C.meter_snapshot()["usage"] == 100
+
+
+class TestProvidersReportRealUsage:
+    """Token counts must come from the API, not a character-count guess."""
+
+    def test_openai_requests_usage(self):
+        src = (PKG / "providers.py").read_text()
+        assert "'stream_options': {'include_usage': True}" in src
+
+    def test_every_provider_emits_usage(self):
+        src = (PKG / "providers.py").read_text()
+        assert src.count("'type': 'usage'") >= 4, \
+            "OpenAI-compatible, Gemini, Anthropic and HF must all report usage"
+
+    def test_gemini_reads_usage_metadata(self):
+        src = (PKG / "providers.py").read_text()
+        assert "usageMetadata" in src
+        assert "promptTokenCount" in src
+
+    def test_anthropic_reads_message_usage(self):
+        src = (PKG / "providers.py").read_text()
+        assert "message_start" in src and "input_tokens" in src
+
+    def test_estimate_only_used_as_fallback(self):
+        src = (PKG / "agent.py").read_text()
+        assert "if not self._turn_usage_reported:" in src
+
+
+class TestQuotaStopsGeneration:
+
+    def _agent(self, monkeypatch, chunks):
+        import deepseek.config as C
+        import deepseek.agent as A
+        from deepseek.memory import Memory
+
+        monkeypatch.setattr(C, "enforce_gist", lambda *a, **k: {})
+        monkeypatch.setattr(C, "update_gist_usage", lambda *a, **k: None)
+        monkeypatch.setattr(C, "meter_flush", lambda t="none": C.meter_snapshot())
+
+        class P:
+            supports_tools = False
+            default_model = "m"
+
+            def chat_stream(self, **kw):
+                for c in chunks:
+                    yield c
+
+        class T:
+            tools = {}
+
+            def get_openai_tools(self):
+                return []
+
+            def is_dangerous(self, n):
+                return False
+
+        a = A.Agent(Memory(), T(), P(), "gpt-4.1-mini", thinking_visible=False)
+        monkeypatch.setattr(a, "_start_interrupt_monitor", lambda: None)
+        monkeypatch.setattr(a, "_stop_interrupt_monitor", lambda: None)
+        monkeypatch.setattr(a, "_check_interrupt", lambda: False)
+        return a
+
+    def test_generation_is_cut_off_when_quota_runs_out(self, monkeypatch):
+        import deepseek.config as C
+        C.seed_meter(usage=499_750, limit=500_000)
+        chunks = [{"type": "content", "data": "x" * 500} for _ in range(40)]
+        chunks.append({"type": "done", "data": None})
+        a = self._agent(monkeypatch, chunks)
+        res = a.chat("tulis panjang")
+        assert res["stopped_by"] == "quota_exceeded"
+        assert "Token limit reached" in (res["error"] or "")
+        # It must stop early, not stream all 20k characters.
+        assert len(res["content"]) < 20_000 * 0.5
+
+    def test_partial_output_is_kept(self, monkeypatch):
+        import deepseek.config as C
+        C.seed_meter(usage=499_800, limit=500_000)
+        chunks = [{"type": "content", "data": "y" * 500} for _ in range(30)]
+        chunks.append({"type": "done", "data": None})
+        a = self._agent(monkeypatch, chunks)
+        res = a.chat("q")
+        assert res["content"], "what the user already received must be kept"
+        assert any(m["role"] == "assistant" for m in a.memory.messages)
+
+    def test_normal_turn_unaffected(self, monkeypatch):
+        import deepseek.config as C
+        C.seed_meter(usage=0, limit=500_000)
+        a = self._agent(monkeypatch, [
+            {"type": "content", "data": "jawaban singkat"},
+            {"type": "usage", "data": {"input": 12, "output": 4, "exact": True}},
+            {"type": "done", "data": None},
+        ])
+        res = a.chat("q")
+        assert res["stopped_by"] == "natural"
+        assert res["content"].strip() == "jawaban singkat"
+
+    def test_real_usage_chunk_is_metered(self, monkeypatch):
+        import deepseek.config as C
+        C.seed_meter(usage=0, limit=500_000)
+        a = self._agent(monkeypatch, [
+            {"type": "content", "data": "hi"},
+            {"type": "usage", "data": {"input": 1234, "output": 567, "exact": True}},
+            {"type": "done", "data": None},
+        ])
+        a.chat("q")
+        assert a._turn_usage_reported is True
+        assert C.meter_snapshot()["usage"] >= 1801
+
+    def test_turn_refused_when_already_over(self, monkeypatch):
+        """A turn must not even start if the budget is already gone."""
+        import deepseek.config as C
+        import deepseek.agent as A
+        from deepseek.memory import Memory
+
+        monkeypatch.setattr(C, "enforce_gist", lambda *a, **k: {})
+        C.seed_meter(usage=500_001, limit=500_000)
+
+        class P:
+            supports_tools = False
+            default_model = "m"
+
+            def chat_stream(self, **kw):
+                raise AssertionError("must not reach the provider")
+
+        class T:
+            tools = {}
+
+            def get_openai_tools(self):
+                return []
+
+            def is_dangerous(self, n):
+                return False
+
+        a = A.Agent(Memory(), T(), P(), "gpt-4.1-mini", thinking_visible=False)
+        with pytest.raises(SystemExit):
+            a.chat("q")
+
+
+class TestRealtimeAccessCheck:
+
+    def test_every_turn_forces_a_fresh_check(self):
+        """A ban issued from the dashboard must bite on the next message,
+        not up to ACCESS_CHECK_TTL seconds later."""
+        src = (PKG / "agent.py").read_text()
+        i = src.index("def chat(self, user_message: str) -> dict:")
+        j = src.index("def _chat_impl", i)
+        body = src[i:j]
+        assert "enforce_gist(force=True)" in body
+        assert "meter_check()" in body
+
+    def test_usage_flush_is_synchronous(self):
+        """Reporting in a daemon thread meant a fast exit dropped the spend."""
+        src = (PKG / "agent.py").read_text()
+        assert "meter_flush(last_tool)" in src
+        i = src.index("meter_flush(last_tool)")
+        assert "threading.Thread" not in src[i - 400:i]
+
+    def test_flush_reseeds_from_server(self):
+        """Flush must re-seed from the server, but reuse the cached verdict:
+        chat() already forced a fresh check at the start of the turn."""
+        src = (PKG / "config.py").read_text()
+        i = src.index("def meter_flush(")
+        j = src.index("\ndef ", i + 10)
+        body = src[i:j]
+        assert "enforce_gist()" in body
+        assert "enforce_gist(force=True)" not in body, \
+            "forcing here doubles every turn's network cost for no extra safety"
+        assert "seed_meter(" in body
+
+    def test_registry_lookup_is_cached(self):
+        """The registry Gist is static; re-fetching it per turn wasted a
+        round-trip and burned GitHub's unauthenticated rate limit."""
+        src = (PKG / "config.py").read_text()
+        assert "API_URL_CACHE_TTL" in src
+        assert "_API_URL_CACHE" in src
+
+    def test_stale_registry_beats_going_offline(self):
+        import deepseek.config as C
+        C._API_URL_CACHE.update({"url": "https://cached", "version": "7.8",
+                                 "at": 0.0})
+        orig = C._urlreq.urlopen
+        C._urlreq.urlopen = lambda *a, **k: (_ for _ in ()).throw(OSError("down"))
+        try:
+            url, _ = C._resolve_api_url(force=True)
+        finally:
+            C._urlreq.urlopen = orig
+        assert url == "https://cached"
+
+    def test_enforce_gist_seeds_the_meter(self):
+        src = (PKG / "config.py").read_text()
+        assert "seed_meter(result.get(\"usage\", 0)" in src
+
+    def test_unban_clears_denial_and_restores_access(self, monkeypatch, tmp_path):
+        import deepseek.config as C
+        state = {"banned": True}
+
+        class R:
+            def read(self):
+                return json.dumps({"banned": state["banned"],
+                                   "limit_exceeded": False, "found": True,
+                                   "usage": 5, "limit": 500000,
+                                   "username": "u"}).encode()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        monkeypatch.setattr(C, "_DENIAL_FILE", tmp_path / "d.json")
+        monkeypatch.setattr(C, "_resolve_api_url", lambda: ("https://x", None))
+        monkeypatch.setattr(C, "_get_public_ip", lambda: "1.2.3.4")
+        monkeypatch.setattr(C, "resolve_username", lambda force=False: "u")
+        monkeypatch.setattr(C, "_load_auth_session", lambda: {"uid": "u1"})
+        monkeypatch.setattr(C, "update_gist_usage", lambda *a, **k: None)
+        monkeypatch.setattr(C._urlreq, "urlopen", lambda *a, **k: R())
+        C._cached_usage_status = None
+        C._last_access_check = 0.0
+
+        with pytest.raises(SystemExit):
+            C.enforce_gist(force=True)
+        assert C._load_persisted_denial().get("banned") is True
+
+        state["banned"] = False
+        C._cached_usage_status = None
+        C._last_access_check = 0.0
+        C.enforce_gist(force=True)                 # must not raise
+        assert C._load_persisted_denial() == {}

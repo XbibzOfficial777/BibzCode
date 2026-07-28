@@ -321,6 +321,7 @@ def main(session_id: str = None, memory=None, user=None):
                     'loop_detected': 'tool loop detected',
                     'anti_stuck': 'repeated content',
                     'stream_error': 'stream error',
+                    'quota_exceeded': 'token limit reached',
                 }
                 console.print(f'  [dim]Stopped: {reason_map.get(stopped_by, stopped_by)}[/dim]')
             try:

@@ -130,6 +130,9 @@ class OpenAICompatibleProvider(BaseProvider):
             'temperature': temperature,
             'max_tokens': max_tokens,
             'stream': True,
+            # Ask the API to report real token counts in the final chunk so we
+            # can meter accurately instead of guessing from string length.
+            'stream_options': {'include_usage': True},
         }
         if tools and self.supports_tools:
             payload['tools'] = tools
@@ -151,6 +154,7 @@ class OpenAICompatibleProvider(BaseProvider):
                     current_tool_calls = {}
                     text_content = ''
                     thinking_content = ''
+                    usage_info = None
 
                     for line in resp.iter_lines():
                         if not line or not line.startswith('data: '):
@@ -176,6 +180,8 @@ class OpenAICompatibleProvider(BaseProvider):
                                         })
                                 if tc_list:
                                     yield {'type': 'tool_calls', 'data': tc_list}
+                            if usage_info:
+                                yield {'type': 'usage', 'data': usage_info}
                             yield {'type': 'done', 'data': None}
                             return
 
@@ -184,6 +190,14 @@ class OpenAICompatibleProvider(BaseProvider):
                         except json.JSONDecodeError:
                             continue
 
+                        # The usage chunk arrives with an empty choices list.
+                        _u = chunk.get('usage')
+                        if _u:
+                            usage_info = {
+                                'input': _u.get('prompt_tokens', 0) or 0,
+                                'output': _u.get('completion_tokens', 0) or 0,
+                                'exact': True,
+                            }
                         choices = chunk.get('choices', [])
                         if not choices:
                             continue
@@ -232,6 +246,8 @@ class OpenAICompatibleProvider(BaseProvider):
             if not text_content.strip() and thinking_content.strip():
                 text_content = thinking_content.strip()
                 yield {'type': 'content', 'data': text_content}
+            if usage_info:
+                yield {'type': 'usage', 'data': usage_info}
             yield {'type': 'done', 'data': None}
 
     def fetch_models(self) -> list[dict]:
@@ -361,6 +377,7 @@ class GeminiProvider(BaseProvider):
                     text_content = ''
                     thinking_content = ''
                     function_calls = {}
+                    usage_info = None
                     for line in resp.iter_lines():
                         if not line or not line.startswith('data: '):
                             continue
@@ -371,6 +388,13 @@ class GeminiProvider(BaseProvider):
                             chunk = json.loads(data_str)
                         except json.JSONDecodeError:
                             continue
+                        _um = chunk.get('usageMetadata')
+                        if _um:
+                            usage_info = {
+                                'input': _um.get('promptTokenCount', 0) or 0,
+                                'output': _um.get('candidatesTokenCount', 0) or 0,
+                                'exact': True,
+                            }
                         candidates = chunk.get('candidates', [])
                         if not candidates:
                             continue
@@ -405,6 +429,8 @@ class GeminiProvider(BaseProvider):
                                 yield {'type': 'content', 'data': text_content}
                             if function_calls:
                                 yield {'type': 'tool_calls', 'data': list(function_calls.values())}
+                            if usage_info:
+                                yield {'type': 'usage', 'data': usage_info}
                             yield {'type': 'done', 'data': None}
                             return
         except httpx.TimeoutException:
@@ -528,6 +554,7 @@ class AnthropicProvider(BaseProvider):
                         return
                     text_content = ''
                     tool_use_blocks = {}
+                    usage_info = {'input': 0, 'output': 0, 'exact': True}
                     for line in resp.iter_lines():
                         if not line or not line.startswith('data: '):
                             continue
@@ -539,6 +566,14 @@ class AnthropicProvider(BaseProvider):
                         except json.JSONDecodeError:
                             continue
                         event_type = event.get('type', '')
+                        if event_type == 'message_start':
+                            _u = (event.get('message') or {}).get('usage') or {}
+                            usage_info['input'] = _u.get('input_tokens', 0) or 0
+                            usage_info['output'] = _u.get('output_tokens', 0) or 0
+                        elif event_type == 'message_delta':
+                            _u = event.get('usage') or {}
+                            if _u.get('output_tokens') is not None:
+                                usage_info['output'] = _u['output_tokens']
                         if event_type == 'content_block_delta':
                             delta = event.get('delta', {})
                             delta_type = delta.get('type', '')
@@ -571,6 +606,8 @@ class AnthropicProvider(BaseProvider):
                                         tc_list.append({'id': tb['id'], 'type': 'function', 'function': tb['function']})
                                 if tc_list:
                                     yield {'type': 'tool_calls', 'data': tc_list}
+                            if usage_info['input'] or usage_info['output']:
+                                yield {'type': 'usage', 'data': usage_info}
                             yield {'type': 'done', 'data': None}
                             return
                         elif event_type == 'error':
@@ -728,6 +765,12 @@ class HuggingFaceProvider(BaseProvider):
                     yield {'type': 'error', 'data': 'Empty response from model'}
                     return
                 content = choices[0].get('message', {}).get('content', '') or ''
+                _u = data.get('usage') or {}
+                if _u:
+                    yield {'type': 'usage', 'data': {
+                        'input': _u.get('prompt_tokens', 0) or 0,
+                        'output': _u.get('completion_tokens', 0) or 0,
+                        'exact': True}}
                 clean_text, tool_calls = self._parse_tool_calls(content)
                 if clean_text:
                     yield {'type': 'content', 'data': clean_text}

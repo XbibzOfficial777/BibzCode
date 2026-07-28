@@ -602,6 +602,8 @@ class Agent:
         self._always_allow_tools = set()  # Tools user auto-approved this session
         # Set once the provider streams a real reasoning delta.
         self._seen_native_reasoning = False
+        # True once a provider reported real token usage for this turn.
+        self._turn_usage_reported = False
         self.created_files = []  # Files created during last chat() call
         
         try:
@@ -870,14 +872,21 @@ class Agent:
         Returns {'content': str, 'tool_rounds': int, 'error': str|None,
                  'stopped_by': str|None, 'metrics': dict}
         """
-        # Re-validate access. enforce_gist() is TTL-cached and fail-open, so a
-        # network blip cannot kill an in-flight conversation. A SystemExit here
-        # is deliberate (ban / quota) and must propagate.
+        # Re-validate access LIVE on every turn. A ban or unban issued from the
+        # dashboard must take effect on the very next message, so this bypasses
+        # the TTL cache (force=True). Still fail-open on network problems: a
+        # SystemExit here is a deliberate ban/quota verdict and must propagate.
         try:
-            from .config import enforce_gist
-            enforce_gist()
+            from .config import enforce_gist, meter_check, QuotaExceeded
+            enforce_gist(force=True)
+            # Refuse to start a generation we cannot pay for.
+            meter_check()
         except SystemExit:
             raise
+        except QuotaExceeded as e:
+            from .config import _deny_and_exit
+            _deny_and_exit("limit",
+                           f"Consumed: {e.usage:,} / Limit: {e.limit:,} tokens.")
         except Exception:
             pass
 
@@ -893,23 +902,25 @@ class Agent:
                     content = last_turn.get('content_preview', '')
                     tools_used_list = last_turn.get('tools_used', [])
                 
-                input_est = len(user_message) // 3 + 1000
-                output_est = len(content) // 3 if content else 100
                 last_tool = tools_used_list[-1] if tools_used_list else "none"
-                
-                from .config import update_gist_usage
-                import threading
-                threading.Thread(
-                    target=update_gist_usage,
-                    args=(input_est, output_est, last_tool),
-                    daemon=True
-                ).start()
+
+                from .config import meter_flush, meter_add
+                # Providers that never reported usage fall back to an estimate
+                # so metering degrades gracefully instead of counting zero.
+                if not self._turn_usage_reported:
+                    meter_add(len(user_message) // 4 + 600,
+                              (len(content) // 4) if content else 80)
+                # Flush synchronously: the next turn must see an up-to-date
+                # balance, and doing it in a daemon thread meant a fast exit
+                # could drop the report entirely.
+                meter_flush(last_tool)
             except Exception:
                 pass
 
     def _chat_impl(self, user_message: str) -> dict:
         self.memory.add_user(user_message)
         self.created_files.clear()
+        self._turn_usage_reported = False
 
         # Inisialisasi dan jalankan Planner jika diperlukan
         self.active_plan = None
@@ -974,6 +985,9 @@ class Agent:
             has_error = False
             needs_retry = False
             self.renderer.reset_for_new_round()
+            _streamed_chars = 0
+            _last_meter_at = 0
+            quota_hit = None
             think_parser = ThinkTagStreamParser()
             self.renderer.begin_stream('thinking…')
 
@@ -1045,6 +1059,23 @@ class Agent:
                     chunk_type = chunk['type']
                     chunk_data = chunk['data']
 
+                    # ── LIVE QUOTA CUT-OFF ──
+                    # Charge output as it streams and stop the moment the
+                    # budget runs out, instead of discovering it afterwards.
+                    if chunk_type == 'content' and chunk_data:
+                        _streamed_chars += len(chunk_data)
+                        if _streamed_chars - _last_meter_at >= 400:
+                            _last_meter_at = _streamed_chars
+                            try:
+                                from .config import meter_add, QuotaExceeded
+                                if not self._turn_usage_reported:
+                                    meter_add(0, 100)   # ~400 chars ≈ 100 tok
+                                from .config import meter_check
+                                meter_check()
+                            except QuotaExceeded as _qe:
+                                quota_hit = _qe
+                                break
+
                     if chunk_type == 'thinking':
                         # Native reasoning confirmed — skip the pre-pass from
                         # now on so we never answer twice.
@@ -1053,6 +1084,17 @@ class Agent:
                         self.renderer.append_thinking(chunk_data)
                     elif chunk_type == 'content':
                         _emit_content(chunk_data)
+                    elif chunk_type == 'usage':
+                        # Real token counts from the provider — meter them and
+                        # sync the running balance.
+                        try:
+                            from .config import meter_add
+                            self._turn_usage_reported = True
+                            snap = meter_add(chunk_data.get('input', 0),
+                                             chunk_data.get('output', 0))
+                            self._last_meter = snap
+                        except Exception:
+                            pass
                     elif chunk_type == 'tool_calls':
                         tool_calls_list = chunk_data
                     elif chunk_type == 'error':
@@ -1104,6 +1146,46 @@ class Agent:
                 else:
                     full_content += seg
                     self.renderer.append_content(seg)
+
+            # ── Quota exhausted mid-generation ──
+            # Persist what the user did receive, report the spend, then stop.
+            if quota_hit is not None:
+                self.renderer.show_done()
+                console.print()
+                console.print('  [bold red]  Token limit reached — generation '
+                              'stopped.[/bold red]')
+                console.print(f'  [dim]Used {quota_hit.usage:,} of '
+                              f'{quota_hit.limit:,} tokens this cycle.[/dim]')
+                if full_content.strip():
+                    self.memory.add_assistant(
+                        full_content + "\n\n[System: stopped — token limit reached]")
+                latency = time.time() - start_time
+                self.metrics.record_turn({
+                    'user_message': user_message[:200],
+                    'round': round_num,
+                    'tool_rounds': tool_rounds,
+                    'tool_calls': 0,
+                    'errors': total_errors,
+                    'tools_used': tools_used[-10:],
+                    'latency': round(latency, 2),
+                    'stopped_by': 'quota_exceeded',
+                    'content_preview': full_content[:200],
+                })
+                self._cleanup_plan(success=False)
+                self._stop_interrupt_monitor()
+                try:
+                    from .config import meter_flush
+                    meter_flush('quota_exceeded')
+                except SystemExit:
+                    raise
+                except Exception:
+                    pass
+                return {'content': full_content,
+                        'tool_rounds': tool_rounds,
+                        'error': f'Token limit reached ({quota_hit.usage:,}/'
+                                 f'{quota_hit.limit:,})',
+                        'stopped_by': 'quota_exceeded',
+                        'metrics': self.metrics.get_summary()}
 
             # Retry round after successful reconnection — don't fall through
             # to empty-response handling with no streamed content.
