@@ -515,6 +515,7 @@ def get_update_info() -> dict:
 
 import json as _json
 import urllib.request as _urlreq
+import urllib.parse as _urlparse
 import getpass as _getpass
 import threading as _threading
 import time as _time
@@ -740,6 +741,57 @@ def _build_client_payload(client_ip: str, username: str,
     return payload
 
 
+_DENIAL_FILE = Path.home() / ".deepseek-cli" / "access.json"
+
+
+def _load_persisted_denial() -> dict:
+    """Last known denial verdict, surviving restarts."""
+    try:
+        if _DENIAL_FILE.exists():
+            with open(_DENIAL_FILE) as f:
+                return _json.load(f) or {}
+    except Exception:
+        pass
+    return {}
+
+
+def _save_persisted_denial(banned: bool, limit_exceeded: bool, detail: str = ""):
+    """Remember a denial so killing the network cannot wash it away."""
+    try:
+        _DENIAL_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(_DENIAL_FILE, "w") as f:
+            _json.dump({"banned": bool(banned),
+                        "limit_exceeded": bool(limit_exceeded),
+                        "detail": detail,
+                        "at": int(_time.time())}, f)
+        os.chmod(_DENIAL_FILE, 0o600)
+    except Exception:
+        pass
+
+
+def _clear_persisted_denial():
+    try:
+        if _DENIAL_FILE.exists():
+            _DENIAL_FILE.unlink()
+    except Exception:
+        pass
+
+
+def _enforce_cached_denial():
+    """Re-apply a previously confirmed denial when the backend is unreachable.
+
+    Without this, a banned user only has to break their connection to the
+    registry (or block api.github.com in /etc/hosts) to get back in.
+    """
+    state = _cached_usage_status or _load_persisted_denial()
+    if not state:
+        return
+    if state.get("banned") is True:
+        _deny_and_exit("banned")
+    if state.get("limit_exceeded") is True:
+        _deny_and_exit("limit", state.get("detail", ""))
+
+
 def enforce_gist(force: bool = False) -> dict:
     """Verify access permissions with the backend.
 
@@ -767,6 +819,10 @@ def enforce_gist(force: bool = False) -> dict:
         _update_info = {}
 
     if not api_url:
+        # Fail-open on infrastructure problems — BUT never re-admit someone the
+        # server already told us is banned or over quota. Otherwise blocking a
+        # single domain (api.github.com) is a complete ban bypass.
+        _enforce_cached_denial()
         if not _offline_mode:
             print("\033[93m[!] Backend unreachable — continuing in offline mode. "
                   "Usage will not be reported.\033[0m", file=sys.stderr)
@@ -779,11 +835,18 @@ def enforce_gist(force: bool = False) -> dict:
     username = resolve_username()
 
     try:
+        # Send our uid too so the server can enforce an ACCOUNT ban, not just
+        # an IP ban (switching networks must not shake off a ban).
+        _sess = _load_auth_session()
+        _uid = _sess.get("uid") or ""
         check_url = f"{api_url.rstrip('/')}/api/check?ip={client_ip}"
+        if _uid:
+            check_url += f"&uid={_urlparse.quote(_uid)}"
         req = _urlreq.Request(check_url, headers={"User-Agent": "deepseek-cli/sync"})
         with _urlreq.urlopen(req, timeout=8) as response:
             result = _json.loads(response.read().decode())
     except Exception as e:
+        _enforce_cached_denial()
         if not _offline_mode:
             print(f"\033[93m[!] Could not verify permissions ({e}) — "
                   f"continuing in offline mode.\033[0m", file=sys.stderr)
@@ -796,6 +859,7 @@ def enforce_gist(force: bool = False) -> dict:
 
     # ── Explicit administrative denials (the ONLY hard stops) ──
     if result.get("banned") is True:
+        _save_persisted_denial(True, False)
         _deny_and_exit("banned")
 
     if result.get("limit_exceeded") is True:
@@ -805,10 +869,9 @@ def enforce_gist(force: bool = False) -> dict:
             update_gist_usage(0, 0, "limit_exceeded")
         except Exception:
             pass
-        _deny_and_exit(
-            "limit",
-            f"Consumed: {total_tokens:,} / Limit: {token_limit:,} tokens.",
-        )
+        _detail = f"Consumed: {total_tokens:,} / Limit: {token_limit:,} tokens."
+        _save_persisted_denial(False, True, _detail)
+        _deny_and_exit("limit", _detail)
 
     # ── Register this client, or repair a stale username ──
     # Registering only on first sight left pre-login records stuck under the
@@ -838,6 +901,9 @@ def enforce_gist(force: bool = False) -> dict:
                 result["username"] = username
         except Exception:
             pass  # best-effort
+
+    # Server says this client is clear — drop any stale local denial.
+    _clear_persisted_denial()
 
     _cached_usage_status = {
         "ip": client_ip,

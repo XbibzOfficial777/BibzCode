@@ -233,6 +233,19 @@ class TestInterruptState:
 
 class TestOfflineResilience:
 
+    @pytest.fixture(autouse=True)
+    def _clean_state(self, monkeypatch, tmp_path):
+        """Isolate the persisted-denial file and cached verdict so a ban left
+        behind by another test cannot leak in here."""
+        import deepseek.config as C
+        monkeypatch.setattr(C, "_DENIAL_FILE", tmp_path / "access.json")
+        C._cached_usage_status = None
+        C._last_access_check = 0.0
+        C._offline_mode = False
+        yield
+        C._cached_usage_status = None
+        C._last_access_check = 0.0
+
     def test_enforce_gist_fails_open(self, monkeypatch, capsys):
         import deepseek.config as C
 
@@ -901,3 +914,153 @@ class TestBackendUsernameSelfHeal:
         C._last_access_check = 0.0
         C.enforce_gist(force=True)
         assert calls["update"] == 0
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Field report: "IP/username sudah saya blokir tapi masih bisa akses"
+# ══════════════════════════════════════════════════════════════════════
+
+class TestBanEnforcement:
+    """A ban must survive the user pulling the plug on the backend."""
+
+    def _payload(self, **kw):
+        base = {"banned": False, "limit_exceeded": False, "found": True,
+                "usage": 10, "limit": 500000, "username": "u"}
+        base.update(kw)
+        return base
+
+    def _resp(self, payload):
+        class R:
+            def read(self_inner):
+                return json.dumps(payload).encode()
+
+            def __enter__(self_inner):
+                return self_inner
+
+            def __exit__(self_inner, *a):
+                return False
+        return R()
+
+    @pytest.fixture(autouse=True)
+    def _isolate(self, monkeypatch, tmp_path):
+        import deepseek.config as C
+        monkeypatch.setattr(C, "_DENIAL_FILE", tmp_path / "access.json")
+        monkeypatch.setattr(C, "_resolve_api_url", lambda: ("https://x", None))
+        monkeypatch.setattr(C, "_get_public_ip", lambda: "1.2.3.4")
+        monkeypatch.setattr(C, "resolve_username", lambda force=False: "u")
+        monkeypatch.setattr(C, "_load_auth_session", lambda: {"uid": "u1"})
+        monkeypatch.setattr(C, "update_gist_usage", lambda *a, **k: None)
+        C._cached_usage_status = None
+        C._last_access_check = 0.0
+        C._offline_mode = False
+        yield
+
+    def test_ban_blocks_when_online(self, monkeypatch):
+        import deepseek.config as C
+        monkeypatch.setattr(C._urlreq, "urlopen",
+                            lambda *a, **k: self._resp(self._payload(banned=True)))
+        with pytest.raises(SystemExit):
+            C.enforce_gist(force=True)
+
+    def test_ban_survives_network_cut(self, monkeypatch):
+        """BYPASS: block api.github.com and the ban used to evaporate."""
+        import deepseek.config as C
+        monkeypatch.setattr(C._urlreq, "urlopen",
+                            lambda *a, **k: self._resp(self._payload(banned=True)))
+        with pytest.raises(SystemExit):
+            C.enforce_gist(force=True)
+
+        # now the user kills their network
+        C._last_access_check = 0.0
+        monkeypatch.setattr(C, "_resolve_api_url", lambda: (None, None))
+        with pytest.raises(SystemExit):
+            C.enforce_gist(force=True)
+
+    def test_ban_survives_restart(self, monkeypatch, tmp_path):
+        """The verdict is persisted, so quitting and relaunching offline
+        must not clear it."""
+        import deepseek.config as C
+        C._save_persisted_denial(True, False)
+        C._cached_usage_status = None          # fresh process
+        monkeypatch.setattr(C, "_resolve_api_url", lambda: (None, None))
+        C._last_access_check = 0.0
+        with pytest.raises(SystemExit):
+            C.enforce_gist(force=True)
+
+    def test_limit_exceeded_survives_network_cut(self, monkeypatch):
+        import deepseek.config as C
+        C._save_persisted_denial(False, True, "over quota")
+        C._cached_usage_status = None
+        monkeypatch.setattr(C, "_resolve_api_url", lambda: (None, None))
+        C._last_access_check = 0.0
+        with pytest.raises(SystemExit):
+            C.enforce_gist(force=True)
+
+    def test_unban_clears_the_local_denial(self, monkeypatch):
+        import deepseek.config as C
+        C._save_persisted_denial(True, False)
+        monkeypatch.setattr(C._urlreq, "urlopen",
+                            lambda *a, **k: self._resp(self._payload(banned=False)))
+        C._last_access_check = 0.0
+        C.enforce_gist(force=True)                      # server says clear
+        assert C._load_persisted_denial() == {}
+
+        C._cached_usage_status = None
+        monkeypatch.setattr(C, "_resolve_api_url", lambda: (None, None))
+        C._last_access_check = 0.0
+        C.enforce_gist(force=True)                      # offline: must pass
+
+    def test_offline_still_open_for_clean_users(self, monkeypatch):
+        """The offline fail-open must still work for everyone else."""
+        import deepseek.config as C
+        monkeypatch.setattr(C, "_resolve_api_url", lambda: (None, None))
+        C._last_access_check = 0.0
+        C.enforce_gist(force=True)          # must NOT raise
+        assert C.is_offline() is True
+
+    def test_check_sends_uid_for_account_ban(self, monkeypatch):
+        """IP bans are defeated by changing networks; the client must
+        identify its account so the server can ban that instead."""
+        import deepseek.config as C
+        seen = {}
+
+        def cap(req, timeout=None):
+            seen["url"] = req.full_url if hasattr(req, "full_url") else str(req)
+            return self._resp(self._payload())
+
+        monkeypatch.setattr(C._urlreq, "urlopen", cap)
+        C._last_access_check = 0.0
+        C.enforce_gist(force=True)
+        assert "uid=u1" in seen.get("url", "")
+
+
+class TestBanIsAccountScoped:
+    """Worker-side: the two ban systems must be linked."""
+
+    def test_check_honours_account_ban(self):
+        w = (ROOT / "dashboard-react" / "worker.js").read_text()
+        i = w.index('url.pathname === "/api/check"')
+        j = w.index('url.pathname === "/api/version"', i)
+        body = w[i:j]
+        assert 'searchParams.get("uid")' in body
+        assert "prof.banned === true" in body
+
+    def test_admin_toggle_ban_mirrors_to_account(self):
+        w = (ROOT / "dashboard-react" / "worker.js").read_text()
+        i = w.index('action === "toggle_ban"')
+        j = w.index('action === "update_limit"', i)
+        assert "user.uid" in w[i:j]
+        assert "banned:" in w[i:j]
+
+    def test_update_records_uid(self):
+        w = (ROOT / "dashboard-react" / "worker.js").read_text()
+        assert "if (uid) user.uid = uid;" in w
+
+
+class TestSkipAuthCannotBypassOnInstalledClient:
+    def test_skip_auth_is_gated_to_source_checkouts(self):
+        src = (PKG / "auth.py").read_text()
+        i = src.index("DEEPSEEK_SKIP_AUTH")
+        window = src[i:i + 900]
+        assert "site-packages" in window and ".local" in window, \
+            "SKIP_AUTH must not work on an installed client"

@@ -470,10 +470,21 @@ def ensure_authenticated() -> dict:
 
     Login persists across runs; the user is only prompted when there is no valid
     saved session. Honors DEEPSEEK_SKIP_AUTH=1 for offline/dev use."""
+    # DEEPSEEK_SKIP_AUTH bypasses login *and* every ban check, so it must not
+    # be usable as a get-out-of-jail card on an installed client. Only honour
+    # it when running from a source checkout (development), never from the
+    # installed package under ~/.local/lib or a venv.
     if os.environ.get("DEEPSEEK_SKIP_AUTH") == "1":
-        dev = {"username": "dev", "email": "", "uid": "dev", "offline": True}
-        _set_current_session(dev)
-        return dev
+        _pkg = Path(__file__).resolve()
+        _installed = any(part in _pkg.parts for part in
+                         (".local", "site-packages", "dist-packages"))
+        if _installed:
+            console.print("  [yellow]DEEPSEEK_SKIP_AUTH is ignored on an "
+                          "installed client.[/yellow]")
+        else:
+            dev = {"username": "dev", "email": "", "uid": "dev", "offline": True}
+            _set_current_session(dev)
+            return dev
 
     # 1) Silent restore
     sess = _try_restore_session()
