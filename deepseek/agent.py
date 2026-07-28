@@ -913,7 +913,23 @@ class Agent:
                 # Flush synchronously: the next turn must see an up-to-date
                 # balance, and doing it in a daemon thread meant a fast exit
                 # could drop the report entirely.
-                meter_flush(last_tool)
+                snap = meter_flush(last_tool)
+                # Warn before the wall, not after. Tool schemas alone can cost
+                # ~17k input tokens per round on some providers, so a user can
+                # go from "fine" to "blocked" in one turn without notice.
+                try:
+                    if snap and snap.get("limit"):
+                        pct = snap.get("pct", 0)
+                        if pct >= 90:
+                            console.print(
+                                f'  [bold red]Quota {pct:.0f}% used — '
+                                f'{snap["remaining"]:,} tokens left.[/bold red]')
+                        elif pct >= 75:
+                            console.print(
+                                f'  [yellow]Quota {pct:.0f}% used — '
+                                f'{snap["remaining"]:,} tokens left.[/yellow]')
+                except Exception:
+                    pass
             except Exception:
                 pass
 
@@ -962,6 +978,7 @@ class Agent:
             self._run_thinking_pass(user_message)
 
         stopped_by = None
+        quota_hit = None
 
         # Start background ESC monitor so double-ESC works even during network I/O
         self._start_interrupt_monitor()
@@ -978,6 +995,21 @@ class Agent:
                 current_step = self.active_plan.get_next_pending()
                 if current_step:
                     current_step.status = 'in_progress'
+            # Re-check before EVERY round. A single round with the full tool
+            # schema costs ~17k input tokens on some providers, so a turn that
+            # started inside budget can still overshoot badly across rounds.
+            try:
+                from .config import meter_check, QuotaExceeded
+                meter_check()
+            except QuotaExceeded as _qe:
+                if round_num == 0:
+                    raise
+                quota_hit = _qe
+                console.print()
+                console.print('  [bold red]  Token limit reached — stopping '
+                              'before the next tool round.[/bold red]')
+                break
+
             messages = self.memory.get_messages()
             full_content = ''
             thinking_text = ''
