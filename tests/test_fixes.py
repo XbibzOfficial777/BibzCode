@@ -1333,3 +1333,121 @@ class TestAuthNetworkResilience:
         sig = inspect.signature(_post_json)
         assert sig.parameters["timeout"].default >= 30
         assert sig.parameters["retries"].default >= 1
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Dua sistem ban yang HARUS terpisah dan keduanya berfungsi:
+#   * Ban IP / CLI  -> /api/admin/action   (Gist, kunci username) scope="ip"
+#   * Ban Account   -> /api/admin/user_action (Firebase, uid)     scope="account"
+# ══════════════════════════════════════════════════════════════════════
+
+class TestTwoBanSystemsAreDistinct:
+
+    def _worker(self):
+        return (ROOT / "dashboard-react" / "worker.js").read_text()
+
+    def test_ip_ban_does_not_disable_the_account(self):
+        """Blocking one abusive machine must not lock the person out of every
+        device — that is what the account ban is for."""
+        w = self._worker()
+        i = w.index('action === "toggle_ban"')
+        j = w.index('action === "update_limit"', i)
+        body = w[i:j]
+        assert "banFirebaseUser" not in body
+        assert "disableUser" not in body
+        # It must not flip the account-level `banned` flag either.
+        assert "cli_banned" in body, "CLI ban must use its own field"
+
+    def test_account_ban_disables_firebase_auth(self):
+        w = self._worker()
+        i = w.index('action === "ban"')
+        j = w.index('action === "unban"', i)
+        body = w[i:j]
+        assert "banFirebaseUser" in body
+        assert "banned: true" in body
+
+    def test_check_reports_scope_for_both(self):
+        w = self._worker()
+        assert 'scope: "account"' in w
+        assert 'scope: user.banned === true ? "ip" : null' in w
+
+    def test_each_ban_sends_its_own_notification(self):
+        w = self._worker()
+        for t in ("account_ban", "account_unban", "cli_ban", "cli_unban"):
+            assert f'"{t}"' in w, f"missing notification type {t}"
+
+    def test_notifications_say_different_things(self):
+        w = self._worker()
+        assert "cannot sign in on any device" in w   # account
+        assert "still active" in w                   # cli/ip
+
+
+class TestBanMessagesAreDistinct:
+    """The CLI must tell the user WHICH ban hit them."""
+
+    def _capture(self, **kw):
+        import deepseek.config as C
+        buf = io.StringIO()
+        old = sys.stderr
+        sys.stderr = buf
+        try:
+            C._deny_and_exit(**kw)
+        except SystemExit:
+            pass
+        finally:
+            sys.stderr = old
+        return buf.getvalue()
+
+    def test_ip_ban_says_account_is_fine(self):
+        out = self._capture(kind="banned", scope="ip")
+        assert "THIS DEVICE IS BLOCKED" in out
+        assert "still active" in out
+        assert "SUSPENDED" not in out
+
+    def test_account_ban_says_all_devices(self):
+        out = self._capture(kind="banned", scope="account")
+        assert "ACCOUNT SUSPENDED" in out
+        assert "every device" in out
+
+    def test_reason_is_shown_when_present(self):
+        out = self._capture(kind="banned", scope="account", reason="ToS breach")
+        assert "ToS breach" in out
+
+    def test_limit_is_not_confused_with_a_ban(self):
+        out = self._capture(kind="limit", detail="Consumed: 9 / Limit: 5 tokens.")
+        assert "TOKEN LIMIT" in out
+        assert "NOT banned" in out
+
+    def test_unknown_scope_falls_back_safely(self):
+        out = self._capture(kind="banned")
+        assert "ACCESS DENIED" in out
+
+    def test_scope_and_reason_survive_offline(self, monkeypatch, tmp_path):
+        """A cached denial must remember which ban it was."""
+        import deepseek.config as C
+        monkeypatch.setattr(C, "_DENIAL_FILE", tmp_path / "access.json")
+        C._save_persisted_denial(True, False, scope="ip", reason="abuse")
+        state = C._load_persisted_denial()
+        assert state["scope"] == "ip"
+        assert state["reason"] == "abuse"
+
+    def test_auth_distinguishes_account_ban_from_cli_ban(self):
+        src = (PKG / "auth.py").read_text()
+        i = src.index("def _exit_if_banned(")
+        j = src.index("\ndef ", i + 10)
+        body = src[i:j]
+        assert "cli_banned" in body, "device ban must not be reported as account ban"
+        assert "ACCOUNT SUSPENDED" in body
+        # the CLI-scoped branch must NOT exit
+        assert body.count("sys.exit(1)") == 1
+
+
+class TestDashboardLabelsAreUnambiguous:
+    def test_ip_button_explains_scope(self):
+        t = (ROOT / "dashboard-react" / "src" / "components" / "UserTable.tsx").read_text()
+        assert "does not affect the account" in t
+
+    def test_account_button_says_account(self):
+        t = (ROOT / "dashboard-react" / "src" / "components" / "CliUsersModal.tsx").read_text()
+        assert "Ban Account" in t
+        assert "suspends the whole ACCOUNT" in t

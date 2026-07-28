@@ -688,23 +688,53 @@ def _print_block(lines, color="1;31"):
     print(f"\033[{color}m{bar}\033[0m\n", file=sys.stderr)
 
 
-def _deny_and_exit(kind: str, detail: str = ""):
-    """Only called for an explicit administrative denial from the server."""
+def _deny_and_exit(kind: str, detail: str = "", scope: str = "",
+                   reason: str = ""):
+    """Explicit administrative denial from the server.
+
+    `scope` distinguishes the two independent ban systems so the user is told
+    what actually happened instead of a vague "you are banned":
+      * "account" — the Firebase account is suspended; no device can sign in.
+      * "ip"      — only this machine/network is blocked; the account is fine.
+    """
+    lines = []
     if kind == "banned":
-        _print_block([
-            "ACCESS DENIED! This account/IP has been BANNED.",
+        if scope == "account":
+            lines = [
+                "ACCESS DENIED — ACCOUNT SUSPENDED",
+                "",
+                "Your ACCOUNT has been suspended by an administrator.",
+                "This applies to every device — signing in elsewhere will",
+                "not help.",
+            ]
+        elif scope == "ip":
+            lines = [
+                "ACCESS DENIED — THIS DEVICE IS BLOCKED",
+                "",
+                "CLI access from this IP address has been blocked.",
+                "Your ACCOUNT itself is still active: you can still sign in",
+                "on the web dashboard.",
+            ]
+        else:
+            lines = ["ACCESS DENIED — This account or device has been BANNED."]
+        if reason:
+            lines += ["", f"Reason: {reason}"]
+        lines += [
             "-" * 50,
             "To appeal, contact @XbibzOfficial on Telegram:",
             "  -> https://t.me/XbibzOfficial",
-        ])
+        ]
     else:
-        _print_block([
-            "ACCESS DENIED! Token limit has been exceeded.",
+        lines = [
+            "ACCESS DENIED — TOKEN LIMIT EXCEEDED",
+            "",
             detail,
+            "Your account is NOT banned; the quota resets on the next cycle.",
             "-" * 50,
             "To request a limit increase, contact @XbibzOfficial:",
             "  -> https://t.me/XbibzOfficial",
-        ])
+        ]
+    _print_block([ln for ln in lines if ln is not None])
     sys.exit(1)
 
 
@@ -755,7 +785,8 @@ def _load_persisted_denial() -> dict:
     return {}
 
 
-def _save_persisted_denial(banned: bool, limit_exceeded: bool, detail: str = ""):
+def _save_persisted_denial(banned: bool, limit_exceeded: bool, detail: str = "",
+                           scope: str = "", reason: str = ""):
     """Remember a denial so killing the network cannot wash it away."""
     try:
         _DENIAL_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -763,6 +794,8 @@ def _save_persisted_denial(banned: bool, limit_exceeded: bool, detail: str = "")
             _json.dump({"banned": bool(banned),
                         "limit_exceeded": bool(limit_exceeded),
                         "detail": detail,
+                        "scope": scope,
+                        "reason": reason,
                         "at": int(_time.time())}, f)
         os.chmod(_DENIAL_FILE, 0o600)
     except Exception:
@@ -787,7 +820,8 @@ def _enforce_cached_denial():
     if not state:
         return
     if state.get("banned") is True:
-        _deny_and_exit("banned")
+        _deny_and_exit("banned", scope=state.get("scope", ""),
+                       reason=state.get("reason", ""))
     if state.get("limit_exceeded") is True:
         _deny_and_exit("limit", state.get("detail", ""))
 
@@ -859,8 +893,10 @@ def enforce_gist(force: bool = False) -> dict:
 
     # ── Explicit administrative denials (the ONLY hard stops) ──
     if result.get("banned") is True:
-        _save_persisted_denial(True, False)
-        _deny_and_exit("banned")
+        _scope = result.get("scope") or ""
+        _reason = result.get("ban_reason") or ""
+        _save_persisted_denial(True, False, scope=_scope, reason=_reason)
+        _deny_and_exit("banned", scope=_scope, reason=_reason)
 
     if result.get("limit_exceeded") is True:
         total_tokens = result.get("usage", 0) or 0

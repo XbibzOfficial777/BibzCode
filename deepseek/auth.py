@@ -320,12 +320,34 @@ def _is_banned(uid: str, id_token: str = "") -> bool:
 
 
 def _exit_if_banned(uid: str, id_token: str = ""):
-    if _is_banned(uid, id_token):
+    """Account-level ban check (Firebase profile).
+
+    Distinct from the CLI/IP ban enforced in config.enforce_gist(): this one
+    means the *account* is suspended, so no device can sign in.
+    """
+    prof = rtdb_get_user(uid, id_token)
+    if prof.get("banned"):
+        reason = prof.get("ban_reason") or ""
         console.print()
-        console.print("  [bold red]██ ACCESS DENIED ██[/bold red]")
-        console.print("  [red]Your account has been banned by the administrator.[/red]")
+        console.print("  [bold red]██ ACCESS DENIED — ACCOUNT SUSPENDED ██[/bold red]")
+        console.print("  [red]Your ACCOUNT has been suspended by an administrator.[/red]")
+        console.print("  [dim]This applies to every device — signing in elsewhere "
+                      "will not help.[/dim]")
+        if reason:
+            console.print(f"  [red]Reason:[/red] {reason}")
+        console.print("  [dim]Appeal: https://t.me/XbibzOfficial[/dim]")
         console.print()
         sys.exit(1)
+    # A device-scoped CLI ban is NOT an account ban — surface it as a warning
+    # so the user understands why the CLI may refuse to run.
+    if prof.get("cli_banned"):
+        ip = prof.get("cli_banned_ip") or "this device"
+        console.print()
+        console.print("  [bold yellow]CLI access blocked on one device[/bold yellow]")
+        console.print(f"  [yellow]dscli is blocked from {ip}. Your account is "
+                      f"still active.[/yellow]")
+        console.print("  [dim]Appeal: https://t.me/XbibzOfficial[/dim]")
+        console.print()
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -520,7 +542,12 @@ def _try_restore_session() -> dict:
     # than reusing the stale value cached in auth.json.
     prof = rtdb_get_user(sess["uid"], sess["id_token"])
     if prof.get("banned"):
-        console.print("  [bold red]Your account has been banned.[/bold red]")
+        console.print()
+        console.print("  [bold red]██ ACCOUNT SUSPENDED ██[/bold red]")
+        if prof.get("ban_reason"):
+            console.print(f"  [red]Reason:[/red] {prof['ban_reason']}")
+        console.print("  [dim]Appeal: https://t.me/XbibzOfficial[/dim]")
+        console.print()
         sys.exit(1)
     remote_username = prof.get("username") or ""
     if remote_username:
