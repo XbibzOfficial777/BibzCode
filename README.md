@@ -1,12 +1,12 @@
 <div align="center">
 
-# 🧠 DeepSeek CLI Agent v7.7
+# 🧠 DeepSeek CLI Agent v7.8.0
 ### *The Ultimate Multi-Provider AI Agent for Developers*
 [![deepseek-cli](https://imgbs.com/uploads/670312-c65bfd00.png)](https://deepseek-cli.pages.dev)
 
-[![Version](https://img.shields.io/badge/Version-7.7.0-00FFA3.svg?style=for-the-badge)](https://github.com/XbibzOfficial777/deepseek-cli)
+[![Version](https://img.shields.io/badge/Version-7.8.0-00FFA3.svg?style=for-the-badge)](https://github.com/XbibzOfficial777/deepseek-cli)
 [![License](https://img.shields.io/badge/License-MIT-white.svg?style=for-the-badge)](https://github.com/XbibzOfficial777/deepseek-cli/blob/main/LICENSE)
-[![Python](https://img.shields.io/badge/Python-3.8%2B-3776AB.svg?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB.svg?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Termux-FF6F00.svg?style=for-the-badge)](https://github.com/XbibzOfficial777/deepseek-cli)
 [![Tools](https://img.shields.io/badge/Tools-120%2B-8A2BE2.svg?style=for-the-badge)](https://github.com/XbibzOfficial777/deepseek-cli)
 
@@ -118,6 +118,46 @@ From inside the REPL:
 - Sessions auto-saved to `~/.deepseek-cli/sessions/` after every turn
 
 ---
+
+## 🧠 Automatic Long-Conversation Memory
+
+When active context reaches 72% of the detected model context window, or 80 active
+messages, DeepSeek CLI automatically compacts older turns into structured long-term
+memory. It preserves user preferences, facts, decisions, files, tool outcomes,
+completed work, and pending tasks.
+
+The original messages are **not deleted**: they are moved into a lossless session
+archive, retained after resume, and included in TXT/Markdown/HTML exports. The 20
+most recent messages remain active for conversational continuity. `/compact` forces
+this process and `/context` displays active/archived counts and token estimates.
+
+```yaml
+# ~/.deepseek-cli/config.yaml
+auto_compact: true
+auto_compact_ratio: 0.72
+auto_compact_message_count: 80
+compact_keep_recent: 20
+# context_window_tokens: 128000  # optional override
+```
+
+## 📎 Connector Replies & Attachments
+
+Telegram and Discord connectors understand both the current message and the message
+being replied to. They download current/replied attachments with sanitized names,
+private file permissions, and a configurable 25 MB limit.
+
+Supported inputs include generic documents, PDF, DOCX, PPTX, XLSX, CSV, images/OCR,
+audio/video metadata, APK, Telegram media/stickers/contact/location/poll/quotes, and
+Discord attachments/embeds/stickers/polls/mentions. Each `(platform, chat, user)` has
+isolated memory.
+
+Remote connector agents can only read the exact files downloaded into the connector
+upload directory. They cannot browse arbitrary host files or invoke shell/write
+capabilities. Explicit Telegram/Discord user-ID whitelists remain mandatory.
+
+```bash
+export DEEPSEEK_CONNECTOR_MAX_FILE_MB=25
+```
 
 ## 🧪 Multi-Agent System
 
@@ -462,6 +502,12 @@ Config file: `~/.deepseek-cli/config.yaml`
 | `mcp_servers` | Connected MCP server configs |
 
 ---
+
+## 🔒 Dashboard Source
+
+The React/Cloudflare dashboard is deployed and maintained separately and is
+intentionally excluded from this public CLI repository. This repository contains
+only the CLI, installer, documentation, and CLI test suite.
 
 ## 🤝 Contributing
 

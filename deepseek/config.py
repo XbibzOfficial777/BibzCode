@@ -12,7 +12,7 @@ from pathlib import Path
 CONFIG_DIR = Path.home() / '.deepseek-cli'
 CONFIG_FILE = CONFIG_DIR / 'config.yaml'
 LEGACY_KEY_FILE = Path.home() / '.deepseek_api_key'
-CLIENT_VERSION = "7.8"
+CLIENT_VERSION = "7.8.0"
 
 # Default Gist ID — embedded so every install auto-connects to dashboard backend
 # The Gist is public, no secret. PAT stays optional (env/config only, NOT in code).

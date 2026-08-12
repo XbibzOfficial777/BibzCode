@@ -2492,7 +2492,7 @@ def show_version():
     version_table = Table(box=box.SIMPLE, show_header=False, border_style='cyan')
     version_table.add_column('Key', style='bold cyan', min_width=20)
     version_table.add_column('Value', style='white')
-    version_table.add_row('Version', 'DeepSeek CLI Agent v7.8')
+    version_table.add_row('Version', 'DeepSeek CLI Agent v7.8.0')
     version_table.add_row('Developer', 'Xbibz Official')
     version_table.add_row('TUI', 'Full Real-Time Stream | Rich Markdown | Smooth Buffer')
     version_table.add_row('Features', '88 core tools (+24 with Selenium) | 8 Providers | Smart Loop | OCR | Connectors')

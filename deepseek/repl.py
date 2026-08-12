@@ -55,8 +55,8 @@ def _reminder_worker(seconds, message):
     _reminders[:] = [r for r in _reminders if r['seconds'] != seconds or r['message'] != message]
 
 
-VERSION = '7.8'
-VERSION_BANNER = 'DeepSeek CLI Agent v7.8'
+VERSION = '7.8.0'
+VERSION_BANNER = 'DeepSeek CLI Agent v7.8.0'
 VERSION_FEATURES = 'Multi-Provider | 8 AI Services | 88+ Tools | Real-Time Stream | Rich Markdown | Web Browser | Smart Loop | OCR | Telegram & Discord | Auth Automation'
 
 
@@ -530,8 +530,15 @@ def handle_command(cmd: str, agent: Agent, memory: Memory, tools: ToolRegistry) 
 
     # ── /compact ──────────────────────
     elif command == '/compact':
-        compact_memory(memory)
-        console.print('  [green]Conversation compacted (system + last 10).[/green]')
+        result = agent.compact_memory(force=True, execution_source='cli')
+        if result.get('compacted'):
+            console.print(
+                f"  [green]Conversation compacted.[/green] "
+                f"[dim]{result['archived_messages']} messages archived losslessly; "
+                f"{result['active_messages']} remain active.[/dim]"
+            )
+        else:
+            console.print('  [dim yellow]Not enough history to compact yet.[/dim yellow]')
         console.print()
 
     # ── /remind ──────────────────────────
@@ -1015,8 +1022,11 @@ def _settings_session_menu(agent, memory, session_id):
         console.print()
         export_chat(memory, fname)
     elif idx == 2:
-        compact_memory(memory)
-        console.print('  [green]Conversation compacted (system + last 10).[/green]')
+        result = agent.compact_memory(force=True, execution_source='cli')
+        if result.get('compacted'):
+            console.print(f"  [green]Conversation compacted; {result['archived_messages']} messages archived losslessly.[/green]")
+        else:
+            console.print('  [dim yellow]Not enough history to compact yet.[/dim yellow]')
     elif idx == 3:
         memory.clear()
         console.print('  [green]Conversation cleared.[/green]')
@@ -1722,15 +1732,6 @@ def toggle_thinking(agent: Agent):
     console.print()
 
 
-def compact_memory(memory: Memory):
-    """Compact conversation to system + last 10 messages."""
-    messages = memory.get_messages()
-    system = [m for m in messages if m['role'] == 'system']
-    non_system = [m for m in messages if m['role'] != 'system']
-    keep = non_system[-10:] if len(non_system) > 10 else non_system
-    memory.messages = system + keep
-
-
 def do_live_search(query: str):
     """Execute a live web search and display results directly."""
     console.print()
@@ -2229,36 +2230,55 @@ def _do_live_model_select(agent: Agent):
 # ══════════════════════════════════════
 
 def _init_connectors(agent, memory):
-    """Initialize connector manager with agent callback."""
-    def agent_callback(message, source='cli', user='User'):
-        """Bridge: connector message -> agent.chat()"""
+    """Initialize isolated, capability-limited connector sessions.
+
+    Each remote identity gets its own Memory/Agent. Calls are serialized because
+    Rich terminal rendering and provider clients are not designed for concurrent
+    writes to the same TTY.
+    """
+    remote_agents = {}
+    remote_lock = threading.RLock()
+
+    def _remote_agent(source: str, user_id: str):
+        key = (source, user_id)
+        remote = remote_agents.get(key)
+        if remote is None:
+            remote_memory = Memory()
+            remote_tools = ToolRegistry(memory=remote_memory)
+            remote = Agent(remote_memory, remote_tools, agent.provider,
+                           agent.model, thinking_visible=False)
+            remote_agents[key] = remote
+        # Follow provider/model changes made in the local settings panel.
+        remote.set_provider(agent.provider)
+        remote.set_model(agent.model)
+        return remote
+
+    def agent_callback(message, source='remote', user='User', user_id='', chat_id='',
+                       files=None, reply_context=''):
         try:
-            result = agent.chat(message)
-            text = result.get('content', '(No response)')
-
-            # Auto-send created files back through the connector
-            if source == 'telegram' and agent.created_files:
-                tg = connector_manager.telegram
-                if tg and hasattr(tg, 'last_chat_id'):
-                    for fpath in agent.created_files:
-                        try:
-                            tg.send_document(tg.last_chat_id, fpath,
-                                             caption=f'Created: {os.path.basename(fpath)}')
-                        except Exception:
-                            pass
-            elif source == 'discord' and agent.created_files:
-                dc = connector_manager.discord
-                if dc:
-                    for fpath in agent.created_files:
-                        try:
-                            dc.send_document(fpath, caption=f'Created: {os.path.basename(fpath)}')
-                        except Exception:
-                            pass
-
-            return text
+            identity = f'{chat_id}:{user_id or user}'
+            with remote_lock:
+                remote = _remote_agent(source, identity)
+                if files or reply_context:
+                    result = remote.chat_with_files(
+                        message, files or [], execution_source=source,
+                        reply_context=reply_context,
+                    )
+                else:
+                    result = remote.chat_from_source(message, source)
+            return result.get('content', '(No response)')
         except Exception as e:
             return f'Agent error: {e}'
 
+    def clear_remote_memory(source=None, user_id=None, chat_id=None):
+        with remote_lock:
+            if source is not None and user_id is not None:
+                identity = f'{chat_id or ""}:{user_id}'
+                remote_agents.pop((source, identity), None)
+            else:
+                remote_agents.clear()
+
+    agent_callback.clear_memory = clear_remote_memory
     connector_manager.set_agent_callback(agent_callback)
     connector_manager.set_agent_memory(memory)
 

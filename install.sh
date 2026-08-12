@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════════════════
-#  DeepSeek CLI v7.8 — Installer / Uninstaller (Modernized)
+#  DeepSeek CLI v7.8.0 — Installer / Uninstaller (Modernized)
 #  Multi-Provider AI Agent | 8 Providers | 90+ Tools | Smart Loop | OCR
 #  Features: Live Search, Browser Automation, Telegram & Discord Connectors
 #  Document Tools (PPTX/XLSX/DOCX/CSV/PDF), Selenium, Rich Markdown UI
@@ -90,7 +90,7 @@ stop_spinner() {
 
 echo ""
 echo -e "${CY}${B}  ╔══════════════════════════════════════════╗${R}"
-echo -e "${CY}${B}  ║      DeepSeek CLI v7.8  Installer       ║${R}"
+echo -e "${CY}${B}  ║      DeepSeek CLI v7.8.0  Installer       ║${R}"
 echo -e "${CY}${B}  ║         Developer : @XbibzOfficial777   ║${R}"
 echo -e "${CY}${B}  ╚══════════════════════════════════════════╝${R}"
 echo ""
@@ -105,7 +105,7 @@ case " ${0:-} ${1:-} ${*} " in
 esac
 if $UNINSTALL_MODE; then
     echo -e "${YE}${B}  ╔══════════════════════════════════════════╗${R}"
-    echo -e "${YE}${B}  ║     DeepSeek CLI v7.8  Uninstaller     ║${R}"
+    echo -e "${YE}${B}  ║     DeepSeek CLI v7.8.0  Uninstaller     ║${R}"
     echo -e "${YE}${B}  ╚══════════════════════════════════════════╝${R}"
     echo ""
 
@@ -241,8 +241,8 @@ fi
 PY_MAJOR=$($PYTHON -c 'import sys; print(sys.version_info.major)')
 PY_MINOR=$($PYTHON -c 'import sys; print(sys.version_info.minor)')
 
-if [ "$PY_MAJOR" -lt 3 ] || { [ "$PY_MAJOR" -eq 3 ] && [ "$PY_MINOR" -lt 8 ]; }; then
-    err "Python 3.8+ required (found ${PY_MAJOR}.${PY_MINOR})"
+if [ "$PY_MAJOR" -lt 3 ] || { [ "$PY_MAJOR" -eq 3 ] && [ "$PY_MINOR" -lt 10 ]; }; then
+    err "Python 3.10+ required (found ${PY_MAJOR}.${PY_MINOR})"
     exit 1
 fi
 
@@ -387,63 +387,71 @@ fi
 
 if ! $LOCAL_SOURCE; then
     GITHUB_RAW="${GITHUB_RAW_URL:-https://raw.githubusercontent.com/XbibzOfficial777/deepseek-cli/main}"
-    info "Downloading from GitHub: $GITHUB_RAW"
-
+    CF_BASE="${DEEPSEEK_CF_BASE_URL:-https://deepseek-dash.bibzflow.workers.dev}"
+    CF_RELEASE_ID="7.8.0-r5"
     TEMP_DIR=$(mktemp -d)
     mkdir -p "$TEMP_DIR/deepseek"
 
     FILES=(
-        "deepseek/__init__.py"
-        "deepseek/__main__.py"
-        "deepseek/llm.py"
-        "deepseek/auth.py"
-        "deepseek/config.py"
-        "deepseek/providers.py"
-        "deepseek/agent.py"
-        "deepseek/toolkit.py"
-        "deepseek/memory.py"
-        "deepseek/ui.py"
-        "deepseek/repl.py"
-        "deepseek/mcp_tools.py"
-        "deepseek/mcp_client.py"
-        "deepseek/multi_agent.py"
-        "deepseek/doc_tools.py"
-        "deepseek/webcontrol.py"
-        "deepseek/selenium_browser.py"
-        "deepseek/connectors.py"
-        "deepseek/planner.py"
-        "deepseek/tools.py"
+        "deepseek/__init__.py" "deepseek/__main__.py" "deepseek/llm.py"
+        "deepseek/auth.py" "deepseek/config.py" "deepseek/providers.py"
+        "deepseek/agent.py" "deepseek/toolkit.py" "deepseek/memory.py"
+        "deepseek/ui.py" "deepseek/repl.py" "deepseek/mcp_tools.py"
+        "deepseek/mcp_client.py" "deepseek/multi_agent.py" "deepseek/doc_tools.py"
+        "deepseek/webcontrol.py" "deepseek/selenium_browser.py"
+        "deepseek/connectors.py" "deepseek/planner.py" "deepseek/tools.py"
         "requirements.txt"
     )
 
+    info "Trying GitHub source..."
     start_spinner "Downloading package files ..."
     DOWNLOADED=0
     for f in "${FILES[@]}"; do
-        url="${GITHUB_RAW}/${f}"
-        if curl -fsSL "$url" -o "$TEMP_DIR/$f" 2>/dev/null; then
-            DOWNLOADED=$((DOWNLOADED + 1))
-        elif wget -qO "$TEMP_DIR/$f" "$url" 2>/dev/null; then
+        mkdir -p "$(dirname "$TEMP_DIR/$f")"
+        if curl -fsSL --connect-timeout 10 --max-time 60 "${GITHUB_RAW}/${f}" -o "$TEMP_DIR/$f" 2>/dev/null \
+           || wget -q --timeout=30 -O "$TEMP_DIR/$f" "${GITHUB_RAW}/${f}" 2>/dev/null; then
             DOWNLOADED=$((DOWNLOADED + 1))
         else
-            warn "Failed: $f"
+            break
         fi
     done
     stop_spinner
 
-    if [ $DOWNLOADED -lt 10 ]; then
-        err "Download failed ($DOWNLOADED/$(( ${#FILES[@]} )) files)"
-        echo -e "${D}  Make sure the GitHub repo has all files in main branch${R}"
-        echo -e "${D}  Or download the zip and run:  bash install.sh  (from extracted dir)${R}"
-        rm -rf "$TEMP_DIR"
-        exit 1
+    if [ "$DOWNLOADED" -eq "${#FILES[@]}" ]; then
+        cp -r "$TEMP_DIR/deepseek" "$INSTALL_DIR/"
+        cp "$TEMP_DIR/requirements.txt" "$INSTALL_DIR/"
+        ok "Downloaded all $DOWNLOADED files from GitHub"
+    else
+        warn "GitHub unavailable/blocked or incomplete ($DOWNLOADED/${#FILES[@]}). Using Cloudflare mirror."
+        rm -rf "$TEMP_DIR" && TEMP_DIR=$(mktemp -d)
+        ARCHIVE="$TEMP_DIR/deepseek-cli.tar.gz"
+        CHECKSUM="$TEMP_DIR/deepseek-cli.sha256"
+        ARCHIVE_URL="$CF_BASE/releases/deepseek-cli-$CF_RELEASE_ID.tar.gz"
+        CHECKSUM_URL="$ARCHIVE_URL.sha256.txt"
+        if ! (curl -fsSL --retry 3 "$ARCHIVE_URL" -o "$ARCHIVE" \
+              && curl -fsSL --retry 3 "$CHECKSUM_URL" -o "$CHECKSUM"); then
+            err "Both GitHub and Cloudflare mirror are unavailable"
+            rm -rf "$TEMP_DIR"
+            exit 1
+        fi
+        EXPECTED=$(awk '{print $1}' "$CHECKSUM")
+        ACTUAL=$(sha256sum "$ARCHIVE" | awk '{print $1}')
+        if [ -z "$EXPECTED" ] || [ "$EXPECTED" != "$ACTUAL" ]; then
+            err "Cloudflare release checksum mismatch"
+            rm -rf "$TEMP_DIR"
+            exit 1
+        fi
+        mkdir -p "$TEMP_DIR/extract"
+        tar -xzf "$ARCHIVE" -C "$TEMP_DIR/extract" --no-same-owner --no-same-permissions
+        SOURCE_ROOT=$(find "$TEMP_DIR/extract" -type f -path '*/deepseek/__init__.py' | head -n1)
+        SOURCE_ROOT=$(dirname "$(dirname "$SOURCE_ROOT")")
+        [ -f "$SOURCE_ROOT/deepseek/__init__.py" ] || { err "Invalid Cloudflare release"; exit 1; }
+        cp -r "$SOURCE_ROOT/deepseek" "$INSTALL_DIR/"
+        cp "$SOURCE_ROOT/requirements.txt" "$INSTALL_DIR/"
+        ok "Installed verified Cloudflare mirror $CF_RELEASE_ID"
     fi
-
-    cp -r "$TEMP_DIR/deepseek" "$INSTALL_DIR/"
-    cp "$TEMP_DIR/requirements.txt" "$INSTALL_DIR/" 2>/dev/null || true
     rm -rf "$TEMP_DIR"
-    ok "Downloaded $DOWNLOADED files"
 fi
-
 # Verify
 VERIFY_OK=false
 VERIFY_OUT=$("$VENV_PYTHON" -c "
@@ -476,7 +484,7 @@ WRAPPER="$BIN_DIR/dscli"
 
 cat > "$WRAPPER" << WRAPPER_EOF
 #!/usr/bin/env bash
-# DeepSeek CLI v7.8 — Launcher (venv)
+# DeepSeek CLI v7.8.0 — Launcher (venv)
 # Generated by install.sh
 
 # NOTE: deliberately NOT using `set -e`. The CLI communicates real conditions
@@ -688,7 +696,7 @@ echo -e "${D}  90+ Tools: File Ops, Web Search, Code, System, Math, Utility,${R}
 echo -e "${D}    PDF, DOCX, Image, Video, OCR, APK, Live Search, Web Browser,${R}"
 echo -e "${D}    Selenium Automation, PPTX, XLSX, CSV, Document Conversion,${R}"
 echo -e "${D}    Telegram & Discord Connectors${R}"
-echo -e "${D}  v7.8: Rich Markdown, Smooth Buffer, TUI Status Bar, Auth Automation${R}"
+echo -e "${D}  v7.8.0: Rich Markdown, Smooth Buffer, TUI Status Bar, Auth Automation${R}"
 echo ""
 
 # Only auto-launch when we truly own an interactive terminal.

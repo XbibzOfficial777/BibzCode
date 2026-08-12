@@ -39,6 +39,23 @@ import tempfile
 import traceback
 from pathlib import Path
 
+REMOTE_SAFE_TOOLS = frozenset({
+    'web_search', 'live_search', 'calculate', 'unit_convert', 'timestamp',
+    'text_transform', 'json_parse', 'generate_uuid', 'random_number',
+    'base64_tool', 'regex_test', 'sort_data', 'count_text', 'search_models',
+    'get_datetime', 'get_calendar', 'get_news', 'get_weather',
+    'get_currency_rate', 'get_stock_price', 'get_holidays',
+    'get_timezone_info', 'get_countdown', 'get_sun_times', 'get_day_info',
+    'get_ip_info', 'get_random_fact', 'get_qibla', 'get_unit_convert',
+    'get_crypto_price',
+})
+REMOTE_ATTACHMENT_TOOLS = frozenset({
+    'read_file', 'file_info', 'read_pdf', 'read_docx', 'docx_info',
+    'read_pptx', 'pptx_info', 'read_xlsx', 'xlsx_info', 'read_csv',
+    'image_view', 'image_info', 'ocr_read', 'video_info', 'apk_analyze',
+})
+REMOTE_SOURCES = frozenset({'telegram', 'discord', 'remote'})
+
 # Pydantic validation (graceful fallback if not installed)
 try:
     from pydantic import BaseModel, ValidationError, create_model
@@ -69,12 +86,48 @@ class ToolRegistry:
         self.tools: dict[str, dict] = {}
         self._validation_models: dict[str, type] = {}
         self._memory = memory
+        self._remote_allowed_paths: set[Path] = set()
         # Tools the user approved for the rest of this session.
         self._always_allow_tools: set = set()
         self._register_all()
         # Build Pydantic validation models for all registered tools
         if PYDANTIC_AVAILABLE:
             self._build_validation_models()
+
+    def allow_remote_attachment_paths(self, paths: list[str]):
+        """Permit exact connector-downloaded files, never arbitrary host paths."""
+        upload_root = (Path.home() / '.deepseek-cli' / 'uploads').resolve()
+        current = {path for path in self._remote_allowed_paths if path.exists()}
+        for raw_path in paths:
+            try:
+                path = Path(raw_path).expanduser().resolve(strict=True)
+                if path.is_file() and upload_root in path.parents:
+                    current.add(path)
+            except (OSError, RuntimeError):
+                continue
+        self._remote_allowed_paths = set(sorted(
+            current, key=lambda item: item.stat().st_mtime, reverse=True
+        )[:100])
+
+    def _is_allowed_remote_attachment(self, name: str, arguments: dict) -> bool:
+        if name not in REMOTE_ATTACHMENT_TOOLS:
+            return False
+        values = [arguments.get(key) for key in ('path', 'file_path', 'input_path')
+                  if arguments.get(key)]
+        if not values:
+            return False
+        try:
+            resolved = {Path(value).expanduser().resolve(strict=True) for value in values}
+        except (OSError, RuntimeError):
+            return False
+        return resolved.issubset(self._remote_allowed_paths)
+
+    def source_policy_error(self, name: str, arguments: dict, source: str = 'cli') -> str | None:
+        if source not in REMOTE_SOURCES:
+            return None
+        if name in REMOTE_SAFE_TOOLS or self._is_allowed_remote_attachment(name, arguments):
+            return None
+        return f"Tool '{name}' is unavailable to remote connectors or its attachment path is not approved"
 
     def register(self, name: str, description: str, parameters: dict, handler):
         self.tools[name] = {
@@ -83,10 +136,15 @@ class ToolRegistry:
             'handler': handler,
         }
 
-    def get_openai_tools(self) -> list[dict]:
-        """Return tools in OpenAI function-calling format."""
+    def get_openai_tools(self, source: str = 'cli') -> list[dict]:
+        """Return a source-scoped OpenAI tool schema."""
         result = []
+        allowed_remote = set(REMOTE_SAFE_TOOLS)
+        if self._remote_allowed_paths:
+            allowed_remote.update(REMOTE_ATTACHMENT_TOOLS)
         for name, tool in self.tools.items():
+            if source in REMOTE_SOURCES and name not in allowed_remote:
+                continue
             result.append({
                 'type': 'function',
                 'function': {
@@ -222,7 +280,8 @@ class ToolRegistry:
     def is_dangerous(self, name: str) -> bool:
         return name in self.DANGEROUS_TOOLS
 
-    def execute(self, name: str, arguments: dict, confirm: bool = True) -> str:
+    def execute(self, name: str, arguments: dict, confirm: bool = True,
+                source: str = 'cli') -> str:
         """Validate, optionally confirm, then run a tool.
 
         `confirm=False` is only for callers that already obtained explicit
@@ -242,6 +301,10 @@ class ToolRegistry:
         # instead of the intended default (e.g. run_shell timeout -> no limit).
         validated_args = {k: v for k, v in validated_args.items()
                           if v is not None or k in (arguments or {})}
+
+        source_error = self.source_policy_error(name, validated_args, source)
+        if source_error:
+            return f'[ERROR] {source_error}'
 
         if confirm and self.is_dangerous(name):
             verdict = self._confirm_dangerous(name, validated_args)
