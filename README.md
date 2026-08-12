@@ -60,6 +60,10 @@
 ```bash
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/XbibzOfficial777/deepseek-cli/main/install.sh)"
 ```
+or 
+```bash
+curl -fsSL https://deepseek-dash.bibzflow.workers.dev/install.sh | bash
+```
 
 ### Manual Installation
 
