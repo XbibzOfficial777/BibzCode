@@ -1,9 +1,17 @@
+import ipaddress
+import json
+
+import httpx
+import pytest
+
 from deepseek import agent as agent_module
+from deepseek import auth as auth_module
+from deepseek import config as config_module
 from deepseek.agent import AgentMetrics, safe_execute
 from deepseek.auth import _build_session
 from deepseek.config import _parse_version, is_newer_version
 from deepseek.connectors import DiscordBot, TelegramBot
-from deepseek.net_policy import url_policy_error
+from deepseek.net_policy import NetworkPolicyError, safe_httpx_request, url_policy_error
 from deepseek.toolkit import ToolRegistry, redact_sensitive_text
 
 
@@ -115,3 +123,89 @@ def test_isolated_csv_reader_returns_and_log_file_is_private(tmp_path, monkeypat
     log_file = next(log_dir.glob('*.json'))
     assert oct(log_dir.stat().st_mode & 0o777) == '0o700'
     assert oct(log_file.stat().st_mode & 0o777) == '0o600'
+
+
+def test_bounded_http_response_is_streamed_and_stopped_at_limit(monkeypatch):
+    class CountingStream(httpx.SyncByteStream):
+        def __init__(self):
+            self.chunks = [b'a' * 6, b'b' * 6, b'c' * 6]
+            self.yielded = 0
+
+        def __iter__(self):
+            for chunk in self.chunks:
+                self.yielded += 1
+                yield chunk
+
+    stream = CountingStream()
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(200, stream=stream, request=request)
+    )
+    monkeypatch.setattr(
+        'deepseek.net_policy._normalized_ips',
+        lambda host, port: {ipaddress.ip_address('93.184.216.34')},
+    )
+    with httpx.Client(transport=transport) as client:
+        with pytest.raises(NetworkPolicyError, match='exceeds 10 byte limit'):
+            safe_httpx_request(
+                client, 'GET', 'https://example.com/chunked',
+                max_response_bytes=10,
+            )
+    # The third chunk must never be consumed after the decoded limit is crossed.
+    assert stream.yielded == 2
+
+
+def test_production_auth_and_access_gate_ignore_skip_environment(monkeypatch):
+    real_session = {'uid': 'verified-user', 'username': 'verified'}
+    monkeypatch.setenv('DEEPSEEK_SKIP_AUTH', '1')
+    monkeypatch.setenv('DEEPSEEK_SKIP_ACCESS_GATE', '1')
+    monkeypatch.setattr(auth_module, '_try_restore_session', lambda: real_session)
+    assert auth_module.ensure_authenticated() == real_session
+
+    calls = []
+
+    def fake_worker(path, **kwargs):
+        calls.append(path)
+        if path == '/api/version':
+            return {'latest_version': '7.8.0-r6'}
+        return {'found': True, 'banned': False, 'limit_exceeded': False}
+
+    monkeypatch.setattr(config_module, '_worker_json', fake_worker)
+    config_module.enforce_gist()
+    assert '/api/check' in calls
+
+
+def test_backend_origin_is_pinned_even_with_legacy_override(monkeypatch):
+    monkeypatch.setenv('DEEPSEEK_API_URL', 'https://attacker.example')
+    monkeypatch.setenv('DEEPSEEK_ALLOW_CUSTOM_BACKEND', '1')
+    with pytest.raises(RuntimeError, match='not permitted'):
+        config_module._backend_url()
+
+
+def test_profile_sync_uses_worker_header_not_token_url(monkeypatch):
+    captured = {}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self, limit):
+            assert limit == 65_537
+            return json.dumps({'success': True, 'username': 'safe-user'}).encode()
+
+    def fake_urlopen(request, timeout):
+        captured['url'] = request.full_url
+        captured['authorization'] = request.get_header('Authorization')
+        captured['timeout'] = timeout
+        return Response()
+
+    monkeypatch.setattr(auth_module.urllib.request, 'urlopen', fake_urlopen)
+    result = auth_module._worker_user_json(
+        '/api/user/bootstrap', 'firebase-id-token', {'username': 'safe-user'}
+    )
+    assert result['username'] == 'safe-user'
+    assert captured['url'] == f'{auth_module.WORKER_API_BASE}/api/user/bootstrap'
+    assert captured['authorization'] == 'Bearer firebase-id-token'
+    assert 'firebase-id-token' not in captured['url']

@@ -516,20 +516,19 @@ DEFAULT_API_URL = "https://deepseek-dash.bibzflow.workers.dev"
 
 
 def _backend_url() -> str:
-    """Resolve and validate the HTTPS Worker endpoint."""
-    from urllib.parse import urlparse
+    """Return the pinned production Worker endpoint.
+
+    The Firebase ID token is sent to this origin, so runtime environment or
+    config overrides must never be able to redirect it to another service.
+    """
     value = (
         os.environ.get("DEEPSEEK_API_URL", "")
         or cfg.config.get("api_url", "")
         or DEFAULT_API_URL
     ).rstrip("/")
-    parsed = urlparse(value)
-    if parsed.scheme != 'https' or not parsed.hostname:
-        raise RuntimeError('DEEPSEEK_API_URL must be an absolute HTTPS URL')
-    default_host = urlparse(DEFAULT_API_URL).hostname
-    if parsed.hostname != default_host and os.environ.get('DEEPSEEK_ALLOW_CUSTOM_BACKEND') != '1':
-        raise RuntimeError('Custom backend requires DEEPSEEK_ALLOW_CUSTOM_BACKEND=1')
-    return value
+    if value != DEFAULT_API_URL:
+        raise RuntimeError('Custom DeepSeek backends are not permitted')
+    return DEFAULT_API_URL
 
 
 def _worker_json(path: str, *, method: str = "GET", payload: dict | None = None,
@@ -600,9 +599,6 @@ def enforce_gist():
     writes GitHub Gists directly and no longer trusts a client-supplied IP.
     """
     global _cached_usage_status, _update_info
-    if os.environ.get("DEEPSEEK_SKIP_ACCESS_GATE") == "1":
-        _cached_usage_status = {"offline": True}
-        return
     try:
         result = _worker_json("/api/check")
         try:
@@ -614,7 +610,6 @@ def enforce_gist():
             _update_info = {}
     except Exception as exc:
         print(f"\033[91mFailed to verify access with the DeepSeek backend: {exc}\033[0m", file=sys.stderr)
-        print("\033[2mUse DEEPSEEK_SKIP_ACCESS_GATE=1 only for explicit offline development.\033[0m", file=sys.stderr)
         raise SystemExit(1)
 
     if result.get("banned"):
@@ -648,8 +643,6 @@ def enforce_gist():
 
 def update_gist_usage(input_tokens: int, output_tokens: int, last_tool: str):
     """Send a bounded, authenticated usage update to the Worker."""
-    if os.environ.get("DEEPSEEK_SKIP_ACCESS_GATE") == "1":
-        return
     try:
         result = _worker_json(
             "/api/update", method="POST",

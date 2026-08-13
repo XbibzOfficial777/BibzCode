@@ -1,7 +1,7 @@
 # DeepSeek CLI v7.8.0 — Firebase Authentication Gate
 # Email/password login + register (with username) + email verification +
-# forgot-password (email reset). Profiles are mirrored to Realtime Database so
-# the web dashboard can manage them. Pure stdlib (urllib) — Termux friendly.
+# forgot-password (email reset). Verified profiles are synchronized through the
+# Worker so the dashboard can manage them. Pure stdlib (urllib) — Termux friendly.
 
 import getpass
 import json
@@ -19,17 +19,9 @@ from .ui import console
 FIREBASE_API_KEY = os.environ.get(
     "DEEPSEEK_FIREBASE_API_KEY", "AIzaSyDfdWsO1H11PjSY7IecaX_QICc14yLOtpQ"
 )
-FIREBASE_DB_URL = os.environ.get(
-    "DEEPSEEK_FIREBASE_DB_URL",
-    "https://xbibzstorage-default-rtdb.asia-southeast1.firebasedatabase.app",
-).rstrip("/")
-if not FIREBASE_DB_URL.startswith('https://'):
-    raise RuntimeError('DEEPSEEK_FIREBASE_DB_URL must use HTTPS')
-# RTDB node where CLI user profiles live (dashboard reads/writes the same node).
-RTDB_USERS_PATH = "dscliUsers"
-
 IDENTITY_BASE = "https://identitytoolkit.googleapis.com/v1/accounts"
 SECURETOKEN_BASE = "https://securetoken.googleapis.com/v1/token"
+WORKER_API_BASE = "https://deepseek-dash.bibzflow.workers.dev"
 
 AUTH_DIR = Path.home() / ".deepseek-cli"
 AUTH_FILE = AUTH_DIR / "auth.json"
@@ -132,54 +124,62 @@ def fb_refresh(refresh_token: str) -> dict:
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# Realtime Database (REST) — user profile mirror
+# Verified profile synchronization through the Worker
 # ════════════════════════════════════════════════════════════════════════════
-
-def _rtdb_url(uid: str) -> str:
-    if not isinstance(uid, str) or not uid or any(char in uid for char in '/.#$[]'):
-        raise ValueError('Invalid Firebase uid')
-    return f"{FIREBASE_DB_URL}/{RTDB_USERS_PATH}/{uid}.json"
-
-
-def _rtdb_headers(id_token: str = "", *, json_body: bool = False) -> dict:
-    headers = {"Accept": "application/json"}
-    if json_body:
-        headers["Content-Type"] = "application/json"
-    if id_token:
-        # Keep bearer credentials out of URLs, proxy logs, and exception text.
-        headers["Authorization"] = f"Bearer {id_token}"
-    return headers
-
-
-def rtdb_get_user(uid: str, id_token: str = "") -> dict:
+def _worker_user_json(path: str, id_token: str, payload: dict | None = None) -> dict:
+    """Call an allowlisted user endpoint without placing credentials in URLs."""
+    if path not in {"/api/user/bootstrap"}:
+        raise ValueError("Unsupported user profile endpoint")
+    if not id_token:
+        raise FirebaseError("Missing Firebase ID token")
+    data = json.dumps(payload or {}).encode("utf-8")
+    req = urllib.request.Request(
+        f"{WORKER_API_BASE}{path}", data=data,
+        headers={
+            "Authorization": f"Bearer {id_token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "deepseek-cli-auth/1.0",
+        },
+        method="POST",
+    )
     try:
-        req = urllib.request.Request(_rtdb_url(uid), headers=_rtdb_headers(id_token), method="GET")
-        with urllib.request.urlopen(req, timeout=10) as resp:  # nosec B310
-            return json.loads(resp.read().decode()) or {}
-    except Exception:
-        return {}
+        with urllib.request.urlopen(req, timeout=15) as resp:  # nosec B310
+            raw = resp.read(65_537)
+            if len(raw) > 65_536:
+                raise FirebaseError("Profile service response exceeded 64 KiB")
+            result = json.loads(raw.decode("utf-8"))
+            if not isinstance(result, dict):
+                raise FirebaseError("Invalid profile service response")
+            return result
+    except urllib.error.HTTPError as exc:
+        message = f"HTTP {exc.code}"
+        try:
+            body = json.loads(exc.read(4096).decode("utf-8", errors="replace"))
+            message = str(body.get("error") or message)[:200]
+        except Exception:
+            pass
+        raise FirebaseError(f"Profile synchronization failed: {message}") from exc
+    except FirebaseError:
+        raise
+    except Exception as exc:
+        raise FirebaseError(f"Profile synchronization failed: {exc}") from exc
 
 
-def rtdb_put_user(uid: str, profile: dict, id_token: str = "") -> bool:
-    try:
-        data = json.dumps(profile).encode()
-        req = urllib.request.Request(_rtdb_url(uid), data=data,
-                                     headers=_rtdb_headers(id_token, json_body=True), method="PUT")
-        with urllib.request.urlopen(req, timeout=10):  # nosec B310
-            return True
-    except Exception:
-        return False
-
-
-def rtdb_patch_user(uid: str, fields: dict, id_token: str = "") -> bool:
-    try:
-        data = json.dumps(fields).encode()
-        req = urllib.request.Request(_rtdb_url(uid), data=data,
-                                     headers=_rtdb_headers(id_token, json_body=True), method="PATCH")
-        with urllib.request.urlopen(req, timeout=10):  # nosec B310
-            return True
-    except Exception:
-        return False
+def _sync_user_profile(session: dict, username: str = "") -> dict:
+    """Create/update the authenticated user's server-owned profile safely."""
+    profile = _worker_user_json(
+        "/api/user/bootstrap", session.get("id_token", ""),
+        {"username": str(username or "")[:32], "platform": sys.platform[:100]},
+    )
+    if profile.get("banned"):
+        console.print()
+        console.print("  [bold red]██ ACCESS DENIED ██[/bold red]")
+        console.print("  [red]Your account has been banned by the administrator.[/red]")
+        console.print()
+        raise SystemExit(1)
+    session["username"] = str(profile.get("username") or username or "")[:32]
+    return profile
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -264,29 +264,11 @@ def _banner_auth():
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# Ban check
-# ════════════════════════════════════════════════════════════════════════════
-
-def _is_banned(uid: str, id_token: str = "") -> bool:
-    prof = rtdb_get_user(uid, id_token)
-    return bool(prof.get("banned"))
-
-
-def _exit_if_banned(uid: str, id_token: str = ""):
-    if _is_banned(uid, id_token):
-        console.print()
-        console.print("  [bold red]██ ACCESS DENIED ██[/bold red]")
-        console.print("  [red]Your account has been banned by the administrator.[/red]")
-        console.print()
-        sys.exit(1)
-
-
-# ════════════════════════════════════════════════════════════════════════════
 # Flows
 # ════════════════════════════════════════════════════════════════════════════
 
 def _do_register() -> dict:
-    """Register a new account, send verification email, mirror to RTDB."""
+    """Register an account and create its profile after email verification."""
     console.print("  [bold]Create a new account[/bold]")
     username = _prompt("Username    :")
     while not re.fullmatch(r'[a-zA-Z0-9_@.\-]{2,32}', username or ''):
@@ -310,22 +292,8 @@ def _do_register() -> dict:
 
     session = _build_session(resp, username)
 
-    # Mirror profile to RTDB so the dashboard can see it. Do not silently
-    # continue with a partially-created identity when rules/backend reject it.
-    profile_saved = rtdb_put_user(session["uid"], {
-        "uid": session["uid"],
-        "username": username,
-        "email": email,
-        "email_verified": False,
-        "created_at": int(time.time() * 1000),
-        "last_login": int(time.time() * 1000),
-        "platform": sys.platform,
-    }, session["id_token"])
-    if not profile_saved:
-        console.print("  [red]Account was created, but the secure profile could not be saved.[/red]")
-        console.print("  [yellow]Check Firebase Rules/backend deployment, then log in again to repair the profile.[/yellow]")
-        return {}
-
+    # The profile is synchronized through the Worker only after verification,
+    # so an unverified identity cannot write RTDB data directly.
     # Send verification email
     try:
         fb_send_verification(session["id_token"])
@@ -364,10 +332,11 @@ def _await_verification(session: dict, username: str) -> dict:
         info = fb_lookup(session["id_token"])
         if info.get("emailVerified"):
             console.print("  [green]✓ Email verified![/green]")
-            rtdb_patch_user(session["uid"], {"email_verified": True,
-                                             "last_login": int(time.time() * 1000)},
-                            session["id_token"])
-            _exit_if_banned(session["uid"], session["id_token"])
+            try:
+                _sync_user_profile(session, username)
+            except FirebaseError as exc:
+                console.print(f"  [red]{_friendly_error(str(exc))}[/red]")
+                return {}
             _save_session(session)
             return session
         console.print("  [yellow]Email not verified yet. Check your inbox (and spam), then choose Continue.[/yellow]")
@@ -387,32 +356,20 @@ def _do_login() -> dict:
         console.print(f"  [red]Login failed: {_friendly_error(str(e))}[/red]")
         return {}
 
-    # Pull existing username from RTDB if present
-    uid = resp.get("localId", "")
-    prof = rtdb_get_user(uid, resp.get("idToken", ""))
-    username = prof.get("username", "")
-    session = _build_session(resp, username)
+    session = _build_session(resp, "")
 
-    # Enforce email verification
+    # Enforce email verification before the Worker is allowed to create or
+    # update the server-owned profile.
     info = fb_lookup(session["id_token"])
     if not info.get("emailVerified"):
         console.print("  [yellow]Your email is not verified yet.[/yellow]")
-        return _await_verification(session, username)
+        return _await_verification(session, "")
 
-    _exit_if_banned(session["uid"], session["id_token"])
-
-    # Update RTDB (create record if missing, e.g. legacy account)
-    if not prof:
-        rtdb_put_user(uid, {
-            "uid": uid, "username": username or email.split("@")[0], "email": email,
-            "email_verified": True,
-            "created_at": int(time.time() * 1000), "last_login": int(time.time() * 1000),
-            "platform": sys.platform,
-        }, session["id_token"])
-        session["username"] = username or email.split("@")[0]
-    else:
-        rtdb_patch_user(uid, {"email_verified": True, "last_login": int(time.time() * 1000)},
-                        session["id_token"])
+    try:
+        _sync_user_profile(session)
+    except FirebaseError as exc:
+        console.print(f"  [red]{_friendly_error(str(exc))}[/red]")
+        return {}
 
     _save_session(session)
     console.print(f"  [green]✓ Welcome back, {session['username'] or email}![/green]")
@@ -450,18 +407,16 @@ def _try_restore_session() -> dict:
     info = fb_lookup(sess["id_token"])
     if not info.get("emailVerified"):
         return {}
-    if _is_banned(sess["uid"], sess["id_token"]):
-        console.print("  [bold red]Your account has been banned.[/bold red]")
-        sys.exit(1)
-    rtdb_patch_user(sess["uid"], {"last_login": int(time.time() * 1000)}, sess["id_token"])
+    try:
+        _sync_user_profile(sess)
+    except FirebaseError:
+        return {}
     _save_session(sess)
     return sess
 
 
 def get_valid_id_token() -> str:
     """Return a refreshed Firebase ID token for authenticated backend calls."""
-    if os.environ.get("DEEPSEEK_SKIP_AUTH") == "1":
-        return ""
     sess = _load_session()
     if not sess or not sess.get("refresh_token"):
         return ""
@@ -479,11 +434,8 @@ def get_valid_id_token() -> str:
 def ensure_authenticated() -> dict:
     """Gate the CLI behind Firebase auth. Returns the active session dict.
 
-    Login persists across runs; the user is only prompted when there is no valid
-    saved session. Honors DEEPSEEK_SKIP_AUTH=1 for offline/dev use."""
-    if os.environ.get("DEEPSEEK_SKIP_AUTH") == "1":
-        return {"username": "dev", "email": "", "uid": "dev", "offline": True}
-
+    Login persists across runs; the user is prompted only when no valid,
+    verified server-backed session can be restored."""
     # 1) Silent restore
     sess = _try_restore_session()
     if sess:

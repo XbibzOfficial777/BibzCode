@@ -111,7 +111,14 @@ def safe_httpx_request(client, method: str, url: str, *, max_redirects: int = 5,
 
     for redirect_count in range(max_redirects + 1):
         request = client.build_request(current_method, current_url, **request_kwargs)
-        response = client.send(request, stream=stream, follow_redirects=False)
+        bounded_buffer = max_response_bytes is not None and not stream
+        # A non-streaming httpx send buffers the complete body before this
+        # function can inspect it. Force streaming whenever a byte limit is
+        # requested, then construct a normal buffered response only after the
+        # decoded body has been proven to fit.
+        response = client.send(
+            request, stream=(stream or bounded_buffer), follow_redirects=False
+        )
         declared = response.headers.get("content-length")
         if max_response_bytes is not None and declared:
             try:
@@ -123,12 +130,30 @@ def safe_httpx_request(client, method: str, url: str, *, max_redirects: int = 5,
             except ValueError:
                 response.close()
                 raise NetworkPolicyError("Invalid Content-Length response header")
-        if max_response_bytes is not None and not stream and len(response.content) > max_response_bytes:
-            response.close()
-            raise NetworkPolicyError(f"Response exceeds {max_response_bytes} byte limit")
 
         if response.status_code not in _REDIRECT_STATUSES:
-            return response
+            if not bounded_buffer:
+                return response
+            content = bytearray()
+            try:
+                for chunk in response.iter_bytes():
+                    if len(content) + len(chunk) > max_response_bytes:
+                        raise NetworkPolicyError(
+                            f"Response exceeds {max_response_bytes} byte limit"
+                        )
+                    content.extend(chunk)
+                status_code = response.status_code
+                headers = response.headers
+                extensions = dict(response.extensions)
+            finally:
+                response.close()
+            return response.__class__(
+                status_code=status_code,
+                headers=headers,
+                content=bytes(content),
+                request=request,
+                extensions=extensions,
+            )
 
         location = response.headers.get("location")
         response.close()
