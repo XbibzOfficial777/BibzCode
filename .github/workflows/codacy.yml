@@ -55,6 +55,11 @@ jobs:
           # You can also omit the token and run the tools that support default configurations
           project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
           directory: ${{ runner.temp }}/codacy-source
+          # This workflow is a security scan; restricting to Bandit avoids
+          # unrelated quality/metrics plugins creating binary cache artifacts
+          # that Codacy 4.0.0's SARIF formatter cannot decode.
+          tool: bandit
+          fail-if-incomplete: true
           verbose: true
           output: results.sarif
           format: sarif
