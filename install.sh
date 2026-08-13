@@ -443,7 +443,7 @@ if ! $LOCAL_SOURCE; then
         fi
         mkdir -p "$TEMP_DIR/extract"
         tar -xzf "$ARCHIVE" -C "$TEMP_DIR/extract" --no-same-owner --no-same-permissions
-        SOURCE_ROOT=$(find "$TEMP_DIR/extract" -type f -path '*/deepseek/__init__.py' | head -n1)
+        SOURCE_ROOT=$(find "$TEMP_DIR/extract" -type f -path '*/deepseek/__init__.py' -print -quit)
         SOURCE_ROOT=$(dirname "$(dirname "$SOURCE_ROOT")")
         [ -f "$SOURCE_ROOT/deepseek/__init__.py" ] || { err "Invalid Cloudflare release"; exit 1; }
         cp -r "$SOURCE_ROOT/deepseek" "$INSTALL_DIR/"

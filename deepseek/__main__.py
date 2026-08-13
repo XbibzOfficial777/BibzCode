@@ -246,7 +246,7 @@ def main():
         return
 
     # Normal argparse for other commands
-    parser = argparse.ArgumentParser(prog='dscli', description='DeepSeek CLI Agent v7.7')
+    parser = argparse.ArgumentParser(prog='dscli', description='DeepSeek CLI Agent v7.8.0')
     parser.add_argument('-s', '--session', metavar='SESSION_ID',
                         help='Continue an existing session (e.g. dscli-xxxxxxxxxxxx)')
     parser.add_argument('-d', '--delete', metavar='SESSION_ID',
