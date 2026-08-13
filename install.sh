@@ -388,7 +388,7 @@ fi
 if ! $LOCAL_SOURCE; then
     GITHUB_RAW="${GITHUB_RAW_URL:-https://raw.githubusercontent.com/XbibzOfficial777/deepseek-cli/main}"
     CF_BASE="${DEEPSEEK_CF_BASE_URL:-https://deepseek-dash.bibzflow.workers.dev}"
-    CF_RELEASE_ID="7.8.0-r5"
+    CF_RELEASE_ID="7.8.0-r6"
     TEMP_DIR=$(mktemp -d)
     mkdir -p "$TEMP_DIR/deepseek"
 

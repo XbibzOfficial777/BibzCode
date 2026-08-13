@@ -24,7 +24,7 @@
 ## Distribution
 
 - GitHub remains the primary source.
-- Verified Cloudflare release `7.8.0-r5` is the automatic fallback when GitHub is
+- Verified Cloudflare release `7.8.0-r6` is the automatic fallback when GitHub is
   blocked or unavailable.
 - React dashboard source is intentionally excluded and deployed separately.
 
