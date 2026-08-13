@@ -6,7 +6,6 @@ from __future__ import annotations
 import gzip
 import hashlib
 import io
-import os
 from pathlib import Path
 import shutil
 import tarfile
@@ -35,6 +34,19 @@ def source_files() -> list[Path]:
     return sorted(set(files), key=lambda path: str(path.relative_to(ROOT)))
 
 
+def release_file_bytes(path: Path) -> bytes:
+    """Return archive bytes, omitting GitHub-only README presentation blocks."""
+    data = path.read_bytes()
+    if path == ROOT / "README.md":
+        start_marker = b"<!-- github-only-logo:start -->\n"
+        end_marker = b"<!-- github-only-logo:end -->\n\n"
+        if start_marker in data:
+            start = data.index(start_marker)
+            end = data.index(end_marker, start) + len(end_marker)
+            data = data[:start] + data[end:]
+    return data
+
+
 def tar_bytes(files: list[Path]) -> bytes:
     output = io.BytesIO()
     release_root = f"deepseek-cli-{RELEASE_ID}"
@@ -49,7 +61,7 @@ def tar_bytes(files: list[Path]) -> bytes:
         tf.addfile(root_info)
         for path in files:
             relative = path.relative_to(ROOT).as_posix()
-            data = path.read_bytes()
+            data = release_file_bytes(path)
             info = tarfile.TarInfo(f"{release_root}/{relative}")
             info.size = len(data)
             info.mode = 0o644

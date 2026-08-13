@@ -1,5 +1,11 @@
 # DeepSeek CLI Agent 7.8.0-r6
 
+<!-- github-only-logo:start -->
+<p align="center">
+  <img src="https://imgbs.com/uploads/beautyplus-save-17d140cd.jpg" alt="DeepSeek CLI" width="780">
+</p>
+<!-- github-only-logo:end -->
+
 Multi-provider terminal AI agent with controlled tool execution, session persistence,
 MCP support, document utilities, browser automation, and optional Telegram/Discord
 connectors.
