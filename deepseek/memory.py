@@ -9,6 +9,8 @@ import os
 import re
 import secrets
 
+from .version import __version__
+
 
 def _detect_local_timezone() -> str:
     """Auto-detect the system's local IANA timezone name."""
@@ -205,7 +207,7 @@ class Memory:
 
     def _get_base_prompt_template(self, local_time_str: str, mcp_context: str) -> str:
         return (
-            "You are DeepSeek CLI Agent v7.8.0, a powerful AI assistant running in the terminal.\n"
+            f"You are DeepSeek CLI Agent v{__version__}, a powerful AI assistant running in the terminal.\n"
             "You were created and developed by **Xbibz Official**. This is an absolute fact.\n"
             "When asked who made you, who is your creator, who is your developer, who built you,\n"
             "or anything similar — you MUST answer that you were created and developed by Xbibz Official.\n"
@@ -381,7 +383,7 @@ class Memory:
     def export_text(self) -> str:
         """Export conversation as readable text."""
         lines = []
-        lines.append("DeepSeek CLI v7.8.0 — Chat Export")
+        lines.append(f"DeepSeek CLI v{__version__} — Chat Export")
         lines.append(f"Messages: {self.full_count()}")
         lines.append("=" * 50)
         for msg in self.get_full_history():
@@ -564,7 +566,11 @@ SESSIONS_DIR = os.path.join(os.path.expanduser('~'), '.deepseek-cli', 'sessions'
 
 
 def _ensure_sessions_dir():
-    os.makedirs(SESSIONS_DIR, exist_ok=True)
+    os.makedirs(SESSIONS_DIR, mode=0o700, exist_ok=True)
+    try:
+        os.chmod(SESSIONS_DIR, 0o700)
+    except OSError:
+        pass
 
 
 def new_session_id() -> str:
@@ -574,8 +580,8 @@ def new_session_id() -> str:
 
 def _session_path(session_id: str) -> str:
     """Return a path contained in SESSIONS_DIR for a valid generated ID."""
-    if not isinstance(session_id, str) or not re.fullmatch(r'dscli-[A-Za-z0-9_-]{3,64}', session_id):
-        raise ValueError('Invalid session ID')
+    if not isinstance(session_id, str) or not re.fullmatch(r'dscli-[0-9a-f]{12}', session_id):
+        raise ValueError('Invalid session ID; expected dscli- followed by 12 hex characters')
     base = os.path.realpath(SESSIONS_DIR)
     path = os.path.realpath(os.path.join(base, f'{session_id}.json'))
     if os.path.commonpath([base, path]) != base:

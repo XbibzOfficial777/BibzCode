@@ -1,15 +1,16 @@
-# DeepSeek CLI v7.7 — Firebase Authentication Gate
+# DeepSeek CLI v7.8.0 — Firebase Authentication Gate
 # Email/password login + register (with username) + email verification +
 # forgot-password (email reset). Profiles are mirrored to Realtime Database so
 # the web dashboard can manage them. Pure stdlib (urllib) — Termux friendly.
 
-import os
-import sys
-import json
-import time
 import getpass
-import urllib.request
+import json
+import os
+import re
+import sys
+import time
 import urllib.error
+import urllib.request
 from pathlib import Path
 
 from .ui import console
@@ -22,6 +23,8 @@ FIREBASE_DB_URL = os.environ.get(
     "DEEPSEEK_FIREBASE_DB_URL",
     "https://xbibzstorage-default-rtdb.asia-southeast1.firebasedatabase.app",
 ).rstrip("/")
+if not FIREBASE_DB_URL.startswith('https://'):
+    raise RuntimeError('DEEPSEEK_FIREBASE_DB_URL must use HTTPS')
 # RTDB node where CLI user profiles live (dashboard reads/writes the same node).
 RTDB_USERS_PATH = "dscliUsers"
 
@@ -31,91 +34,32 @@ SECURETOKEN_BASE = "https://securetoken.googleapis.com/v1/token"
 AUTH_DIR = Path.home() / ".deepseek-cli"
 AUTH_FILE = AUTH_DIR / "auth.json"
 
-# The session for the currently signed-in user, or {} when signed out.
-# Read by ui.show_welcome() and repl._settings_account_info(). Kept in sync by
-# _set_current_session() on every auth transition (login, register, restore,
-# logout) so the banner can never show a stale or missing account.
-_current_session: dict = {}
-
-
-def _set_current_session(sess: dict):
-    global _current_session
-    _current_session = sess or {}
-
-
-def get_current_session() -> dict:
-    """Return the active session dict ({} when signed out)."""
-    return _current_session
-
-
-def is_signed_in() -> bool:
-    return bool(_current_session.get("uid"))
-
 
 # ════════════════════════════════════════════════════════════════════════════
 # Low-level HTTP helpers
 # ════════════════════════════════════════════════════════════════════════════
 
-# Transient network failures that deserve a retry rather than "login failed".
-# Mobile links, captive portals and slow DNS routinely produce these; without a
-# retry a single hiccup forced the user back to the menu to retype everything.
-_TRANSIENT_MARKERS = (
-    "timed out", "timeout", "handshake", "temporarily unavailable",
-    "connection reset", "connection refused", "connection aborted",
-    "name or service not known", "nodename nor servname",
-    "network is unreachable", "eof occurred", "ssl", "_ssl.c",
-    "bad handshake", "record layer failure", "try again",
-)
-
-
-def _is_transient(err: str) -> bool:
-    low = str(err).lower()
-    return any(m in low for m in _TRANSIENT_MARKERS)
-
-
-def _post_json(url: str, payload: dict, timeout: int = 30,
-               retries: int = 2) -> dict:
-    """POST JSON and return parsed dict. Raises FirebaseError on API errors.
-
-    Retries transient network/TLS failures with a short backoff. Auth errors
-    from the API (wrong password, disabled account, ...) are NOT retried —
-    they are answers, not failures.
-    """
+def _post_json(url: str, payload: dict, timeout: int = 15) -> dict:
+    """POST JSON and return parsed dict. Raises FirebaseError on API errors."""
     data = json.dumps(payload).encode("utf-8")
-    last_err = None
-
-    for attempt in range(retries + 1):
-        req = urllib.request.Request(
-            url, data=data,
-            headers={"Content-Type": "application/json",
-                     "User-Agent": "deepseek-cli-auth/1.0"},
-            method="POST",
-        )
+    req = urllib.request.Request(
+        url, data=data,
+        headers={"Content-Type": "application/json", "User-Agent": "deepseek-cli-auth/1.0"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        body = {}
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return json.loads(resp.read().decode())
-        except urllib.error.HTTPError as e:
-            # A real API verdict — surface it immediately.
-            body = {}
-            try:
-                body = json.loads(e.read().decode())
-            except Exception:
-                pass
-            msg = body.get("error", {}).get("message", f"HTTP {e.code}")
-            raise FirebaseError(msg)
-        except Exception as e:
-            last_err = e
-            if attempt < retries and _is_transient(e):
-                wait = 1.5 * (attempt + 1)
-                console.print(
-                    f"  [dim]Network hiccup ({type(e).__name__}) — retrying "
-                    f"in {wait:.0f}s… [{attempt + 1}/{retries}][/dim]"
-                )
-                time.sleep(wait)
-                continue
-            break
-
-    raise FirebaseError(str(last_err))
+            body = json.loads(e.read().decode())
+        except Exception:
+            pass
+        msg = body.get("error", {}).get("message", f"HTTP {e.code}")
+        raise FirebaseError(msg)
+    except Exception as e:
+        raise FirebaseError(str(e))
 
 
 class FirebaseError(Exception):
@@ -130,7 +74,7 @@ def _friendly_error(msg: str) -> str:
         "INVALID_PASSWORD": "Incorrect password.",
         "INVALID_LOGIN_CREDENTIALS": "Invalid email or password.",
         "INVALID_EMAIL": "That email address is not valid.",
-        "USER_DISABLED": ("This account has been disabled by the administrator. Contact @XbibzOfficial on Telegram (https://t.me/XbibzOfficial) to appeal."),
+        "USER_DISABLED": "This account has been disabled by the administrator.",
         "WEAK_PASSWORD : Password should be at least 6 characters": "Password must be at least 6 characters.",
         "MISSING_PASSWORD": "Password is required.",
         "TOO_MANY_ATTEMPTS_TRY_LATER": "Too many attempts. Please try again later.",
@@ -139,14 +83,6 @@ def _friendly_error(msg: str) -> str:
     for key, val in table.items():
         if msg.startswith(key):
             return val
-
-    # Network/TLS failures reach here as raw Python exception text like
-    # "<urlopen error _ssl.c:983: The handshake operation timed out>", which
-    # tells the user nothing actionable. Translate it.
-    if _is_transient(msg):
-        return ("Could not reach the authentication server (network/TLS "
-                "timeout). Check your connection and try again — your "
-                "credentials were not rejected.")
     return msg
 
 
@@ -189,7 +125,7 @@ def fb_refresh(refresh_token: str) -> dict:
         headers={"Content-Type": "application/x-www-form-urlencoded"}, method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=15) as resp:  # nosec B310
             return json.loads(resp.read().decode())
     except Exception:
         return {}
@@ -199,16 +135,26 @@ def fb_refresh(refresh_token: str) -> dict:
 # Realtime Database (REST) — user profile mirror
 # ════════════════════════════════════════════════════════════════════════════
 
-def _rtdb_url(uid: str, id_token: str = "") -> str:
-    url = f"{FIREBASE_DB_URL}/{RTDB_USERS_PATH}/{uid}.json"
+def _rtdb_url(uid: str) -> str:
+    if not isinstance(uid, str) or not uid or any(char in uid for char in '/.#$[]'):
+        raise ValueError('Invalid Firebase uid')
+    return f"{FIREBASE_DB_URL}/{RTDB_USERS_PATH}/{uid}.json"
+
+
+def _rtdb_headers(id_token: str = "", *, json_body: bool = False) -> dict:
+    headers = {"Accept": "application/json"}
+    if json_body:
+        headers["Content-Type"] = "application/json"
     if id_token:
-        url += f"?auth={id_token}"
-    return url
+        # Keep bearer credentials out of URLs, proxy logs, and exception text.
+        headers["Authorization"] = f"Bearer {id_token}"
+    return headers
 
 
 def rtdb_get_user(uid: str, id_token: str = "") -> dict:
     try:
-        with urllib.request.urlopen(_rtdb_url(uid, id_token), timeout=10) as resp:
+        req = urllib.request.Request(_rtdb_url(uid), headers=_rtdb_headers(id_token), method="GET")
+        with urllib.request.urlopen(req, timeout=10) as resp:  # nosec B310
             return json.loads(resp.read().decode()) or {}
     except Exception:
         return {}
@@ -217,10 +163,10 @@ def rtdb_get_user(uid: str, id_token: str = "") -> dict:
 def rtdb_put_user(uid: str, profile: dict, id_token: str = "") -> bool:
     try:
         data = json.dumps(profile).encode()
-        req = urllib.request.Request(_rtdb_url(uid, id_token), data=data,
-                                     headers={"Content-Type": "application/json"}, method="PUT")
-        urllib.request.urlopen(req, timeout=10)
-        return True
+        req = urllib.request.Request(_rtdb_url(uid), data=data,
+                                     headers=_rtdb_headers(id_token, json_body=True), method="PUT")
+        with urllib.request.urlopen(req, timeout=10):  # nosec B310
+            return True
     except Exception:
         return False
 
@@ -228,10 +174,10 @@ def rtdb_put_user(uid: str, profile: dict, id_token: str = "") -> bool:
 def rtdb_patch_user(uid: str, fields: dict, id_token: str = "") -> bool:
     try:
         data = json.dumps(fields).encode()
-        req = urllib.request.Request(_rtdb_url(uid, id_token), data=data,
-                                     headers={"Content-Type": "application/json"}, method="PATCH")
-        urllib.request.urlopen(req, timeout=10)
-        return True
+        req = urllib.request.Request(_rtdb_url(uid), data=data,
+                                     headers=_rtdb_headers(id_token, json_body=True), method="PATCH")
+        with urllib.request.urlopen(req, timeout=10):  # nosec B310
+            return True
     except Exception:
         return False
 
@@ -242,7 +188,11 @@ def rtdb_patch_user(uid: str, fields: dict, id_token: str = "") -> bool:
 
 def _save_session(session: dict):
     try:
-        AUTH_DIR.mkdir(parents=True, exist_ok=True)
+        AUTH_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+        try:
+            os.chmod(AUTH_DIR, 0o700)
+        except OSError:
+            pass
         with open(AUTH_FILE, "w") as f:
             json.dump(session, f)
         os.chmod(AUTH_FILE, 0o600)
@@ -261,25 +211,28 @@ def _load_session() -> dict:
 
 
 def logout():
-    """Clear the locally stored session and the in-memory copy."""
+    """Clear the locally stored session."""
     try:
         if AUTH_FILE.exists():
             AUTH_FILE.unlink()
     except Exception:
         pass
-    _set_current_session({})
 
 
 def _build_session(auth_resp: dict, username: str = "") -> dict:
     expires_in = int(auth_resp.get("expiresIn", "3600"))
-    return {
+    result = {
         "uid": auth_resp.get("localId") or auth_resp.get("user_id", ""),
-        "email": auth_resp.get("email", ""),
         "username": username,
         "id_token": auth_resp.get("idToken") or auth_resp.get("id_token", ""),
         "refresh_token": auth_resp.get("refreshToken") or auth_resp.get("refresh_token", ""),
         "expires_at": time.time() + expires_in - 60,  # refresh a minute early
     }
+    # Secure Token refresh responses do not contain email. Omitting the key
+    # preserves the verified email already stored in the local session.
+    if auth_resp.get("email"):
+        result["email"] = auth_resp["email"]
+    return result
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -320,34 +273,12 @@ def _is_banned(uid: str, id_token: str = "") -> bool:
 
 
 def _exit_if_banned(uid: str, id_token: str = ""):
-    """Account-level ban check (Firebase profile).
-
-    Distinct from the CLI/IP ban enforced in config.enforce_gist(): this one
-    means the *account* is suspended, so no device can sign in.
-    """
-    prof = rtdb_get_user(uid, id_token)
-    if prof.get("banned"):
-        reason = prof.get("ban_reason") or ""
+    if _is_banned(uid, id_token):
         console.print()
-        console.print("  [bold red]██ ACCESS DENIED — ACCOUNT SUSPENDED ██[/bold red]")
-        console.print("  [red]Your ACCOUNT has been suspended by an administrator.[/red]")
-        console.print("  [dim]This applies to every device — signing in elsewhere "
-                      "will not help.[/dim]")
-        if reason:
-            console.print(f"  [red]Reason:[/red] {reason}")
-        console.print("  [dim]Appeal: https://t.me/XbibzOfficial[/dim]")
+        console.print("  [bold red]██ ACCESS DENIED ██[/bold red]")
+        console.print("  [red]Your account has been banned by the administrator.[/red]")
         console.print()
         sys.exit(1)
-    # A device-scoped CLI ban is NOT an account ban — surface it as a warning
-    # so the user understands why the CLI may refuse to run.
-    if prof.get("cli_banned"):
-        ip = prof.get("cli_banned_ip") or "this device"
-        console.print()
-        console.print("  [bold yellow]CLI access blocked on one device[/bold yellow]")
-        console.print(f"  [yellow]dscli is blocked from {ip}. Your account is "
-                      f"still active.[/yellow]")
-        console.print("  [dim]Appeal: https://t.me/XbibzOfficial[/dim]")
-        console.print()
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -358,8 +289,8 @@ def _do_register() -> dict:
     """Register a new account, send verification email, mirror to RTDB."""
     console.print("  [bold]Create a new account[/bold]")
     username = _prompt("Username    :")
-    while not username:
-        console.print("  [red]Username cannot be empty.[/red]")
+    while not re.fullmatch(r'[a-zA-Z0-9_@.\-]{2,32}', username or ''):
+        console.print("  [red]Username must be 2-32 characters: letters, digits, _, @, ., -[/red]")
         username = _prompt("Username    :")
     email = _prompt("Email       :")
     password = _prompt_password("Password    :")
@@ -379,17 +310,21 @@ def _do_register() -> dict:
 
     session = _build_session(resp, username)
 
-    # Mirror profile to RTDB so the dashboard can see it
-    rtdb_put_user(session["uid"], {
+    # Mirror profile to RTDB so the dashboard can see it. Do not silently
+    # continue with a partially-created identity when rules/backend reject it.
+    profile_saved = rtdb_put_user(session["uid"], {
         "uid": session["uid"],
         "username": username,
         "email": email,
         "email_verified": False,
-        "banned": False,
         "created_at": int(time.time() * 1000),
         "last_login": int(time.time() * 1000),
         "platform": sys.platform,
     }, session["id_token"])
+    if not profile_saved:
+        console.print("  [red]Account was created, but the secure profile could not be saved.[/red]")
+        console.print("  [yellow]Check Firebase Rules/backend deployment, then log in again to repair the profile.[/yellow]")
+        return {}
 
     # Send verification email
     try:
@@ -434,27 +369,14 @@ def _await_verification(session: dict, username: str) -> dict:
                             session["id_token"])
             _exit_if_banned(session["uid"], session["id_token"])
             _save_session(session)
-            _set_current_session(session)
             return session
         console.print("  [yellow]Email not verified yet. Check your inbox (and spam), then choose Continue.[/yellow]")
 
 
-_last_email = ""
-
-
 def _do_login() -> dict:
     """Login with email + password. Requires verified email."""
-    global _last_email
     console.print("  [bold]Log in[/bold]")
-    # Remember the address across attempts so a network failure doesn't force
-    # the user to retype it. Enter accepts the remembered value.
-    if _last_email:
-        entered = _prompt(f"Email       : [{_last_email}] ")
-        email = entered or _last_email
-    else:
-        email = _prompt("Email       :")
-    if email:
-        _last_email = email
+    email = _prompt("Email       :")
     password = _prompt_password("Password    :")
     if not email or not password:
         console.print("  [red]Email and password are required.[/red]")
@@ -462,14 +384,7 @@ def _do_login() -> dict:
     try:
         resp = fb_sign_in(email, password)
     except FirebaseError as e:
-        raw = str(e)
-        friendly = _friendly_error(raw)
-        if _is_transient(raw):
-            # Not a credential problem — say so, and don't imply the password
-            # was wrong.
-            console.print(f"  [yellow]{friendly}[/yellow]")
-        else:
-            console.print(f"  [red]Login failed: {friendly}[/red]")
+        console.print(f"  [red]Login failed: {_friendly_error(str(e))}[/red]")
         return {}
 
     # Pull existing username from RTDB if present
@@ -490,7 +405,7 @@ def _do_login() -> dict:
     if not prof:
         rtdb_put_user(uid, {
             "uid": uid, "username": username or email.split("@")[0], "email": email,
-            "email_verified": True, "banned": False,
+            "email_verified": True,
             "created_at": int(time.time() * 1000), "last_login": int(time.time() * 1000),
             "platform": sys.platform,
         }, session["id_token"])
@@ -500,7 +415,6 @@ def _do_login() -> dict:
                         session["id_token"])
 
     _save_session(session)
-    _set_current_session(session)
     console.print(f"  [green]✓ Welcome back, {session['username'] or email}![/green]")
     return session
 
@@ -536,26 +450,30 @@ def _try_restore_session() -> dict:
     info = fb_lookup(sess["id_token"])
     if not info.get("emailVerified"):
         return {}
-
-    # Pull the authoritative profile from RTDB. The web dashboard owns the
-    # username, so a rename there must be reflected here immediately rather
-    # than reusing the stale value cached in auth.json.
-    prof = rtdb_get_user(sess["uid"], sess["id_token"])
-    if prof.get("banned"):
-        console.print()
-        console.print("  [bold red]██ ACCOUNT SUSPENDED ██[/bold red]")
-        if prof.get("ban_reason"):
-            console.print(f"  [red]Reason:[/red] {prof['ban_reason']}")
-        console.print("  [dim]Appeal: https://t.me/XbibzOfficial[/dim]")
-        console.print()
+    if _is_banned(sess["uid"], sess["id_token"]):
+        console.print("  [bold red]Your account has been banned.[/bold red]")
         sys.exit(1)
-    remote_username = prof.get("username") or ""
-    if remote_username:
-        sess["username"] = remote_username
-
     rtdb_patch_user(sess["uid"], {"last_login": int(time.time() * 1000)}, sess["id_token"])
     _save_session(sess)
     return sess
+
+
+def get_valid_id_token() -> str:
+    """Return a refreshed Firebase ID token for authenticated backend calls."""
+    if os.environ.get("DEEPSEEK_SKIP_AUTH") == "1":
+        return ""
+    sess = _load_session()
+    if not sess or not sess.get("refresh_token"):
+        return ""
+    if sess.get("id_token") and float(sess.get("expires_at", 0)) > time.time() + 120:
+        return sess["id_token"]
+    refreshed = fb_refresh(sess["refresh_token"])
+    if not refreshed:
+        return ""
+    fresh = _build_session(refreshed, sess.get("username", ""))
+    sess.update(fresh)
+    _save_session(sess)
+    return sess.get("id_token", "")
 
 
 def ensure_authenticated() -> dict:
@@ -563,21 +481,8 @@ def ensure_authenticated() -> dict:
 
     Login persists across runs; the user is only prompted when there is no valid
     saved session. Honors DEEPSEEK_SKIP_AUTH=1 for offline/dev use."""
-    # DEEPSEEK_SKIP_AUTH bypasses login *and* every ban check, so it must not
-    # be usable as a get-out-of-jail card on an installed client. Only honour
-    # it when running from a source checkout (development), never from the
-    # installed package under ~/.local/lib or a venv.
     if os.environ.get("DEEPSEEK_SKIP_AUTH") == "1":
-        _pkg = Path(__file__).resolve()
-        _installed = any(part in _pkg.parts for part in
-                         (".local", "site-packages", "dist-packages"))
-        if _installed:
-            console.print("  [yellow]DEEPSEEK_SKIP_AUTH is ignored on an "
-                          "installed client.[/yellow]")
-        else:
-            dev = {"username": "dev", "email": "", "uid": "dev", "offline": True}
-            _set_current_session(dev)
-            return dev
+        return {"username": "dev", "email": "", "uid": "dev", "offline": True}
 
     # 1) Silent restore
     sess = _try_restore_session()
@@ -586,21 +491,10 @@ def ensure_authenticated() -> dict:
         # (saved as a side-effect for the welcome banner to pick up).
         # We no longer print a separate "Signed in as" line — it was redundant
         # with the welcome message and cluttered recursive invocations.
-        _set_current_session(sess)
+        sys.modules[__name__]._current_session = sess
         return sess
 
     # 2) Interactive auth menu
-    return interactive_login()
-
-
-def interactive_login(allow_exit: bool = True) -> dict:
-    """Run the interactive sign-in menu and return the session ({} if aborted).
-
-    Shared by the startup gate and the in-REPL /login command so both behave
-    identically. With allow_exit=False the "Exit" choice returns {} instead of
-    terminating the process — the REPL is already running and must survive a
-    cancelled sign-in.
-    """
     _banner_auth()
     while True:
         console.print("  [cyan]1[/cyan]) Log in    [cyan]2[/cyan]) Register    [cyan]3[/cyan]) Forgot password    [cyan]4[/cyan]) Exit")
@@ -618,11 +512,8 @@ def interactive_login(allow_exit: bool = True) -> dict:
         elif choice in ("3", "forgot", "reset", "f"):
             _do_forgot()
         elif choice in ("4", "exit", "quit", "q"):
-            if allow_exit:
-                console.print("  [dim]Goodbye.[/dim]")
-                sys.exit(0)
-            console.print("  [dim]Sign-in cancelled.[/dim]")
-            return {}
+            console.print("  [dim]Goodbye.[/dim]")
+            sys.exit(0)
         else:
             console.print("  [yellow]Please choose 1–4.[/yellow]")
         console.print()

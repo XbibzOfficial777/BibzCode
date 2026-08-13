@@ -1,0 +1,47 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "dscliUsers": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        "uid": {
+          ".write": "auth != null && auth.uid === $uid",
+          ".validate": "newData.val() === $uid"
+        },
+        "username": {
+          ".write": "auth != null && auth.uid === $uid",
+          ".validate": "newData.isString() && newData.val().matches(/^[a-zA-Z0-9_@.\\-]{2,32}$/)"
+        },
+        "email": {
+          ".write": "auth != null && auth.uid === $uid",
+          ".validate": "newData.isString() && newData.val() === auth.token.email"
+        },
+        "email_verified": {
+          ".write": "auth != null && auth.uid === $uid",
+          ".validate": "newData.isBoolean() && newData.val() === auth.token.email_verified"
+        },
+        "created_at": {
+          ".write": "auth != null && auth.uid === $uid && !data.exists()",
+          ".validate": "newData.isNumber()"
+        },
+        "last_login": {
+          ".write": "auth != null && auth.uid === $uid",
+          ".validate": "newData.isNumber()"
+        },
+        "platform": {
+          ".write": "auth != null && auth.uid === $uid",
+          ".validate": "newData.isString() && newData.val().length <= 100"
+        },
+        "banned": { ".write": false },
+        "banned_at": { ".write": false },
+        "notifications": {
+          "$notificationId": {
+            ".write": "auth != null && auth.uid === $uid && !newData.exists()"
+          }
+        },
+        "$other": { ".write": false }
+      }
+    }
+  }
+}

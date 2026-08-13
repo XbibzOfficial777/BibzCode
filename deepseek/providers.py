@@ -1,4 +1,4 @@
-# DeepSeek CLI v7.7 — Multi-Provider AI Client
+# DeepSeek CLI v7.8.0 — Multi-Provider AI Client
 # Real streaming implementations for 8 providers:
 #   OpenRouter, Google Gemini, HuggingFace, OpenAI, Anthropic, Groq, Together AI, Agnes AI
 # ALL providers support tools/skills (HuggingFace via prompt-based tool calling;
@@ -13,11 +13,11 @@
 
 import json
 import re
+from collections.abc import Generator
+
 import httpx
-from typing import Generator
 
 from .config import MAX_TOKENS, TEMPERATURE, TIMEOUT
-
 
 # ══════════════════════════════════════
 # BASE PROVIDER
@@ -30,7 +30,7 @@ class BaseProvider:
         self.provider_id = provider_id
         self.config = config
         self.api_key = api_key
-        self.base_url = config.get('base_url', '')
+        self.base_url = str(config.get('base_url', '')).rstrip('/')
         self.default_model = config.get('default_model', '')
         self.supports_tools = config.get('supports_tools', False)
 
@@ -38,9 +38,9 @@ class BaseProvider:
     def name(self) -> str:
         return self.config.get('name', self.provider_id)
 
-    def chat_stream(self, messages: list, model: str = None,
-                    temperature: float = None, tools: list = None,
-                    max_tokens: int = None) -> Generator[dict, None, None]:
+    def chat_stream(self, messages: list, model: str | None = None,
+                    temperature: float | None = None, tools: list | None = None,
+                    max_tokens: int | None = None) -> Generator[dict, None, None]:
         """
         Stream chat completion. Yields unified chunks:
           {'type': 'thinking'|'content'|'tool_calls'|'done'|'error', 'data': ...}
@@ -99,9 +99,9 @@ class OpenAICompatibleProvider(BaseProvider):
             pass
         return '{}'
 
-    def chat_stream(self, messages: list, model: str = None,
-                    temperature: float = None, tools: list = None,
-                    max_tokens: int = None) -> Generator[dict, None, None]:
+    def chat_stream(self, messages: list, model: str | None = None,
+                    temperature: float | None = None, tools: list | None = None,
+                    max_tokens: int | None = None) -> Generator[dict, None, None]:
         model = model or self.default_model
         temperature = temperature if temperature is not None else TEMPERATURE
         max_tokens = max_tokens or MAX_TOKENS
@@ -130,14 +130,13 @@ class OpenAICompatibleProvider(BaseProvider):
             'temperature': temperature,
             'max_tokens': max_tokens,
             'stream': True,
-            # Ask the API to report real token counts in the final chunk so we
-            # can meter accurately instead of guessing from string length.
-            'stream_options': {'include_usage': True},
         }
         if tools and self.supports_tools:
             payload['tools'] = tools
 
         stream_ended = False
+        text_content = ''
+        thinking_content = ''
 
         try:
             with httpx.Client(timeout=TIMEOUT) as client:
@@ -154,7 +153,6 @@ class OpenAICompatibleProvider(BaseProvider):
                     current_tool_calls = {}
                     text_content = ''
                     thinking_content = ''
-                    usage_info = None
 
                     for line in resp.iter_lines():
                         if not line or not line.startswith('data: '):
@@ -180,8 +178,6 @@ class OpenAICompatibleProvider(BaseProvider):
                                         })
                                 if tc_list:
                                     yield {'type': 'tool_calls', 'data': tc_list}
-                            if usage_info:
-                                yield {'type': 'usage', 'data': usage_info}
                             yield {'type': 'done', 'data': None}
                             return
 
@@ -190,14 +186,6 @@ class OpenAICompatibleProvider(BaseProvider):
                         except json.JSONDecodeError:
                             continue
 
-                        # The usage chunk arrives with an empty choices list.
-                        _u = chunk.get('usage')
-                        if _u:
-                            usage_info = {
-                                'input': _u.get('prompt_tokens', 0) or 0,
-                                'output': _u.get('completion_tokens', 0) or 0,
-                                'exact': True,
-                            }
                         choices = chunk.get('choices', [])
                         if not choices:
                             continue
@@ -239,15 +227,13 @@ class OpenAICompatibleProvider(BaseProvider):
             yield {'type': 'error',
                    'data': 'Connection failed. Check your internet.'}
         except Exception as e:
-            yield {'type': 'error', 'data': f'Error: {str(e)}'}
+            yield {'type': 'error', 'data': f'Error: {e!s}'}
         # SAFETY: Always yield done event even if stream was interrupted
         # This prevents the agent loop from hanging forever
         if not stream_ended:
             if not text_content.strip() and thinking_content.strip():
                 text_content = thinking_content.strip()
                 yield {'type': 'content', 'data': text_content}
-            if usage_info:
-                yield {'type': 'usage', 'data': usage_info}
             yield {'type': 'done', 'data': None}
 
     def fetch_models(self) -> list[dict]:
@@ -349,9 +335,9 @@ class GeminiProvider(BaseProvider):
             return [{'functionDeclarations': declarations}]
         return []
 
-    def chat_stream(self, messages: list, model: str = None,
-                    temperature: float = None, tools: list = None,
-                    max_tokens: int = None) -> Generator[dict, None, None]:
+    def chat_stream(self, messages: list, model: str | None = None,
+                    temperature: float | None = None, tools: list | None = None,
+                    max_tokens: int | None = None) -> Generator[dict, None, None]:
         model = model or self.default_model
         temperature = temperature if temperature is not None else TEMPERATURE
         max_tokens = max_tokens or MAX_TOKENS
@@ -365,11 +351,11 @@ class GeminiProvider(BaseProvider):
             converted_tools = self._convert_tools(tools)
             if converted_tools:
                 payload['tools'] = converted_tools
-        url = f'{self.base_url}/models/{model}:streamGenerateContent?alt=sse&key={self.api_key}'
+        url = f'{self.base_url}/models/{model}:streamGenerateContent?alt=sse'
         stream_ended = False
         try:
             with httpx.Client(timeout=TIMEOUT) as client:
-                with client.stream('POST', url, json=payload, headers={'Content-Type': 'application/json'}) as resp:
+                with client.stream('POST', url, json=payload, headers={'Content-Type': 'application/json', 'x-goog-api-key': self.api_key}) as resp:
                     if resp.status_code != 200:
                         err_body = resp.read().decode('utf-8', errors='replace')
                         yield {'type': 'error', 'data': f'Gemini Error {resp.status_code}: {err_body}'}
@@ -377,7 +363,6 @@ class GeminiProvider(BaseProvider):
                     text_content = ''
                     thinking_content = ''
                     function_calls = {}
-                    usage_info = None
                     for line in resp.iter_lines():
                         if not line or not line.startswith('data: '):
                             continue
@@ -388,13 +373,6 @@ class GeminiProvider(BaseProvider):
                             chunk = json.loads(data_str)
                         except json.JSONDecodeError:
                             continue
-                        _um = chunk.get('usageMetadata')
-                        if _um:
-                            usage_info = {
-                                'input': _um.get('promptTokenCount', 0) or 0,
-                                'output': _um.get('candidatesTokenCount', 0) or 0,
-                                'exact': True,
-                            }
                         candidates = chunk.get('candidates', [])
                         if not candidates:
                             continue
@@ -414,12 +392,17 @@ class GeminiProvider(BaseProvider):
                                 fc = part['functionCall']
                                 fc_name = fc.get('name', '')
                                 fc_args = fc.get('args', {})
-                                if fc_name not in function_calls:
-                                    function_calls[fc_name] = {'id': f'gemini_{fc_name}', 'type': 'function', 'function': {'name': fc_name, 'arguments': json.dumps(fc_args)}}
-                                else:
-                                    existing_args = json.loads(function_calls[fc_name]['function']['arguments'])
-                                    existing_args.update(fc_args)
-                                    function_calls[fc_name]['function']['arguments'] = json.dumps(existing_args)
+                                # Preserve duplicate calls to the same function and
+                                # their ordering; function name is not an identity.
+                                call_index = len(function_calls)
+                                function_calls[call_index] = {
+                                    'id': f'gemini_{call_index}_{fc_name}',
+                                    'type': 'function',
+                                    'function': {
+                                        'name': fc_name,
+                                        'arguments': json.dumps(fc_args)
+                                    }
+                                }
                         finish = candidates[0].get('finishReason', '')
                         if finish in ('STOP', 'MAX_TOKENS', 'SAFETY', 'RECITATION'):
                             stream_ended = True
@@ -429,8 +412,6 @@ class GeminiProvider(BaseProvider):
                                 yield {'type': 'content', 'data': text_content}
                             if function_calls:
                                 yield {'type': 'tool_calls', 'data': list(function_calls.values())}
-                            if usage_info:
-                                yield {'type': 'usage', 'data': usage_info}
                             yield {'type': 'done', 'data': None}
                             return
         except httpx.TimeoutException:
@@ -438,23 +419,22 @@ class GeminiProvider(BaseProvider):
         except httpx.ConnectError:
             yield {'type': 'error', 'data': 'Connection failed. Check internet.'}
         except Exception as e:
-            yield {'type': 'error', 'data': f'Gemini error: {str(e)}'}
+            yield {'type': 'error', 'data': f'Gemini error: {e!s}'}
         # SAFETY: Always yield done event even if stream ended unexpectedly
         if not stream_ended:
             yield {'type': 'done', 'data': None}
 
     def fetch_models(self) -> list[dict]:
         try:
-            url = f'{self.base_url}/models?key={self.api_key}'
+            url = f'{self.base_url}/models'
             with httpx.Client(timeout=15) as client:
-                r = client.get(url)
+                r = client.get(url, headers={'x-goog-api-key': self.api_key})
                 r.raise_for_status()
                 data = r.json()
                 models = []
                 for m in data.get('models', []):
                     mid = m.get('name', '')
-                    if mid.startswith('models/'):
-                        mid = mid[7:]
+                    mid = mid.removeprefix('models/')
                     methods = m.get('supportedGenerationMethods', [])
                     if 'generateContent' in methods:
                         models.append({'id': mid, 'name': m.get('displayName', mid), 'context': m.get('inputTokenLimit', 0), 'free': True})
@@ -465,9 +445,9 @@ class GeminiProvider(BaseProvider):
 
     def validate_key(self) -> tuple[bool, str]:
         try:
-            url = f'{self.base_url}/models?key={self.api_key}'
+            url = f'{self.base_url}/models'
             with httpx.Client(timeout=10) as client:
-                r = client.get(url)
+                r = client.get(url, headers={'x-goog-api-key': self.api_key})
                 if r.status_code == 200:
                     data = r.json()
                     count = len(data.get('models', []))
@@ -529,9 +509,9 @@ class AnthropicProvider(BaseProvider):
                 result.append({'name': fn.get('name', ''), 'description': fn.get('description', ''), 'input_schema': fn.get('parameters', {'type': 'object', 'properties': {}})})
         return result
 
-    def chat_stream(self, messages: list, model: str = None,
-                    temperature: float = None, tools: list = None,
-                    max_tokens: int = None) -> Generator[dict, None, None]:
+    def chat_stream(self, messages: list, model: str | None = None,
+                    temperature: float | None = None, tools: list | None = None,
+                    max_tokens: int | None = None) -> Generator[dict, None, None]:
         model = model or self.default_model
         temperature = temperature if temperature is not None else TEMPERATURE
         max_tokens = max_tokens or MAX_TOKENS
@@ -554,7 +534,6 @@ class AnthropicProvider(BaseProvider):
                         return
                     text_content = ''
                     tool_use_blocks = {}
-                    usage_info = {'input': 0, 'output': 0, 'exact': True}
                     for line in resp.iter_lines():
                         if not line or not line.startswith('data: '):
                             continue
@@ -566,14 +545,6 @@ class AnthropicProvider(BaseProvider):
                         except json.JSONDecodeError:
                             continue
                         event_type = event.get('type', '')
-                        if event_type == 'message_start':
-                            _u = (event.get('message') or {}).get('usage') or {}
-                            usage_info['input'] = _u.get('input_tokens', 0) or 0
-                            usage_info['output'] = _u.get('output_tokens', 0) or 0
-                        elif event_type == 'message_delta':
-                            _u = event.get('usage') or {}
-                            if _u.get('output_tokens') is not None:
-                                usage_info['output'] = _u['output_tokens']
                         if event_type == 'content_block_delta':
                             delta = event.get('delta', {})
                             delta_type = delta.get('type', '')
@@ -606,8 +577,6 @@ class AnthropicProvider(BaseProvider):
                                         tc_list.append({'id': tb['id'], 'type': 'function', 'function': tb['function']})
                                 if tc_list:
                                     yield {'type': 'tool_calls', 'data': tc_list}
-                            if usage_info['input'] or usage_info['output']:
-                                yield {'type': 'usage', 'data': usage_info}
                             yield {'type': 'done', 'data': None}
                             return
                         elif event_type == 'error':
@@ -619,7 +588,7 @@ class AnthropicProvider(BaseProvider):
         except httpx.ConnectError:
             yield {'type': 'error', 'data': 'Connection failed. Check internet.'}
         except Exception as e:
-            yield {'type': 'error', 'data': f'Anthropic error: {str(e)}'}
+            yield {'type': 'error', 'data': f'Anthropic error: {e!s}'}
         # SAFETY: Always yield done event
         if not stream_ended:
             yield {'type': 'done', 'data': None}
@@ -724,9 +693,7 @@ class HuggingFaceProvider(BaseProvider):
                 data = json.loads(raw)
                 name = data.get('name', '')
                 args = data.get('arguments', {})
-                if isinstance(args, dict):
-                    args = json.dumps(args, ensure_ascii=False)
-                elif not isinstance(args, str):
+                if isinstance(args, dict) or not isinstance(args, str):
                     args = json.dumps(args, ensure_ascii=False)
                 if name:
                     tool_calls.append({'id': f'hf_{name}_{i}', 'type': 'function', 'function': {'name': name, 'arguments': args}})
@@ -736,9 +703,9 @@ class HuggingFaceProvider(BaseProvider):
         clean_text = re.sub(r'\n{3,}', '\n\n', clean_text).strip()
         return clean_text, tool_calls
 
-    def chat_stream(self, messages: list, model: str = None,
-                    temperature: float = None, tools: list = None,
-                    max_tokens: int = None) -> Generator[dict, None, None]:
+    def chat_stream(self, messages: list, model: str | None = None,
+                    temperature: float | None = None, tools: list | None = None,
+                    max_tokens: int | None = None) -> Generator[dict, None, None]:
         model = model or self.default_model
         temperature = temperature if temperature is not None else TEMPERATURE
         max_tokens = max_tokens or MAX_TOKENS
@@ -765,12 +732,6 @@ class HuggingFaceProvider(BaseProvider):
                     yield {'type': 'error', 'data': 'Empty response from model'}
                     return
                 content = choices[0].get('message', {}).get('content', '') or ''
-                _u = data.get('usage') or {}
-                if _u:
-                    yield {'type': 'usage', 'data': {
-                        'input': _u.get('prompt_tokens', 0) or 0,
-                        'output': _u.get('completion_tokens', 0) or 0,
-                        'exact': True}}
                 clean_text, tool_calls = self._parse_tool_calls(content)
                 if clean_text:
                     yield {'type': 'content', 'data': clean_text}
@@ -782,7 +743,7 @@ class HuggingFaceProvider(BaseProvider):
         except httpx.ConnectError:
             yield {'type': 'error', 'data': 'Connection failed. Check internet.'}
         except Exception as e:
-            yield {'type': 'error', 'data': f'HuggingFace error: {str(e)}'}
+            yield {'type': 'error', 'data': f'HuggingFace error: {e!s}'}
 
     def _chat_stream_basic(self, messages: list, model: str, temperature: float, max_tokens: int) -> Generator[dict, None, None]:
         clean_messages = []
@@ -829,7 +790,7 @@ class HuggingFaceProvider(BaseProvider):
         except httpx.ConnectError:
             yield {'type': 'error', 'data': 'Connection failed. Check internet.'}
         except Exception as e:
-            yield {'type': 'error', 'data': f'HuggingFace error: {str(e)}'}
+            yield {'type': 'error', 'data': f'HuggingFace error: {e!s}'}
 
     def fetch_models(self) -> list[dict]:
         popular = self.config.get('popular_models', [])
@@ -871,9 +832,9 @@ def create_provider(provider_id: str, config: dict, api_key: str) -> BaseProvide
 # BACKWARD COMPAT
 # ══════════════════════════════════════
 
-def chat_stream(messages: list, model: str = None,
-                temperature: float = None, tools: list = None,
-                max_tokens: int = None, provider=None) -> Generator[dict, None, None]:
+def chat_stream(messages: list, model: str | None = None,
+                temperature: float | None = None, tools: list | None = None,
+                max_tokens: int | None = None, provider=None) -> Generator[dict, None, None]:
     if provider is None:
         from .config import cfg
         pconfig = cfg.get_provider_config()

@@ -139,12 +139,13 @@ def test_telegram_download_is_bounded_private_and_token_free(monkeypatch, tmp_pa
         def raise_for_status(self): return None
         def iter_bytes(self, size): return iter([b'payload'])
 
-    def stream(method, url, **kwargs):
+    def safe_request(_client, method, url, **kwargs):
         requested['url'] = url
         return Response()
 
+    import deepseek.net_policy as net_policy
     monkeypatch.setattr(connector_module, 'CONNECTOR_UPLOAD_ROOT', tmp_path)
-    monkeypatch.setattr(connector_module._httpx_client, 'stream', stream)
+    monkeypatch.setattr(net_policy, 'safe_httpx_request', safe_request)
     bot = TelegramBot('secret-bot-token', allowed_users=[1])
     bot._api = lambda *args, **kwargs: {'ok': True, 'result': {'file_path': 'docs/file.txt'}}
     item, error = bot._download_telegram_file({

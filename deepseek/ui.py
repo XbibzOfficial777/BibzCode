@@ -1,4 +1,4 @@
-# DeepSeek CLI v7.7 — UI Components
+# DeepSeek CLI v7.8.0 — UI Components
 # Rich-based terminal UI: StreamRenderer, LoadingSpinner, Banner, StatusBar
 # Raw-mode interactive: arrow-key select menu, Ctrl+P input
 #
@@ -22,11 +22,11 @@
 #   - **bold**, *italic*, `code`, headers rendered in real-time via Rich markup
 #   - No Markdown re-render on finalize (streamed content stays as-is)
 #
-# FIXED v7.7:
+# FIXED v7.8.0:
 #   - StreamRenderer: Smooth buffered output (20ms minimum flush interval)
 #   - TUIStatusBar: Compact status bar for tool output
 #   - Improved tool call/result display with professional formatting
-#   - New ASCII art banner v7.7 with feature list
+#   - New ASCII art banner v7.8.0 with feature list
 #   - Better visual separators and color coding throughout
 #
 # FIXED v7.10:
@@ -52,20 +52,23 @@
 #     indicator shows just "round N" instead of "N/limit".
 
 import json
-import sys
 import os
 import re
+import select as _select
+import sys
+import termios
 import threading
 import time
 import tty
-import termios
-import select as _select
+
+from rich import box
 from rich.console import Console
 from rich.markup import escape
-
-from rich.table import Table
-from rich import box
+from rich.panel import Panel
 from rich.status import Status
+from rich.table import Table
+
+from .version import __version__
 
 console = Console()
 
@@ -83,40 +86,61 @@ _input_history: list = []
 _input_history_idx: int = -1
 _input_temp_buffer: str = ''
 
-# ── Slash commands list for Tab completion ──
+# ── Slash command reference / completion ──
+HELP_SECTIONS = [
+    ('Navigation', [('Ctrl+P', 'Open settings panel'), ('Ctrl+X', 'Toggle session/sub-agent view')]),
+    ('Core', [
+        ('/help, /h, /?', 'Show help and command reference'),
+        ('/version', 'Show version and runtime capabilities'),
+        ('/info', 'Show provider, model, tools, and usage status'),
+        ('/thinking', 'Toggle native reasoning visibility'),
+        ('/clear', 'Clear active and archived conversation'),
+        ('/compact', 'Compact old context into lossless archive + summary'),
+        ('/export [file]', 'Export chat to .txt, .md, or .html'),
+        ('/system <prompt>', 'Append/update the system prompt'),
+        ('/exit, /quit, /q', 'Save and exit the CLI'),
+    ]),
+    ('Project & skills', [
+        ('/init', 'Scan project and generate AGENTS.md'),
+        ('/install <package>', 'Install a skill via npx/npm'),
+        ('/skills', 'List/manage installed skills'),
+        ('/tools', 'List available built-in tools'),
+    ]),
+    ('Provider & model', [
+        ('/provider [id]', 'Switch AI provider'), ('/model [id]', 'Switch model'),
+        ('/models', 'List configured models'), ('/key', 'Set provider API key'),
+        ('/k, /context', 'Show estimated context usage'),
+        ('/live_models', 'Fetch live provider models'),
+        ('/search_model <query>', 'Search/filter models'),
+    ]),
+    ('Agent & automation', [
+        ('/live_search <query>', 'Run live web search'), ('/agent [profile|list]', 'Manage agent profile'),
+        ('/mcp [action]', 'Manage external MCP servers'), ('/connectors', 'Show connector status'),
+        ('/telegram [action]', 'Manage Telegram'), ('/discord [action]', 'Manage Discord'),
+    ]),
+    ('Sessions & utilities', [
+        ('/session, /sessions', 'List/delete saved sessions'),
+        ('/rename <name>', 'Rename the current session'),
+        ('/rename <session_id> <name>', 'Rename a saved session'),
+        ('/remind <seconds> [message]', 'Create an in-terminal reminder'),
+    ]),
+]
+
 SLASH_COMMANDS = [
-    ('/help',          'Show this help message'),
-    ('/version',       'Show version and capabilities'),
-    ('/k',             'Show token/context usage'),
-    ('/context',       'Show token/context usage'),
-    ('/init',          'Scan project & create AGENTS.md'),
-    ('/install',       'Install a skill (npx skills add)'),
-    ('/skills',        'List/manage installed skills'),
-    ('/tools',         'Show all available tools'),
-    ('/clear',         'Clear conversation history'),
-    ('/export',        'Export chat to text file'),
-    ('/system',        'Update system prompt'),
-    ('/provider',      'Switch AI provider'),
-    ('/model',         'Switch model'),
-    ('/key',           'Set API key'),
-    ('/models',        'List available models'),
-    ('/info',          'Show current config info'),
-    ('/thinking',      'Toggle thinking/reasoning visibility'),
-    ('/compact',       'Compact conversation (keep system + last 10)'),
-    ('/live_search',   'Live web search'),
-    ('/live_models',   'Fetch all models from provider API'),
-    ('/search_model',  'Search/filter models from provider API'),
-    ('/agent',         'Switch agent profile'),
-    ('/session',       'List/delete saved sessions'),
-    ('/account',       'Show signed-in account (managed on web dashboard)'),
-    ('/login',         'Sign in to your account'),
-    ('/logout',        'Sign out of this device'),
-    ('/sync',          'Re-sync username from the web dashboard'),
-    ('/connectors',    'Show connectors status'),
-    ('/telegram',      'Telegram connector menu'),
-    ('/discord',       'Discord connector menu'),
-    ('/mcp',           'MCP server management'),
-    ('/exit',          'Exit the CLI'),
+    ('/help', 'Show help'), ('/h', 'Alias of /help'), ('/?', 'Alias of /help'),
+    ('/version', 'Show version'), ('/k', 'Show context usage'), ('/context', 'Alias of /k'),
+    ('/init', 'Create AGENTS.md'), ('/install', 'Install skill'), ('/skills', 'Manage skills'),
+    ('/tools', 'List tools'), ('/clear', 'Clear conversation'), ('/export', 'Export chat'),
+    ('/system', 'Update system prompt'), ('/provider', 'Switch provider'), ('/model', 'Switch model'),
+    ('/key', 'Set API key'), ('/models', 'List models'), ('/info', 'Show configuration'),
+    ('/thinking', 'Toggle native reasoning'), ('/compact', 'Compact memory'),
+    ('/live_search', 'Live web search'), ('/live_models', 'Fetch provider models'),
+    ('/search_model', 'Search models'), ('/agent', 'Switch agent profile'),
+    ('/session', 'Manage sessions'), ('/sessions', 'Alias of /session'),
+    ('/rename', 'Rename session'), ('/remind', 'Create reminder'),
+    ('/connectors', 'Connector status'), ('/telegram', 'Manage Telegram'),
+    ('/discord', 'Manage Discord'), ('/mcp', 'Manage MCP'),
+    ('/exit', 'Exit'), ('/quit', 'Alias of /exit'), ('/q', 'Alias of /exit'),
 ]
 
 # ══════════════════════════════════════
@@ -421,10 +445,7 @@ class StreamRenderer:
             lines.append(row_line)
 
             # Header separator
-            if idx == 0 and has_header and len(rows) > 1:
-                sep = "├─" + "─┼─".join("─" * w for w in col_widths) + "─┤"
-                lines.append(sep)
-            elif idx < len(rows) - 1:
+            if idx == 0 and has_header and len(rows) > 1 or idx < len(rows) - 1:
                 sep = "├─" + "─┼─".join("─" * w for w in col_widths) + "─┤"
                 lines.append(sep)
 
@@ -707,8 +728,8 @@ class StreamRenderer:
                     formatted_lines.append(f'  [dim]┌─ {lang} ──────────────────────────────[/dim]')
                     try:
                         from pygments import highlight
-                        from pygments.lexers import get_lexer_by_name, guess_lexer
                         from pygments.formatters import Terminal256Formatter
+                        from pygments.lexers import get_lexer_by_name, guess_lexer
                         lexer = get_lexer_by_name(lang, stripall=True) if lang else guess_lexer(code_content)
                         highlighted = highlight(code_content, lexer, Terminal256Formatter())
                         code_lines = highlighted.rstrip('\n').split('\n')
@@ -894,27 +915,6 @@ class StreamRenderer:
             console.print()
             self._line_buffer = ''
             self._at_line_start = True
-
-    def retract_content(self, text: str):
-        """Un-print answer text that turned out to be reasoning.
-
-        Reasoning models that emit a bare closing </think> only reveal the
-        split *after* we have already streamed part of it as the answer. We
-        cannot un-write arbitrary scrollback, so we clear the current line and
-        re-render the text into the dim thinking block instead of leaving a
-        duplicate paragraph on screen.
-        """
-        try:
-            self._flush_line_buffer()
-            # Clear the line we are on so a partially printed answer doesn't
-            # linger next to the reasoning block.
-            sys.stdout.write('\r\033[2K')
-            sys.stdout.flush()
-        except Exception:
-            pass
-        self._at_line_start = True
-        if text.strip():
-            self.append_thinking(text)
 
     def show_thinking_as_content(self, thinking_text: str):
         """Reasoning-only fallback (empty content). If thinking was hidden,
@@ -1124,7 +1124,7 @@ class StreamRenderer:
 
         # ── Success — smart preview ──
         lines = result.split('\n')
-        total_lines = len(lines)
+        len(lines)
 
         if tool_name in ('read_file', 'read_pdf', 'read_docx', 'read_xlsx',
                          'read_pptx', 'read_csv'):
@@ -1302,7 +1302,8 @@ class StreamRenderer:
             if len(msg['content']) > 80:
                 preview += '...'
             
-            console.print(f'    [{role_color}]•[/ {role_color}] [{msg['role'].upper()}] {preview}')
+            role_label = str(msg.get('role', 'unknown')).upper()
+            console.print(f'    [{role_color}]•[/{role_color}] [{role_label}] {preview}')
         
         console.print()
         console.print('  [dim]Use Ctrl+Up/Ctrl+Down to navigate history[/dim]')
@@ -1401,7 +1402,7 @@ def show_tool_processing(round_num: int = 1, max_rounds: int = 12, tools_count: 
 
 
 # ══════════════════════════════════════
-# TUI STATUS BAR (v7.7)
+# TUI STATUS BAR (v7.8.0)
 # ══════════════════════════════════════
 
 class TUIStatusBar:
@@ -1464,23 +1465,9 @@ def confirm_action(tool_name: str, args: dict, verb: str = 'execute') -> str:
         ('Always Allow', 'green'),
         ('Reject', 'red'),
     ]
-    # Fail CLOSED when there is no terminal to prompt on. Without this the
-    # bare termios.tcgetattr() below raises "Inappropriate ioctl for device"
-    # from a connector/background thread and the caller's error handling
-    # decides the outcome — which is exactly how a confirmation gate turns
-    # into an accidental auto-approve.
-    try:
-        if not (sys.stdin.isatty() and sys.stdout.isatty()):
-            return 'reject'
-    except Exception:
-        return 'reject'
-
     fd = sys.stdin.fileno()
     out_fd = sys.stdout.fileno()
-    try:
-        old_settings = termios.tcgetattr(fd)
-    except Exception:
-        return 'reject'
+    old_settings = termios.tcgetattr(fd)
     arg_summary = ', '.join(f'{k}={v}' for k, v in list(args.items())[:3])
     if len(args) > 3:
         arg_summary += '...'
@@ -1632,10 +1619,9 @@ def interactive_filter_select(items, title=None):
                     if filtered:
                         selected = (selected - 1) % len(filtered)
                         redraw()
-                elif key == 'B':
-                    if filtered:
-                        selected = (selected + 1) % len(filtered)
-                        redraw()
+                elif key == 'B' and filtered:
+                    selected = (selected + 1) % len(filtered)
+                    redraw()
                 continue
 
             if ch == '\x7f':
@@ -1868,7 +1854,6 @@ def _reverse_search(fd, out_fd, saved_buffer):
             match_pos = -1
 
     def _display():
-        # match_pos is only read here; no `nonlocal` needed.
         if matches and match_pos >= 0:
             matched = _input_history[matches[match_pos]]
             os.write(out_fd, f'\r\033[2m(reverse-i-search)\033[0m `{query}`: \033[36m{matched}\033[0m\033[K'.encode())
@@ -1917,7 +1902,7 @@ def _reverse_search(fd, out_fd, saved_buffer):
             _display()
 
 
-def prompt_input(depth: int = None) -> str:
+def prompt_input(depth: int | None = None) -> str:
     """
     Custom input prompt with full line editing and Ctrl+P detection.
 
@@ -1933,20 +1918,9 @@ def prompt_input(depth: int = None) -> str:
         _depth = depth
 
     if not sys.stdin.isatty():
-        # stdin is a pipe/file (e.g. `curl ... | bash` exec'd us, or the user
-        # ran `dscli < file`). Read what we can; on EOF exit *loudly* so the
-        # user isn't left staring at a shell prompt wondering what happened.
         try:
             return console.input('[bold green]you > [/bold green]').strip()
         except (KeyboardInterrupt, EOFError):
-            console.print()
-            console.print('  [yellow]No interactive terminal attached '
-                          '(stdin reached EOF).[/yellow]')
-            console.print('  [dim]This happens when dscli is launched from a '
-                          'piped script, e.g. curl ... | bash.[/dim]')
-            console.print('  [dim]Run [bold]dscli[/bold] directly in your '
-                          'terminal to start chatting.[/dim]')
-            console.print()
             return '/exit'
 
     fd = sys.stdin.fileno()
@@ -2368,10 +2342,7 @@ def prompt_input(depth: int = None) -> str:
                     cursor_pos += 1
                     draw_line()
                     now_slash = buffer.strip().startswith('/')
-                    if now_slash and not was_slash:
-                        _show_command_menu()
-                        tty.setraw(fd)
-                    elif now_slash and was_slash:
+                    if now_slash and not was_slash or now_slash and was_slash:
                         _show_command_menu()
                         tty.setraw(fd)
 
@@ -2387,17 +2358,17 @@ def prompt_input(depth: int = None) -> str:
 # BANNER & HELPERS
 # ══════════════════════════════════════
 
-BANNER = r"""[bold cyan]
+BANNER = rf"""[bold cyan]
 ________                                            __    
 \______ \   ____   ____ ______  ______ ____   ____ |  | __
  |    |  \_/ __ \_/ __ \\____ \/  ___// __ \_/ __ \|  |/ /
  |    `   \  ___/\  ___/|  |_> >___ \\  ___/\  ___/|    < 
-/_______  /\___  >\___  >   __/____  >\___  >\___  >__|_ \   [bold red]v__VER__[/bold red]
+/_______  /\___  >\___  >   __/____  >\___  >\___  >__|_ \   [bold red]v{__version__}[/bold red]
         \/     \/     \/|__|       \/     \/     \/     \/[/bold cyan]
 
-[dim]    DeepSeek CLI Agent v__VER__[/dim]
+[dim]    DeepSeek CLI Agent v{__version__}[/dim]
 [dim]    Developer : Xbibz Official[/dim]
-[dim]    Connectors : Telegram & Discord | Tools: __NTOOLS__ | Smart Loop[/dim]
+[dim]    Connectors : Telegram & Discord | Tools: 90+ | Smart Loop[/dim]
 """
 
 
@@ -2407,28 +2378,16 @@ def show_banner():
     When the startup version check (enforce_gist) detected a newer release in the
     registry Gist, an "(Update Available vX.Y)" line is rendered right under the
     banner so it's actually visible to the user."""
-    import os, sys
+    import os
+    import sys
     # Skip the banner when dscli is being called recursively (e.g. via agent bash tool)
     if not sys.stdout.isatty() or os.environ.get('DEEPSEEK_NESTED') == '1':
         return
-    # Version and tool count are substituted at render time so the banner can
-    # never drift from the actual build (it used to hardcode "v7.7 / 90+").
-    banner = BANNER
-    try:
-        from .config import CLIENT_VERSION as _v
-        banner = banner.replace('__VER__', _v)
-    except Exception:
-        banner = banner.replace('__VER__', '?')
-    try:
-        from .toolkit import ToolRegistry as _TR
-        banner = banner.replace('__NTOOLS__', str(len(_TR().tools)))
-    except Exception:
-        banner = banner.replace('__NTOOLS__', 'many')
-    console.print(banner)
+    console.print(BANNER)
 
     # ── Update Available notice (driven by registry Gist's latest_version) ──
     try:
-        from .config import get_update_info, CLIENT_VERSION
+        from .config import CLIENT_VERSION, get_update_info
         info = get_update_info()
         if info and info.get("latest"):
             latest = info["latest"]
@@ -2449,7 +2408,8 @@ def show_banner():
 def show_welcome(provider_name: str, model: str, has_key: bool):
     """Show welcome message with active provider info."""
     # Skip if non-TTY (recursive call via bash tool) or DEEPSEEK_NESTED is set
-    import os, sys
+    import os
+    import sys
     if not sys.stdout.isatty() or os.environ.get('DEEPSEEK_NESTED') == '1':
         return
     status = '[green]active[/green]' if has_key else '[red]no key[/red]'
@@ -2459,8 +2419,8 @@ def show_welcome(provider_name: str, model: str, has_key: bool):
     # the logged-in account on the same line as the provider info.
     sess = {}
     try:
-        from .auth import get_current_session
-        sess = get_current_session()
+        from . import auth as _auth_mod
+        sess = getattr(_auth_mod, '_current_session', {}) or {}
     except Exception:
         pass
     who = sess.get('username') or sess.get('email') or ''
@@ -2473,18 +2433,22 @@ def show_welcome(provider_name: str, model: str, has_key: bool):
 
 
 def show_help():
-    """Display help / available commands."""
-    table = Table(title='Commands', box=box.ROUNDED, show_lines=False,
-                  border_style='cyan', title_style='bold cyan')
-    table.add_column('Command', style='bold green', min_width=18)
-    table.add_column('Description', style='white')
-
-    table.add_row('Ctrl+P', 'Open settings panel')
-    for cmd, desc in SLASH_COMMANDS:
-        table.add_row(cmd, desc)
-
-    console.print(table)
+    """Display a complete help/reference table for user-facing commands."""
+    console.print(Panel.fit(
+        '[bold cyan]DeepSeek CLI Command Reference[/bold cyan]\n'
+        '[dim]Tip:[/dim] type [bold]/[/bold] for command completion.',
+        border_style='cyan',
+    ))
     console.print()
+    for section, rows in HELP_SECTIONS:
+        table = Table(title=section, box=box.ROUNDED, show_lines=False,
+                      border_style='cyan', title_style='bold cyan')
+        table.add_column('Command', style='bold green', min_width=28)
+        table.add_column('Description', style='white')
+        for command, description in rows:
+            table.add_row(command, description)
+        console.print(table)
+        console.print()
 
 
 def show_version():
@@ -2492,12 +2456,12 @@ def show_version():
     version_table = Table(box=box.SIMPLE, show_header=False, border_style='cyan')
     version_table.add_column('Key', style='bold cyan', min_width=20)
     version_table.add_column('Value', style='white')
-    version_table.add_row('Version', 'DeepSeek CLI Agent v7.8.0')
+    version_table.add_row('Version', f'DeepSeek CLI Agent v{__version__}')
     version_table.add_row('Developer', 'Xbibz Official')
     version_table.add_row('TUI', 'Full Real-Time Stream | Rich Markdown | Smooth Buffer')
-    version_table.add_row('Features', '88 core tools (+24 with Selenium) | 8 Providers | Smart Loop | OCR | Connectors')
+    version_table.add_row('Features', '90+ Tools | 8 Providers | Smart Loop | OCR | Connectors')
     version_table.add_row('Providers', 'OpenRouter, Gemini, HuggingFace, OpenAI, Anthropic, Groq, Together, Agnes AI')
-    version_table.add_row('Max Tool Rounds', 'unlimited (anti-stuck guard + text-based fallback)')
+    version_table.add_row('Max Tool Rounds', '12 (smart loop with text-based fallback)')
     version_table.add_row('Tool Categories', 'File, Web, Code, System, Math, Utility, PDF, DOCX, Image, Video, Browser')
     console.print(version_table)
     console.print()

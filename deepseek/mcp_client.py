@@ -1,4 +1,4 @@
-# DeepSeek CLI v7.7 — Real MCP Client
+# DeepSeek CLI v7.8.0 — Real MCP Client
 # Connects to external MCP servers via stdio or SSE
 # Supports popular servers: Canva, Context7, GitHub, Brave Search, etc.
 #
@@ -11,25 +11,20 @@
 # must live in the SAME asyncio task. We use a persistent background
 # coroutine (_session_lifecycle) that keeps the session alive.
 
-import os
-import sys
 import asyncio
-import logging
+import os
 import threading
 from contextlib import contextmanager
-from typing import Optional
 
 
 @contextmanager
 def _silence_stderr():
-    """Temporarily redirect stderr to devnull during MCP operations."""
-    old_stderr = sys.stderr
-    try:
-        with open(os.devnull, 'w') as devnull:
-            sys.stderr = devnull
-            yield
-    finally:
-        sys.stderr = old_stderr
+    """Compatibility context without process-global stderr mutation.
+
+    Replacing ``sys.stderr`` from a background thread used to hide unrelated
+    errors from the main REPL. MCP library logging is already configured above.
+    """
+    yield
 
 # MCP client imports
 try:
@@ -55,9 +50,9 @@ POPULAR_MCP_SERVERS = {
         "description": "Web search via Brave Search API",
         "transport": "stdio",
         "command": "npx",
-        "args": ["-y", "@modelcontextprotocol/server-brave-search"],
+        "args": ["-y", "@modelcontextprotocol/server-brave-search@0.6.2"],
         "env_key": "BRAVE_API_KEY",
-        "install": "npm install -g @modelcontextprotocol/server-brave-search",
+        "install": "npm install -g @modelcontextprotocol/server-brave-search@0.6.2",
         "tools_hint": ["brave_web_search", "brave_local_search"],
     },
     "github": {
@@ -65,9 +60,9 @@ POPULAR_MCP_SERVERS = {
         "description": "GitHub repo management, issues, PRs, file operations",
         "transport": "stdio",
         "command": "npx",
-        "args": ["-y", "@modelcontextprotocol/server-github"],
+        "args": ["-y", "@modelcontextprotocol/server-github@2025.4.8"],
         "env_key": "GITHUB_PERSONAL_ACCESS_TOKEN",
-        "install": "npm install -g @modelcontextprotocol/server-github",
+        "install": "npm install -g @modelcontextprotocol/server-github@2025.4.8",
         "tools_hint": ["search_repositories", "create_repository", "get_file_contents",
                        "create_issue", "list_issues", "create_pull_request"],
     },
@@ -76,9 +71,12 @@ POPULAR_MCP_SERVERS = {
         "description": "Secure filesystem operations with access controls",
         "transport": "stdio",
         "command": "npx",
-        "args": ["-y", "@modelcontextprotocol/server-filesystem", os.path.expanduser("~")],
+        "args": [
+            "-y", "@modelcontextprotocol/server-filesystem@2026.7.10",
+            os.path.realpath(os.environ.get("DEEPSEEK_WORKSPACE") or os.environ.get("DEEPSEEK_ORIGINAL_CWD") or os.getcwd()),
+        ],
         "env_key": None,
-        "install": "npm install -g @modelcontextprotocol/server-filesystem",
+        "install": "npm install -g @modelcontextprotocol/server-filesystem@2026.7.10",
         "tools_hint": ["read_file", "write_file", "list_directory", "create_directory",
                        "move_file", "search_files", "get_file_info"],
     },
@@ -87,9 +85,9 @@ POPULAR_MCP_SERVERS = {
         "description": "Persistent knowledge graph memory for context retention",
         "transport": "stdio",
         "command": "npx",
-        "args": ["-y", "@modelcontextprotocol/server-memory"],
+        "args": ["-y", "@modelcontextprotocol/server-memory@2026.7.4"],
         "env_key": None,
-        "install": "npm install -g @modelcontextprotocol/server-memory",
+        "install": "npm install -g @modelcontextprotocol/server-memory@2026.7.4",
         "tools_hint": ["create_entities", "create_relations", "search_nodes",
                        "open_nodes", "delete_entities"],
     },
@@ -98,7 +96,7 @@ POPULAR_MCP_SERVERS = {
         "description": "Up-to-date library documentation for any package",
         "transport": "stdio",
         "command": "npx",
-        "args": ["-y", "@upstash/context7-mcp@latest"],
+        "args": ["-y", "@upstash/context7-mcp@4.0.2"],
         "env_key": None,
         "install": "npm install -g @upstash/context7-mcp",
         "tools_hint": ["resolve-library-id", "get-library-docs"],
@@ -108,7 +106,7 @@ POPULAR_MCP_SERVERS = {
         "description": "Create and edit designs, templates, and graphics in Canva",
         "transport": "stdio",
         "command": "npx",
-        "args": ["-y", "@canva/cli@latest", "mcp"],
+        "args": ["-y", "@canva/cli@2.8.3", "mcp"],
         "env_key": "CANVA_API_KEY",
         "install": "npm install -g @canva/cli",
         "tools_hint": ["create_design", "get_design", "list_designs",
@@ -116,35 +114,14 @@ POPULAR_MCP_SERVERS = {
         "oauth_url": "https://www.canva.com/developer/apps/AAHAALoYlkA/credentials",
         "help_text": "Get API key from Canva Developer Console at: https://www.canva.com/developer/apps/AAHAALoYlkA/credentials",
     },
-    "fetch": {
-        "name": "Fetch",
-        "description": "HTTP fetch/web scraping with content extraction",
-        "transport": "stdio",
-        "command": "npx",
-        "args": ["-y", "@modelcontextprotocol/server-fetch"],
-        "env_key": None,
-        "install": "npm install -g @modelcontextprotocol/server-fetch",
-        "tools_hint": ["fetch", "get_markdown"],
-    },
-    "sqlite": {
-        "name": "SQLite",
-        "description": "SQLite database operations and queries",
-        "transport": "stdio",
-        "command": "npx",
-        "args": ["-y", "@modelcontextprotocol/server-sqlite"],
-        "env_key": None,
-        "install": "npm install -g @modelcontextprotocol/server-sqlite",
-        "tools_hint": ["query", "list_tables", "describe_table",
-                       "create_table", "write_query", "read_query"],
-    },
     "postgres": {
         "name": "PostgreSQL",
         "description": "PostgreSQL database operations and queries",
         "transport": "stdio",
         "command": "npx",
-        "args": ["-y", "@modelcontextprotocol/server-postgres"],
+        "args": ["-y", "@modelcontextprotocol/server-postgres@0.6.2"],
         "env_key": "DATABASE_URL",
-        "install": "npm install -g @modelcontextprotocol/server-postgres",
+        "install": "npm install -g @modelcontextprotocol/server-postgres@0.6.2",
         "tools_hint": ["query", "list_tables", "describe_table"],
     },
     "puppeteer": {
@@ -152,9 +129,9 @@ POPULAR_MCP_SERVERS = {
         "description": "Browser automation with Puppeteer (screenshots, navigation, JS eval)",
         "transport": "stdio",
         "command": "npx",
-        "args": ["-y", "@modelcontextprotocol/server-puppeteer"],
+        "args": ["-y", "@modelcontextprotocol/server-puppeteer@2025.5.12"],
         "env_key": None,
-        "install": "npm install -g @modelcontextprotocol/server-puppeteer",
+        "install": "npm install -g @modelcontextprotocol/server-puppeteer@2025.5.12",
         "tools_hint": ["puppeteer_navigate", "puppeteer_screenshot",
                        "puppeteer_click", "puppeteer_fill", "puppeteer_evaluate"],
     },
@@ -163,9 +140,9 @@ POPULAR_MCP_SERVERS = {
         "description": "Reference MCP server with all features for testing",
         "transport": "stdio",
         "command": "npx",
-        "args": ["-y", "@modelcontextprotocol/server-everything"],
+        "args": ["-y", "@modelcontextprotocol/server-everything@2026.7.4"],
         "env_key": None,
-        "install": "npm install -g @modelcontextprotocol/server-everything",
+        "install": "npm install -g @modelcontextprotocol/server-everything@2026.7.4",
         "tools_hint": ["echo", "add", "longRunningOperation"],
     },
     "sequential-thinking": {
@@ -173,9 +150,9 @@ POPULAR_MCP_SERVERS = {
         "description": "Structured step-by-step reasoning and problem solving",
         "transport": "stdio",
         "command": "npx",
-        "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"],
+        "args": ["-y", "@modelcontextprotocol/server-sequential-thinking@2026.7.4"],
         "env_key": None,
-        "install": "npm install -g @modelcontextprotocol/server-sequential-thinking",
+        "install": "npm install -g @modelcontextprotocol/server-sequential-thinking@2026.7.4",
         "tools_hint": ["sequentialthinking"],
     },
     "sqlite-npx": {
@@ -183,7 +160,7 @@ POPULAR_MCP_SERVERS = {
         "description": "SQLite database via NPX - no global install needed",
         "transport": "stdio",
         "command": "npx",
-        "args": ["-y", "mcp-server-sqlite"],
+        "args": ["-y", "mcp-server-sqlite@0.0.2"],
         "env_key": None,
         "install": None,
         "tools_hint": ["query", "list_tables"],
@@ -206,26 +183,29 @@ class MCPConnection:
         self.server_id = server_id
         self.config = config
         self.loop = loop
-        self.session: Optional[ClientSession] = None
+        self.session: ClientSession | None = None
         self.tools: list[dict] = []
         self.connected = False
-        self.error: Optional[str] = None
+        self.error: str | None = None
         self._stop_event = threading.Event()
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self._tool_futures: dict[str, asyncio.Future] = {}
 
-    def _get_env(self) -> Optional[dict]:
-        """Build env dict with required API key."""
-        env = dict(os.environ)
+    def _get_env(self) -> dict | None:
+        """Build a minimal environment; never leak unrelated API credentials."""
+        allow = {
+            'PATH', 'HOME', 'USER', 'LOGNAME', 'LANG', 'LC_ALL', 'LC_CTYPE',
+            'TMPDIR', 'TEMP', 'TMP', 'SHELL', 'SYSTEMROOT', 'COMSPEC',
+            'PATHEXT', 'NODE_PATH',
+        }
+        env = {key: value for key, value in os.environ.items() if key in allow}
         env_key = self.config.get('env_key')
         if env_key:
-            if env_key not in env:
-                stored = self.config.get('env_value', '')
-                if stored:
-                    env[env_key] = stored
-                else:
-                    self.error = f"Missing env var: {env_key}"
-                    return None
+            stored = self.config.get('env_value', '') or os.environ.get(env_key, '')
+            if not stored:
+                self.error = f"Missing required credential: {env_key}"
+                return None
+            env[env_key] = stored
         return env
 
     async def _session_lifecycle(self):
@@ -287,8 +267,9 @@ class MCPConnection:
                         await asyncio.sleep(0.1)
 
     async def _run_sse_session(self, env: dict):
-        """Run session with SSE transport."""
-        url = self.config.get('url', '')
+        """Run session with SSE transport after applying the shared egress policy."""
+        from .net_policy import validate_url
+        url = validate_url(self.config.get('url', ''))
 
         with _silence_stderr():
             async with sse_client(url) as (read, write):
@@ -343,8 +324,8 @@ class MCPClientManager:
 
     def __init__(self):
         self.connections: dict[str, MCPConnection] = {}
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._thread: Optional[threading.Thread] = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._thread: threading.Thread | None = None
 
     def _ensure_loop(self):
         """Ensure a dedicated event loop runs in a background thread."""
@@ -360,9 +341,14 @@ class MCPClientManager:
         self._loop.run_forever()
 
     def _run_async(self, coro, timeout: int = 120):
-        """Run an async coroutine from sync code."""
+        """Run an async coroutine from sync code and cancel it on timeout."""
+        import concurrent.futures
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
-        return future.result(timeout=timeout)
+        try:
+            return future.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            future.cancel()
+            raise TimeoutError(f'MCP operation exceeded {timeout}s')
 
     def connect_server(self, server_id: str, config: dict) -> tuple[bool, str]:
         if not MCP_AVAILABLE:
@@ -395,8 +381,14 @@ class MCPClientManager:
                     return False, f"Failed to connect: {conn.error}"
                 import time
                 time.sleep(0.1)
+            conn._stop_event.set()
+            if conn._task:
+                conn._task.cancel()
             return False, f"Connection timeout for {server_id}"
         except Exception as e:
+            conn._stop_event.set()
+            if conn._task:
+                conn._task.cancel()
             return False, f"Connection error: {e}"
 
     def disconnect_server(self, server_id: str) -> tuple[bool, str]:
@@ -407,6 +399,11 @@ class MCPClientManager:
             return True, f"Server '{server_id}' already disconnected"
         try:
             conn._stop_event.set()
+            if conn._task:
+                try:
+                    conn._task.result(timeout=5)
+                except Exception:
+                    conn._task.cancel()
             conn.connected = False
             return True, f"Disconnected from {server_id}"
         except Exception as e:
@@ -464,7 +461,7 @@ def get_popular_servers() -> dict:
     return dict(POPULAR_MCP_SERVERS)
 
 
-def get_server_config(server_id: str, env_value: str = None) -> Optional[dict]:
+def get_server_config(server_id: str, env_value: str | None = None) -> dict | None:
     if server_id not in POPULAR_MCP_SERVERS:
         return None
     config = dict(POPULAR_MCP_SERVERS[server_id])

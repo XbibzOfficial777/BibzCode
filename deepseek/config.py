@@ -1,28 +1,26 @@
-# DeepSeek CLI v7.7 — Multi-Provider Configuration
+# DeepSeek CLI v7.8.0 — Multi-Provider Configuration
 # Manages 7 AI providers with YAML config file, API keys, and model selection
 # NO TOOL LIMITS — all tools available at all times
 
 import os
-import sys
 import platform
+import secrets
 import socket
-import yaml
+import sys
 from pathlib import Path
+
+import yaml
+
+from .version import __version__
 
 CONFIG_DIR = Path.home() / '.deepseek-cli'
 CONFIG_FILE = CONFIG_DIR / 'config.yaml'
 LEGACY_KEY_FILE = Path.home() / '.deepseek_api_key'
-CLIENT_VERSION = "7.8.0"
+CLIENT_VERSION = __version__
 
 # Default Gist ID — embedded so every install auto-connects to dashboard backend
 # The Gist is public, no secret. PAT stays optional (env/config only, NOT in code).
 _DEFAULT_GIST_ID = "55a91f3ee47f659d21a58a80826ca827"
-
-# Public web dashboard. Account credentials (username / email / password) are
-# managed exclusively there; the CLI is a read-only mirror of that identity.
-DASHBOARD_URL = os.environ.get(
-    "DEEPSEEK_DASHBOARD_URL", "https://deepseek-dash.bibzflow.workers.dev"
-)
 
 # ══════════════════════════════════════
 # PROVIDER DEFINITIONS
@@ -42,7 +40,7 @@ DEFAULT_PROVIDERS = {
         'get_key_url': 'https://openrouter.ai/keys',
         'extra_headers': {
             'HTTP-Referer': 'https://deepseek-cli.local',
-            'X-Title': 'DeepSeek CLI v7.7',
+            'X-Title': f'DeepSeek CLI v{__version__}',
         },
         'popular_models': [
             'deepseek/deepseek-r1-0528:free',
@@ -198,11 +196,11 @@ try:
 except Exception:
     pass
 
-MAX_TOOL_ROUNDS = _stored_config.get('max_tool_rounds', 0)
-MAX_TOKENS = _stored_config.get('max_tokens', 16384)
-TEMPERATURE = _stored_config.get('temperature', 0.7)
-TIMEOUT = None           # No HTTP timeout — AI determines response time
-TOOL_TIMEOUT = 0         # 0 = no tool timeout, tools run until completion
+MAX_TOOL_ROUNDS = max(1, min(int(_stored_config.get('max_tool_rounds', 12) or 12), 50))
+MAX_TOKENS = max(256, min(int(_stored_config.get('max_tokens', 16384) or 16384), 131072))
+TEMPERATURE = max(0.0, min(float(_stored_config.get('temperature', 0.7)), 2.0))
+TIMEOUT = max(5, min(int(_stored_config.get('http_timeout', 60) or 60), 300))
+TOOL_TIMEOUT = max(5, min(int(_stored_config.get('tool_timeout', 120) or 120), 600))
 
 # UI
 BANNER_COLOR = 'cyan'
@@ -259,7 +257,11 @@ class ConfigManager:
     def save(self):
         """Save config to YAML file."""
         try:
-            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            CONFIG_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+            try:
+                os.chmod(CONFIG_DIR, 0o700)
+            except OSError:
+                pass
             with open(CONFIG_FILE, 'w') as f:
                 yaml.dump(self.config, f, default_flow_style=False,
                           allow_unicode=True, sort_keys=False)
@@ -278,13 +280,19 @@ class ConfigManager:
         self.config['active_provider'] = provider_id
         self.save()
 
-    def get_provider_config(self, provider_id: str = None) -> dict:
+    def get_provider_config(self, provider_id: str | None = None) -> dict:
         """Get full config dict for a provider (merged with defaults)."""
         pid = provider_id or self.active_provider
         stored = self.config.get('providers', {}).get(pid, {})
         defaults = DEFAULT_PROVIDERS.get(pid, {})
         merged = dict(defaults)
         merged.update(stored)
+        # A modified config file must not silently redirect provider API keys to
+        # an attacker-controlled host. Custom endpoints are explicit opt-in.
+        default_url = str(defaults.get('base_url', '')).rstrip('/')
+        configured_url = str(merged.get('base_url', '')).rstrip('/')
+        if default_url and configured_url != default_url and os.environ.get('DEEPSEEK_ALLOW_CUSTOM_PROVIDER') != '1':
+            merged['base_url'] = default_url
         return merged
 
     def get_all_providers(self) -> list[dict]:
@@ -303,7 +311,7 @@ class ConfigManager:
 
     # ── API Key ─────────────────────────
 
-    def get_api_key(self, provider_id: str = None) -> str:
+    def get_api_key(self, provider_id: str | None = None) -> str:
         """Get API key: priority = saved config > env var > empty."""
         pid = provider_id or self.active_provider
         pconfig = self.get_provider_config(pid)
@@ -318,7 +326,7 @@ class ConfigManager:
 
         return ''
 
-    def set_api_key(self, key: str, provider_id: str = None):
+    def set_api_key(self, key: str, provider_id: str | None = None):
         """Save API key for a provider (file + env var)."""
         pid = provider_id or self.active_provider
         key = key.strip()
@@ -336,7 +344,7 @@ class ConfigManager:
 
         self.save()
 
-    def delete_api_key(self, provider_id: str = None) -> bool:
+    def delete_api_key(self, provider_id: str | None = None) -> bool:
         """Delete saved API key for a provider."""
         pid = provider_id or self.active_provider
         keys = self.config.get('api_keys', {})
@@ -352,7 +360,7 @@ class ConfigManager:
 
     # ── Model ───────────────────────────
 
-    def get_provider_model(self, provider_id: str = None) -> str:
+    def get_provider_model(self, provider_id: str | None = None) -> str:
         """Get selected model for a provider (saved > default)."""
         pid = provider_id or self.active_provider
         saved = self.config.get('models', {}).get(pid, '')
@@ -360,7 +368,7 @@ class ConfigManager:
             return saved
         return self.get_provider_config(pid).get('default_model', '')
 
-    def set_provider_model(self, model: str, provider_id: str = None):
+    def set_provider_model(self, model: str, provider_id: str | None = None):
         """Save selected model for a provider."""
         pid = provider_id or self.active_provider
         if 'models' not in self.config:
@@ -459,20 +467,24 @@ _update_info = None
 
 
 def _parse_version(v):
-    """Parse a version string like '7.7' or 'v7.7.1' into a tuple of ints.
+    """Parse SemVer plus the project ``-rN``/PEP 440 ``.postN`` revision.
 
-    Non-numeric/garbage segments are ignored so a malformed remote version
-    can never crash the client. Returns () on total failure."""
+    The old digit-stripping parser interpreted ``7.8.0-r6`` as ``7.8.6``.
+    Returning a fixed four-part tuple makes hotfix revisions comparable and
+    ensures users on r2 are offered r6 even when the base version is unchanged.
+    """
     if not v:
         return ()
-    s = str(v).strip().lstrip('vV').strip()
-    parts = []
-    for chunk in s.split('.'):
-        num = ''.join(ch for ch in chunk if ch.isdigit())
-        if num == '':
-            break
-        parts.append(int(num))
-    return tuple(parts)
+    import re
+    value = str(v).strip().lstrip('vV').strip()
+    match = re.fullmatch(
+        r'(\d+)\.(\d+)(?:\.(\d+))?(?:(?:-r|\.post)(\d+))?', value,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return ()
+    major, minor, patch, revision = match.groups()
+    return int(major), int(minor), int(patch or 0), int(revision or 0)
 
 
 def is_newer_version(latest, current=CLIENT_VERSION):
@@ -500,613 +512,156 @@ def get_update_info() -> dict:
     return _update_info or {}
 
 
-# ══════════════════════════════════════════════════════════════════════════
-# BACKEND SYNC LAYER (rewritten)
-#
-# Design goals (fixes K-1, S-x from the audit):
-#   1. NEVER kill the CLI because of a network/backend problem. The only
-#      hard-stops allowed are deliberate administrative decisions that the
-#      server explicitly asserted: banned == True or limit_exceeded == True.
-#   2. Do not hammer the backend. enforce_gist() is called once per process
-#      by __main__, and Agent.chat() only re-validates after a TTL.
-#   3. Be the single source of truth for the effective username, which is
-#      owned by the web dashboard (Firebase RTDB) — see resolve_username().
-# ══════════════════════════════════════════════════════════════════════════
-
-import json as _json
-import urllib.request as _urlreq
-import urllib.parse as _urlparse
-import getpass as _getpass
-import threading as _threading
-import time as _time
-
-# How long a successful permission check stays valid before we re-check.
-ACCESS_CHECK_TTL = 300.0          # seconds (5 min)
-# How long a resolved username stays cached before we re-read RTDB.
-USERNAME_CACHE_TTL = 30.0         # seconds
-
-_last_access_check = 0.0
-_access_lock = _threading.Lock()
-_offline_mode = False             # True once we fail to reach the backend
-
-# Username cache: (value, fetched_at)
-_username_cache = (None, 0.0)
-_username_lock = _threading.Lock()
-
-DEFAULT_FIREBASE_DB_URL = (
-    "https://xbibzstorage-default-rtdb.asia-southeast1.firebasedatabase.app"
-)
+DEFAULT_API_URL = "https://deepseek-dash.bibzflow.workers.dev"
 
 
-def _firebase_db_url() -> str:
-    return os.environ.get("DEEPSEEK_FIREBASE_DB_URL", DEFAULT_FIREBASE_DB_URL).rstrip("/")
+def _backend_url() -> str:
+    """Resolve and validate the HTTPS Worker endpoint."""
+    from urllib.parse import urlparse
+    value = (
+        os.environ.get("DEEPSEEK_API_URL", "")
+        or cfg.config.get("api_url", "")
+        or DEFAULT_API_URL
+    ).rstrip("/")
+    parsed = urlparse(value)
+    if parsed.scheme != 'https' or not parsed.hostname:
+        raise RuntimeError('DEEPSEEK_API_URL must be an absolute HTTPS URL')
+    default_host = urlparse(DEFAULT_API_URL).hostname
+    if parsed.hostname != default_host and os.environ.get('DEEPSEEK_ALLOW_CUSTOM_BACKEND') != '1':
+        raise RuntimeError('Custom backend requires DEEPSEEK_ALLOW_CUSTOM_BACKEND=1')
+    return value
 
 
-def _auth_file_path():
-    return Path.home() / ".deepseek-cli" / "auth.json"
+def _worker_json(path: str, *, method: str = "GET", payload: dict | None = None,
+                 timeout: int = 12) -> dict:
+    import json
+    import urllib.error
+    import urllib.request
 
+    from .auth import get_valid_id_token
 
-def _load_auth_session() -> dict:
-    """Read the locally saved Firebase session (may be empty)."""
+    token = get_valid_id_token()
+    if not token:
+        raise RuntimeError("No valid Firebase session. Please log in again with: dscli logout")
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "User-Agent": f"deepseek-cli/{CLIENT_VERSION}",
+        "Accept": "application/json",
+    }
+    data = None
+    if payload is not None:
+        headers["Content-Type"] = "application/json"
+        data = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        f"{_backend_url()}{path}", data=data, headers=headers, method=method
+    )
     try:
-        p = _auth_file_path()
-        if p.exists():
-            with open(p) as f:
-                return _json.load(f) or {}
-    except Exception:
-        pass
-    return {}
-
-
-def _local_fallback_username() -> str:
-    """Last-resort identity when the user is not signed in."""
-    try:
-        return f"{_getpass.getuser()}@{socket.gethostname()}"
-    except Exception:
-        return "unknown-client"
-
-
-def is_offline() -> bool:
-    """True when the last backend interaction failed (informational only)."""
-    return _offline_mode
-
-
-# ── Username: the web dashboard owns it ────────────────────────────────────
-
-def resolve_username(force: bool = False) -> str:
-    """Return the effective username for this client.
-
-    Authoritative order:
-        1. Firebase RTDB  dscliUsers/<uid>/username   <- set by web dashboard
-        2. username cached in the local auth.json session
-        3. user@hostname
-
-    The RTDB value is the single source of truth so that renaming the account
-    on the web dashboard propagates to the CLI. Result is cached for
-    USERNAME_CACHE_TTL to keep this cheap enough to call on every turn.
-    """
-    global _username_cache
-
-    with _username_lock:
-        cached, fetched_at = _username_cache
-        if not force and cached and (_time.time() - fetched_at) < USERNAME_CACHE_TTL:
-            return cached
-
-    sess = _load_auth_session()
-    uid = sess.get("uid") or sess.get("user_id") or ""
-    local_name = sess.get("username") or ""
-
-    remote_name = ""
-    if uid:
+        with urllib.request.urlopen(request, timeout=timeout) as response:  # nosec B310
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        body = ""
         try:
-            url = f"{_firebase_db_url()}/{'dscliUsers'}/{uid}/username.json"
-            token = sess.get("id_token") or ""
-            if token:
-                url += f"?auth={token}"
-            req = _urlreq.Request(url, headers={"User-Agent": "deepseek-cli/sync"})
-            with _urlreq.urlopen(req, timeout=5) as resp:
-                raw = resp.read().decode().strip()
-            if raw and raw != "null":
-                remote_name = _json.loads(raw) if raw.startswith('"') else raw.strip('"')
-                if not isinstance(remote_name, str):
-                    remote_name = ""
-        except Exception:
-            # Network/permission problem: fall back, never raise.
-            remote_name = ""
-
-    name = (remote_name or local_name or _local_fallback_username()).strip()
-
-    # Keep auth.json in step so the welcome banner and offline runs agree.
-    if remote_name and remote_name != local_name and sess:
-        try:
-            sess["username"] = remote_name
-            p = _auth_file_path()
-            p.parent.mkdir(parents=True, exist_ok=True)
-            with open(p, "w") as f:
-                _json.dump(sess, f)
-            os.chmod(p, 0o600)
+            body = exc.read().decode("utf-8", errors="replace")[:300]
         except Exception:
             pass
-
-    with _username_lock:
-        _username_cache = (name, _time.time())
-    return name
+        raise RuntimeError(f"Backend HTTP {exc.code}: {body or exc.reason}") from exc
 
 
-def invalidate_username_cache():
-    """Force the next resolve_username() to hit RTDB again."""
-    global _username_cache
-    with _username_lock:
-        _username_cache = (None, 0.0)
-
-
-# ── Registry / Worker resolution ───────────────────────────────────────────
-
-_API_URL_CACHE = {"url": None, "version": None, "at": 0.0}
-API_URL_CACHE_TTL = 900.0    # 15 min — the registry almost never changes
-
-
-def _resolve_api_url(force: bool = False) -> tuple:
-    """Resolve the Worker base URL from the registry Gist.
-
-    Cached for API_URL_CACHE_TTL: the access check now runs on every chat turn,
-    and re-fetching a static Gist each time wasted a round-trip and burned
-    GitHub's 60 req/hour unauthenticated budget.
-
-    Returns (api_url or None, latest_version or None). Never raises.
-    """
-    if not force:
-        c = _API_URL_CACHE
-        if c["url"] and (_time.time() - c["at"]) < API_URL_CACHE_TTL:
-            return c["url"], c["version"]
-    registry_gist_id = (os.environ.get("DEEPSEEK_GIST_ID", "")
-                        or cfg.config.get("gist_id", "")
-                        or _DEFAULT_GIST_ID)
-    try:
-        url = f"https://api.github.com/gists/{registry_gist_id}"
-        headers = {"Accept": "application/vnd.github.v3+json",
-                   "User-Agent": "deepseek-cli/sync"}
-        gist_pat = (os.environ.get("DEEPSEEK_GIST_PAT", "")
-                    or cfg.config.get("gist_pat", ""))
-        if gist_pat:
-            headers["Authorization"] = f"token {gist_pat}"
-        req = _urlreq.Request(url, headers=headers)
-        with _urlreq.urlopen(req, timeout=8) as response:
-            gist_content = _json.loads(response.read().decode())
-        file_data = gist_content.get("files", {}).get("endpoint.json", {})
-        if not file_data:
-            return None, None
-        payload = _json.loads(file_data["content"])
-        api_url = payload.get("api_url")
-        latest = payload.get("latest_version")
-        if api_url:
-            _API_URL_CACHE.update({"url": api_url, "version": latest,
-                                   "at": _time.time()})
-        return api_url, latest
-    except Exception:
-        # Fall back to a stale-but-known URL rather than dropping offline.
-        if _API_URL_CACHE["url"]:
-            return _API_URL_CACHE["url"], _API_URL_CACHE["version"]
-        return None, None
-
-
-def _get_public_ip() -> str:
-    try:
-        req = _urlreq.Request("https://api.ipify.org?format=json",
-                              headers={"User-Agent": "deepseek-cli/sync"})
-        with _urlreq.urlopen(req, timeout=5) as response:
-            return _json.loads(response.read().decode()).get("ip", "127.0.0.1")
-    except Exception:
-        return "127.0.0.1"
-
-
-def _print_block(lines, color="1;31"):
-    bar = "█" * 50
-    print(f"\n\033[{color}m{bar}\033[0m", file=sys.stderr)
-    for ln in lines:
-        print(f"\033[{color}m{ln}\033[0m", file=sys.stderr)
-    print(f"\033[{color}m{bar}\033[0m\n", file=sys.stderr)
-
-
-def _deny_and_exit(kind: str, detail: str = "", scope: str = "",
-                   reason: str = ""):
-    """Explicit administrative denial from the server.
-
-    `scope` distinguishes the two independent ban systems so the user is told
-    what actually happened instead of a vague "you are banned":
-      * "account" — the Firebase account is suspended; no device can sign in.
-      * "ip"      — only this machine/network is blocked; the account is fine.
-    """
-    lines = []
-    if kind == "banned":
-        if scope == "account":
-            lines = [
-                "ACCESS DENIED — ACCOUNT SUSPENDED",
-                "",
-                "Your ACCOUNT has been suspended by an administrator.",
-                "This applies to every device — signing in elsewhere will",
-                "not help.",
-            ]
-        elif scope == "ip":
-            lines = [
-                "ACCESS DENIED — THIS DEVICE IS BLOCKED",
-                "",
-                "CLI access from this IP address has been blocked.",
-                "Your ACCOUNT itself is still active: you can still sign in",
-                "on the web dashboard.",
-            ]
-        else:
-            lines = ["ACCESS DENIED — This account or device has been BANNED."]
-        if reason:
-            lines += ["", f"Reason: {reason}"]
-        lines += [
-            "-" * 50,
-            "To appeal, contact @XbibzOfficial on Telegram:",
-            "  -> https://t.me/XbibzOfficial",
-        ]
-    else:
-        lines = [
-            "ACCESS DENIED — TOKEN LIMIT EXCEEDED",
-            "",
-            detail,
-            "Your account is NOT banned; the quota resets on the next cycle.",
-            "-" * 50,
-            "To request a limit increase, contact @XbibzOfficial:",
-            "  -> https://t.me/XbibzOfficial",
-        ]
-    _print_block([ln for ln in lines if ln is not None])
-    sys.exit(1)
-
-
-def _build_client_payload(client_ip: str, username: str,
-                          input_tokens: int = 0, output_tokens: int = 0,
-                          last_tool: str = "initialization") -> dict:
+def _device_payload(input_tokens: int, output_tokens: int, last_tool: str) -> dict:
+    import getpass
+    input_tokens = max(0, min(int(input_tokens or 0), 1_000_000))
+    output_tokens = max(0, min(int(output_tokens or 0), 1_000_000))
     try:
         hostname = socket.gethostname()
+        username = f"{getpass.getuser()}@{hostname}"
     except Exception:
         hostname = "unknown"
-    sess = _load_auth_session()
-    payload = {
-        "ip": client_ip,
+        username = "unknown"
+    return {
+        "event_id": secrets.token_urlsafe(24),
         "username": username,
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
-        "last_tool": last_tool,
+        "last_tool": str(last_tool or "none")[:100],
         "status": "online",
         "version": CLIENT_VERSION,
-        "hostname": hostname,
-        "platform": sys.platform,
-        "arch": platform.machine(),
-        "os_release": platform.release(),
-        "device_name": username,
+        "hostname": hostname[:255],
+        "platform": sys.platform[:100],
+        "arch": platform.machine()[:100],
+        "os_release": platform.release()[:255],
+        "device_name": username[:255],
     }
-    # Bind telemetry to the authenticated account when available so the
-    # backend can attribute usage to a uid instead of trusting the IP alone.
-    uid = sess.get("uid") or ""
-    if uid:
-        payload["uid"] = uid
-    token = sess.get("id_token") or ""
-    if token:
-        payload["id_token"] = token
-    return payload
 
 
-_DENIAL_FILE = Path.home() / ".deepseek-cli" / "access.json"
+def enforce_gist():
+    """Authenticate with the Worker and enforce account/device access policy.
 
-
-def _load_persisted_denial() -> dict:
-    """Last known denial verdict, surviving restarts."""
-    try:
-        if _DENIAL_FILE.exists():
-            with open(_DENIAL_FILE) as f:
-                return _json.load(f) or {}
-    except Exception:
-        pass
-    return {}
-
-
-def _save_persisted_denial(banned: bool, limit_exceeded: bool, detail: str = "",
-                           scope: str = "", reason: str = ""):
-    """Remember a denial so killing the network cannot wash it away."""
-    try:
-        _DENIAL_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with open(_DENIAL_FILE, "w") as f:
-            _json.dump({"banned": bool(banned),
-                        "limit_exceeded": bool(limit_exceeded),
-                        "detail": detail,
-                        "scope": scope,
-                        "reason": reason,
-                        "at": int(_time.time())}, f)
-        os.chmod(_DENIAL_FILE, 0o600)
-    except Exception:
-        pass
-
-
-def _clear_persisted_denial():
-    try:
-        if _DENIAL_FILE.exists():
-            _DENIAL_FILE.unlink()
-    except Exception:
-        pass
-
-
-def _enforce_cached_denial():
-    """Re-apply a previously confirmed denial when the backend is unreachable.
-
-    Without this, a banned user only has to break their connection to the
-    registry (or block api.github.com in /etc/hosts) to get back in.
+    The historical name is kept for compatibility, but this no longer reads or
+    writes GitHub Gists directly and no longer trusts a client-supplied IP.
     """
-    state = _cached_usage_status or _load_persisted_denial()
-    if not state:
+    global _cached_usage_status, _update_info
+    if os.environ.get("DEEPSEEK_SKIP_ACCESS_GATE") == "1":
+        _cached_usage_status = {"offline": True}
         return
-    if state.get("banned") is True:
-        _deny_and_exit("banned", scope=state.get("scope", ""),
-                       reason=state.get("reason", ""))
-    if state.get("limit_exceeded") is True:
-        _deny_and_exit("limit", state.get("detail", ""))
-
-
-def enforce_gist(force: bool = False) -> dict:
-    """Verify access permissions with the backend.
-
-    Fail-OPEN on any infrastructure problem: if the registry, the Worker or
-    the network is unavailable we log a single warning and let the user keep
-    working. We only ever exit for an explicit `banned` / `limit_exceeded`
-    verdict returned by the server.
-
-    Returns the cached status dict (possibly empty when offline).
-    """
-    global _last_access_check, _cached_usage_status, _update_info, _offline_mode
-
-    now = _time.time()
-    with _access_lock:
-        if (not force and _last_access_check
-                and (now - _last_access_check) < ACCESS_CHECK_TTL):
-            return _cached_usage_status or {}
-
-    api_url, latest_version = _resolve_api_url()
-
-    if latest_version and is_newer_version(latest_version, CLIENT_VERSION):
-        _update_info = {"latest": str(latest_version).strip().lstrip("vV"),
-                        "current": CLIENT_VERSION}
-    elif latest_version:
-        _update_info = {}
-
-    if not api_url:
-        # Fail-open on infrastructure problems — BUT never re-admit someone the
-        # server already told us is banned or over quota. Otherwise blocking a
-        # single domain (api.github.com) is a complete ban bypass.
-        _enforce_cached_denial()
-        if not _offline_mode:
-            print("\033[93m[!] Backend unreachable — continuing in offline mode. "
-                  "Usage will not be reported.\033[0m", file=sys.stderr)
-        _offline_mode = True
-        with _access_lock:
-            _last_access_check = now
-        return _cached_usage_status or {}
-
-    client_ip = _get_public_ip()
-    username = resolve_username()
-
     try:
-        # Send our uid too so the server can enforce an ACCOUNT ban, not just
-        # an IP ban (switching networks must not shake off a ban).
-        _sess = _load_auth_session()
-        _uid = _sess.get("uid") or ""
-        check_url = f"{api_url.rstrip('/')}/api/check?ip={client_ip}"
-        if _uid:
-            check_url += f"&uid={_urlparse.quote(_uid)}"
-        req = _urlreq.Request(check_url, headers={"User-Agent": "deepseek-cli/sync"})
-        with _urlreq.urlopen(req, timeout=8) as response:
-            result = _json.loads(response.read().decode())
-    except Exception as e:
-        _enforce_cached_denial()
-        if not _offline_mode:
-            print(f"\033[93m[!] Could not verify permissions ({e}) — "
-                  f"continuing in offline mode.\033[0m", file=sys.stderr)
-        _offline_mode = True
-        with _access_lock:
-            _last_access_check = now
-        return _cached_usage_status or {}
-
-    _offline_mode = False
-
-    # ── Explicit administrative denials (the ONLY hard stops) ──
-    if result.get("banned") is True:
-        _scope = result.get("scope") or ""
-        _reason = result.get("ban_reason") or ""
-        _save_persisted_denial(True, False, scope=_scope, reason=_reason)
-        _deny_and_exit("banned", scope=_scope, reason=_reason)
-
-    if result.get("limit_exceeded") is True:
-        total_tokens = result.get("usage", 0) or 0
-        token_limit = result.get("limit", 0) or 0
+        result = _worker_json("/api/check")
         try:
-            update_gist_usage(0, 0, "limit_exceeded")
+            version = _worker_json("/api/version")
+            latest = version.get("latest_version")
+            _update_info = ({"latest": str(latest).lstrip("vV"), "current": CLIENT_VERSION}
+                            if latest and is_newer_version(latest, CLIENT_VERSION) else {})
         except Exception:
-            pass
-        _detail = f"Consumed: {total_tokens:,} / Limit: {token_limit:,} tokens."
-        _save_persisted_denial(False, True, _detail)
-        _deny_and_exit("limit", _detail)
+            _update_info = {}
+    except Exception as exc:
+        print(f"\033[91mFailed to verify access with the DeepSeek backend: {exc}\033[0m", file=sys.stderr)
+        print("\033[2mUse DEEPSEEK_SKIP_ACCESS_GATE=1 only for explicit offline development.\033[0m", file=sys.stderr)
+        raise SystemExit(1)
 
-    # ── Register this client, or repair a stale username ──
-    # Registering only on first sight left pre-login records stuck under the
-    # machine name (user@hostname) forever, because the authenticated name was
-    # never pushed afterwards. Also sync whenever the backend's stored username
-    # disagrees with the account name resolved from the dashboard.
-    backend_username = (result.get("username") or "").strip()
-    needs_register = not result.get("found", False)
-    needs_rename = (
-        bool(username)
-        and backend_username != username
-        and not username.startswith("cli_client_")
-    )
-    if needs_register or needs_rename:
+    if result.get("banned"):
+        print("\n\033[1;31mACCESS DENIED: this account/device is banned.\033[0m", file=sys.stderr)
+        print("\033[1;33mContact: https://t.me/XbibzOfficial\033[0m", file=sys.stderr)
+        raise SystemExit(1)
+    if result.get("limit_exceeded"):
+        print("\n\033[1;31mACCESS DENIED: token limit exceeded.\033[0m", file=sys.stderr)
+        print(f"\033[1;31mConsumed: {int(result.get('usage', 0)):,} / {int(result.get('limit', 0)):,}\033[0m", file=sys.stderr)
+        raise SystemExit(1)
+
+    if not result.get("found"):
         try:
-            payload = _build_client_payload(client_ip, username)
-            req_update = _urlreq.Request(
-                f"{api_url.rstrip('/')}/api/update",
-                data=_json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json",
-                         "User-Agent": "deepseek-cli/sync"},
-                method="POST",
-            )
-            with _urlreq.urlopen(req_update, timeout=8):
-                pass
-            if needs_rename:
-                result["username"] = username
-        except Exception:
-            pass  # best-effort
-
-    # Server says this client is clear — drop any stale local denial.
-    _clear_persisted_denial()
+            _worker_json("/api/update", method="POST", payload=_device_payload(0, 0, "initialization"))
+            result = _worker_json("/api/check")
+        except Exception as exc:
+            print(f"\033[93mWarning: failed to register this device: {exc}\033[0m", file=sys.stderr)
 
     _cached_usage_status = {
-        "ip": client_ip,
-        "usage": result.get("usage", 0),
-        "limit": result.get("limit", 0),
+        "ip": result.get("ip", "server-derived"),
+        "usage": int(result.get("usage", 0) or 0),
+        "limit": int(result.get("limit", 0) or 0),
         "last_tool": result.get("last_tool", "-"),
-        "total_calls": result.get("total_calls", 0),
-        "username": result.get("username", "") or username,
-        "banned": result.get("banned", False),
-        "limit_exceeded": result.get("limit_exceeded", False),
-        "found": result.get("found", False),
+        "total_calls": int(result.get("total_calls", 0) or 0),
+        "username": result.get("username", "Unknown"),
+        "banned": bool(result.get("banned", False)),
+        "limit_exceeded": bool(result.get("limit_exceeded", False)),
+        "found": bool(result.get("found", False)),
     }
-    with _access_lock:
-        _last_access_check = now
-    # Keep the live meter aligned with the server's authoritative totals.
-    try:
-        seed_meter(result.get("usage", 0), result.get("limit", 0))
-    except Exception:
-        pass
-    return _cached_usage_status
 
 
 def update_gist_usage(input_tokens: int, output_tokens: int, last_tool: str):
-    """Report token usage to the Worker. Best-effort, never raises."""
-    global _offline_mode
-    api_url, _ = _resolve_api_url()
-    if not api_url:
-        _offline_mode = True
+    """Send a bounded, authenticated usage update to the Worker."""
+    if os.environ.get("DEEPSEEK_SKIP_ACCESS_GATE") == "1":
         return
     try:
-        payload = _build_client_payload(
-            _get_public_ip(), resolve_username(),
-            input_tokens, output_tokens, last_tool,
+        result = _worker_json(
+            "/api/update", method="POST",
+            payload=_device_payload(input_tokens, output_tokens, last_tool),
         )
-        req_update = _urlreq.Request(
-            f"{api_url.rstrip('/')}/api/update",
-            data=_json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json",
-                     "User-Agent": "deepseek-cli/sync"},
-            method="POST",
-        )
-        with _urlreq.urlopen(req_update, timeout=8):
-            pass
-        _offline_mode = False
+        if _cached_usage_status and result.get("usage") is not None:
+            _cached_usage_status["usage"] = int(result["usage"])
     except Exception:
-        _offline_mode = True
-
-
-# ══════════════════════════════════════════════════════════════════════════
-# LIVE QUOTA METER
-#
-# Usage used to be estimated (len(text)//3) and pushed once per turn, so the
-# server only learned about consumption after the fact — a single long
-# generation could blow far past the limit before anything noticed.
-#
-# The meter below keeps a local running total seeded from the server, is
-# updated with the provider's REAL token counts, and is checked mid-stream so
-# generation can be cut off the moment the quota is exhausted.
-# ══════════════════════════════════════════════════════════════════════════
-
-_meter_lock = _threading.Lock()
-_meter = {
-    "usage": 0,        # tokens consumed this cycle (server truth + local delta)
-    "limit": 0,        # 0 = unlimited
-    "pending_in": 0,   # not yet reported to the server
-    "pending_out": 0,
-    "synced_at": 0.0,
-}
-
-
-class QuotaExceeded(Exception):
-    """Raised mid-generation when the token budget is exhausted."""
-
-    def __init__(self, usage: int, limit: int):
-        self.usage = usage
-        self.limit = limit
-        super().__init__(f"Token limit reached: {usage:,}/{limit:,}")
-
-
-def seed_meter(usage: int, limit: int):
-    """Seed the local meter from an authoritative server response."""
-    with _meter_lock:
-        _meter["usage"] = int(usage or 0)
-        _meter["limit"] = int(limit or 0)
-        _meter["pending_in"] = 0
-        _meter["pending_out"] = 0
-        _meter["synced_at"] = _time.time()
-
-
-def meter_snapshot() -> dict:
-    with _meter_lock:
-        used = _meter["usage"] + _meter["pending_in"] + _meter["pending_out"]
-        limit = _meter["limit"]
-        return {
-            "usage": used,
-            "limit": limit,
-            "remaining": max(0, limit - used) if limit > 0 else None,
-            "exceeded": bool(limit > 0 and used >= limit),
-            "pct": (used / limit * 100) if limit > 0 else 0.0,
-        }
-
-
-def meter_add(input_tokens: int = 0, output_tokens: int = 0):
-    """Record consumption locally. Returns the fresh snapshot."""
-    with _meter_lock:
-        _meter["pending_in"] += max(0, int(input_tokens or 0))
-        _meter["pending_out"] += max(0, int(output_tokens or 0))
-    return meter_snapshot()
-
-
-def meter_check(raise_on_exceed: bool = True) -> dict:
-    """Check the budget. Raises QuotaExceeded when spent."""
-    snap = meter_snapshot()
-    if snap["exceeded"] and raise_on_exceed:
-        raise QuotaExceeded(snap["usage"], snap["limit"])
-    return snap
-
-
-def meter_flush(last_tool: str = "none") -> dict:
-    """Report pending usage to the server and re-seed from its answer.
-
-    This is the authoritative sync point: the server's total wins, so several
-    machines sharing one account converge instead of drifting apart.
-    """
-    with _meter_lock:
-        pin, pout = _meter["pending_in"], _meter["pending_out"]
-        _meter["pending_in"] = 0
-        _meter["pending_out"] = 0
-        _meter["usage"] += pin + pout
-
-    if pin or pout:
-        update_gist_usage(pin, pout, last_tool)
-
-    # Re-seed from the server, but reuse the TTL-cached check: chat() already
-    # forces a fresh verdict at the START of each turn, so forcing another one
-    # here would double every turn's network cost for no extra safety.
-    try:
-        status = enforce_gist()
-        if status:
-            seed_meter(status.get("usage", 0), status.get("limit", 0))
-    except SystemExit:
-        raise
-    except Exception:
-        pass
-    return meter_snapshot()
+        # Telemetry failure must not crash a completed answer.
+        return
 
 
 def get_usage_status() -> dict:
-    """Returns cached usage status from the last successful check."""
-    return _cached_usage_status or {}
+    """Return cached usage status from the latest successful access check."""
+    return _cached_usage_status

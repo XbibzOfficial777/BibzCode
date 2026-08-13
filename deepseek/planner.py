@@ -4,6 +4,7 @@
 
 import json
 import time
+
 from rich.console import Console
 
 console = Console()
@@ -171,9 +172,7 @@ Respond with ONLY a JSON object (no markdown, no explanation):
             if query_lower == p:
                 return True
         # Very short queries likely don't need planning
-        if len(query.strip()) < 10 and not any(c in query for c in ['?', 'how', 'what', 'why']):
-            return True
-        return False
+        return bool(len(query.strip()) < 10 and not any(c in query for c in ['?', 'how', 'what', 'why']))
 
     def _simple_plan(self, query: str) -> ExecutionPlan:
         """Create a simple single-step plan (no LLM needed)."""
@@ -295,6 +294,4 @@ Respond with ONLY a JSON object (no markdown, no explanation):
         if self._is_trivial(query):
             return False
         # Don't plan for follow-up messages in an active conversation
-        if message_count > 6:
-            return False
-        return True
+        return not message_count > 6

@@ -33,6 +33,9 @@ DISCORD_LIB_AVAILABLE = _HTTPX_AVAILABLE
 
 CONNECTOR_UPLOAD_ROOT = Path.home() / '.deepseek-cli' / 'uploads'
 MAX_CONNECTOR_FILE_BYTES = max(1, int(os.environ.get('DEEPSEEK_CONNECTOR_MAX_FILE_MB', '25'))) * 1024 * 1024
+MAX_CONNECTOR_IDENTITY_BYTES = max(25, int(os.environ.get('DEEPSEEK_CONNECTOR_MAX_IDENTITY_MB', '250'))) * 1024 * 1024
+MAX_CONNECTOR_IDENTITY_FILES = max(10, int(os.environ.get('DEEPSEEK_CONNECTOR_MAX_IDENTITY_FILES', '100')))
+CONNECTOR_FILE_TTL_SECONDS = max(3600, int(os.environ.get('DEEPSEEK_CONNECTOR_FILE_TTL_HOURS', '168')) * 3600)
 
 
 def _safe_filename(filename: str, fallback: str = 'attachment.bin') -> str:
@@ -44,13 +47,48 @@ def _safe_filename(filename: str, fallback: str = 'attachment.bin') -> str:
     return f'{stem[:100]}{suffix[:20]}'
 
 
+def _prune_attachment_directory(directory: Path) -> None:
+    """Enforce per-identity age, count, and disk-usage retention limits."""
+    now = time.time()
+    files = []
+    try:
+        for path in directory.iterdir():
+            try:
+                if not path.is_file() or path.is_symlink():
+                    continue
+                stat = path.stat()
+                if now - stat.st_mtime > CONNECTOR_FILE_TTL_SECONDS:
+                    path.unlink(missing_ok=True)
+                    continue
+                files.append((path, stat.st_mtime, stat.st_size))
+            except OSError:
+                continue
+        files.sort(key=lambda item: item[1], reverse=True)
+        total = 0
+        for index, (path, _mtime, size) in enumerate(files):
+            total += size
+            if index >= MAX_CONNECTOR_IDENTITY_FILES or total > MAX_CONNECTOR_IDENTITY_BYTES:
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+    except OSError:
+        pass
+
+
 def _attachment_directory(platform_name: str, chat_id: str, user_id: str) -> Path:
     directory = CONNECTOR_UPLOAD_ROOT / platform_name / _safe_filename(chat_id, 'chat') / _safe_filename(user_id, 'user')
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     try:
-        os.chmod(directory, 0o700)
+        current = directory
+        while True:
+            os.chmod(current, 0o700)
+            if current == CONNECTOR_UPLOAD_ROOT:
+                break
+            current = current.parent
     except OSError:
         pass
+    _prune_attachment_directory(directory)
     return directory
 
 
@@ -260,7 +298,7 @@ class TelegramBot:
         return text
 
     def _is_allowed(self, user_id: int) -> bool:
-        """Deny by default; this connector reaches an agent with host tools."""
+        """Deny by default even when TelegramBot is used without the manager."""
         if not self.allowed_users:
             return False
         try:
@@ -406,17 +444,20 @@ class TelegramBot:
         download_url = f'https://api.telegram.org/file/bot{self.token}/{remote_path}'
         written = 0
         try:
-            with _httpx_client.stream('GET', download_url, follow_redirects=True, timeout=60) as response:
-                response.raise_for_status()
-                declared = int(response.headers.get('content-length') or 0)
-                if declared > MAX_CONNECTOR_FILE_BYTES:
-                    return None, f'{filename}: remote file exceeds size limit'
-                with open(destination, 'wb') as output:
-                    for chunk in response.iter_bytes(64 * 1024):
-                        written += len(chunk)
-                        if written > MAX_CONNECTOR_FILE_BYTES:
-                            raise ValueError('download exceeded size limit')
-                        output.write(chunk)
+            from .net_policy import safe_httpx_request
+            with _httpx_client.Client(timeout=60, follow_redirects=False) as client:
+                response = safe_httpx_request(
+                    client, 'GET', download_url, stream=True,
+                    max_redirects=5, max_response_bytes=MAX_CONNECTOR_FILE_BYTES,
+                )
+                with response:
+                    response.raise_for_status()
+                    with open(destination, 'wb') as output:
+                        for chunk in response.iter_bytes(64 * 1024):
+                            written += len(chunk)
+                            if written > MAX_CONNECTOR_FILE_BYTES:
+                                raise ValueError('download exceeded size limit')
+                            output.write(chunk)
             os.chmod(destination, 0o600)
             return _public_attachment(spec, destination), None
         except Exception as exc:
@@ -707,10 +748,10 @@ class DiscordBot:
         return []
 
     def _is_allowed(self, user_id: str) -> bool:
-        """Deny by default; compare Discord snowflake IDs as strings."""
-        if not self.allowed_users:
-            return False
-        return str(user_id) in {str(item) for item in self.allowed_users}
+        """Check if a user is allowed."""
+        if self.allowed_users is None:
+            return True
+        return user_id in self.allowed_users
 
     def start(self):
         """Start the Discord bot in a background thread."""
@@ -801,17 +842,20 @@ class DiscordBot:
         destination = directory / f"{int(time.time())}_{uuid.uuid4().hex[:8]}_{filename}"
         written = 0
         try:
-            with _httpx_client.stream('GET', spec['url'], follow_redirects=True, timeout=60) as response:
-                response.raise_for_status()
-                declared = int(response.headers.get('content-length') or 0)
-                if declared > MAX_CONNECTOR_FILE_BYTES:
-                    return None, f'{filename}: remote file exceeds size limit'
-                with open(destination, 'wb') as output:
-                    for chunk in response.iter_bytes(64 * 1024):
-                        written += len(chunk)
-                        if written > MAX_CONNECTOR_FILE_BYTES:
-                            raise ValueError('download exceeded size limit')
-                        output.write(chunk)
+            from .net_policy import safe_httpx_request
+            with _httpx_client.Client(timeout=60, follow_redirects=False) as client:
+                response = safe_httpx_request(
+                    client, 'GET', spec['url'], stream=True,
+                    max_redirects=5, max_response_bytes=MAX_CONNECTOR_FILE_BYTES,
+                )
+                with response:
+                    response.raise_for_status()
+                    with open(destination, 'wb') as output:
+                        for chunk in response.iter_bytes(64 * 1024):
+                            written += len(chunk)
+                            if written > MAX_CONNECTOR_FILE_BYTES:
+                                raise ValueError('download exceeded size limit')
+                            output.write(chunk)
             os.chmod(destination, 0o600)
             return _public_attachment(spec, destination), None
         except Exception as exc:

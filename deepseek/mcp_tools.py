@@ -9,6 +9,7 @@
 import json
 import os
 import warnings
+
 # Monkey-patch warnings.warn to suppress duckduckgo_search renaming RuntimeWarnings
 _orig_warn = warnings.warn
 def _custom_warn(message, category=None, stacklevel=1, source=None):
@@ -19,13 +20,14 @@ warnings.warn = _custom_warn
 
 warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*duckduckgo_search.*")
 warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*renamed to.*")
-import random
 import calendar as cal_mod
 import datetime
-import re
 import math
-import httpx
+import random
+import re
 from zoneinfo import ZoneInfo
+
+import httpx
 
 # MCP types for tool schema definitions
 try:
@@ -469,7 +471,7 @@ def tool_get_datetime(args: dict) -> str:
         return now.isoformat()
 
     elif fmt == 'date':
-        return f"{now.strftime('%Y-%m-%d')} ({day_names[now.weekday()]}, {month_names[now.month]} {now.day}, {now.year})"
+        return f"{now.strftime('%Y-%m-%d')} ({day_names[now.weekday()]}, {month_names[now.month - 1]} {now.day}, {now.year})"
 
     elif fmt == 'time':
         return f"{now.strftime('%H:%M:%S')} ({tz_name})"
@@ -481,7 +483,7 @@ def tool_get_datetime(args: dict) -> str:
         remaining = days_in_year - day_of_year
 
         lines = [
-            f"Date: {day_names[now.weekday()]}, {month_names[now.month]} {now.day}, {now.year}",
+            f"Date: {day_names[now.weekday()]}, {month_names[now.month - 1]} {now.day}, {now.year}",
             f"Time: {now.strftime('%H:%M:%S')}",
             f"ISO 8601: {now.isoformat()}",
             f"Timezone: {tz_name}",
@@ -750,7 +752,8 @@ def tool_get_stock_price(args: dict) -> str:
                 test = symbol if suffix == '' else f"{symbol}{suffix}"
                 url2 = f'https://query1.finance.yahoo.com/v8/finance/chart/{test}?range=1d&interval=1d'
                 try:
-                    r2 = client.get(url2, headers=headers)
+                    with httpx.Client(timeout=10, follow_redirects=True) as fallback_client:
+                        r2 = fallback_client.get(url2, headers=headers)
                     if r2.status_code == 200:
                         r = r2
                         lookup_symbol = test
@@ -833,6 +836,7 @@ def tool_get_holidays(args: dict) -> str:
             local = h.get('localName', '')
             fixed = h.get('fixed', True)
             global_h = h.get('global', True)
+            h.get('counties', '')
             typ = h.get('types', [])
 
             flags = []
@@ -840,6 +844,8 @@ def tool_get_holidays(args: dict) -> str:
                 flags.append('movable')
             if not global_h:
                 flags.append('regional')
+
+            f" ({', '.join(flags)})" if flags else ''
             lines.append(f"\n  {date} — {name}")
             if local and local != name:
                 lines.append(f"    Local: {local}")
@@ -941,7 +947,7 @@ def tool_get_countdown(args: dict) -> str:
     else:
         weeks = diff.days // 7
         remain_days = diff.days % 7
-        hours = diff.seconds // 3600
+        diff.seconds // 3600
         lines.append(f"  {diff.days} days remaining")
         if weeks > 0:
             lines.append(f"  = {weeks} weeks and {remain_days} days")
@@ -953,7 +959,7 @@ def tool_get_countdown(args: dict) -> str:
 def tool_get_sun_times(args: dict) -> str:
     """Get sunrise/sunset for a location."""
     city = args.get('city', 'Jakarta')
-    date = args.get('date', '')
+    args.get('date', '')
 
     try:
         url = f'https://wttr.in/{city}?format=j1'
@@ -1017,8 +1023,6 @@ def tool_get_day_info(args: dict) -> str:
         target = datetime.datetime.now(tz).date()
 
     day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-    month_names = ['January', 'February', 'March', 'April', 'May', 'June',
-                   'July', 'August', 'September', 'October', 'November', 'December']
 
     iso = target.isocalendar()
     day_of_year = target.timetuple().tm_yday
@@ -1026,19 +1030,16 @@ def tool_get_day_info(args: dict) -> str:
     week_number = int(target.strftime('%U'))  # US week number
 
     # Zodiac sign
+    # End-date boundaries for the conventional tropical zodiac ranges.
     zodiac_dates = [
-        (120, 'Aquarius'), (219, 'Pisces'), (321, 'Aries'),
-        (420, 'Taurus'), (521, 'Gemini'), (621, 'Cancer'),
-        (723, 'Leo'), (823, 'Virgo'), (923, 'Libra'),
-        (1023, 'Scorpio'), (1122, 'Sagittarius'), (1222, 'Capricorn'),
+        (119, 'Capricorn'), (218, 'Aquarius'), (320, 'Pisces'),
+        (419, 'Aries'), (520, 'Taurus'), (620, 'Gemini'),
+        (722, 'Cancer'), (822, 'Leo'), (922, 'Virgo'),
+        (1022, 'Libra'), (1121, 'Scorpio'), (1221, 'Sagittarius'),
         (1231, 'Capricorn'),
     ]
     day_num = target.month * 100 + target.day
-    zodiac = 'Capricorn'
-    for zdate, zname in zodiac_dates:
-        if day_num <= zdate:
-            zodiac = zname
-            break
+    zodiac = next(name for end_date, name in zodiac_dates if day_num <= end_date)
 
     # Chinese zodiac
     chinese_animals = ['Rat', 'Ox', 'Tiger', 'Rabbit', 'Dragon', 'Snake',

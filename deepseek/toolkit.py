@@ -12,10 +12,11 @@
 # v7.0 ADDED: Selenium browser automation (12 tools)
 # v7.5 ADDED: Full PPTX/XLSX/DOCX Edit/CSV/Document Conversion tools (11 tools)
 
+import json
 import os
 import sys
-import json
 import warnings
+
 # Monkey-patch warnings.warn to suppress duckduckgo_search renaming RuntimeWarnings
 _orig_warn = warnings.warn
 def _custom_warn(message, category=None, stacklevel=1, source=None):
@@ -26,20 +27,56 @@ warnings.warn = _custom_warn
 
 warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*duckduckgo_search.*")
 warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*renamed to.*")
-import subprocess
-import math
-import random
 import datetime
-import shutil
-import platform
-import zipfile
-import re
 import io
+import math
+import platform
+import random
+import re
+import shutil
+import signal
+import subprocess
 import tempfile
 import traceback
+import zipfile
 from pathlib import Path
+from urllib.parse import urlparse
 
-REMOTE_SAFE_TOOLS = frozenset({
+# Tool security policy.  Every execution path (main agent, sub-agent and
+# connectors) consults these sets through ToolRegistry.authorize().
+DANGEROUS_TOOLS = {
+    'write_file', 'edit_file', 'delete_file', 'run_code', 'run_shell',
+    'install_package', 'create_pdf', 'pdf_edit', 'create_docx', 'edit_docx',
+    'create_xlsx', 'edit_xlsx', 'create_pptx', 'edit_pptx', 'create_csv',
+    'convert_document', 'todowrite', 'todolist_update', 'todolist_update_all',
+    'env_vars', 'process_list', 'network_info', 'system_info', 'disk_usage',
+    'video_play', 'delegate', 'delegate_concurrent',
+}
+
+PATH_ARGUMENT_KEYS = {
+    'path', 'path2', 'file_path', 'input_path', 'output_path', 'output',
+    'save_path', 'directory', 'folder', 'cwd',
+}
+SENSITIVE_PATH_MARKERS = {
+    '.env', 'auth.json', 'config.yaml', 'credentials', 'service-account',
+    'service_account', '.pem', '.key', '.ssh', '.aws', '.gnupg', '.kube',
+    '.docker', '.npmrc', '.pypirc', '.netrc', 'id_rsa', 'id_ed25519',
+}
+REMEMBERABLE_WORKSPACE_TOOLS = {
+    'write_file', 'edit_file', 'create_pdf', 'create_docx', 'edit_docx',
+    'create_xlsx', 'edit_xlsx', 'create_pptx', 'edit_pptx', 'create_csv',
+    'convert_document',
+}
+PROCESS_ISOLATED_TOOLS = {
+    'read_pdf', 'pdf_edit', 'read_docx', 'docx_info', 'read_pptx', 'pptx_info',
+    'read_xlsx', 'xlsx_info', 'read_csv', 'image_view', 'image_info', 'ocr_read',
+    'video_info', 'apk_analyze',
+}
+
+# A remote connector is intentionally capability-limited.  It may ask the LLM
+# questions and use public information/calculation tools, but it cannot touch
+# the host, credentials, browsers, external MCP processes, or spawn sub-agents.
+REMOTE_SAFE_TOOLS = {
     'web_search', 'live_search', 'calculate', 'unit_convert', 'timestamp',
     'text_transform', 'json_parse', 'generate_uuid', 'random_number',
     'base64_tool', 'regex_test', 'sort_data', 'count_text', 'search_models',
@@ -48,17 +85,55 @@ REMOTE_SAFE_TOOLS = frozenset({
     'get_timezone_info', 'get_countdown', 'get_sun_times', 'get_day_info',
     'get_ip_info', 'get_random_fact', 'get_qibla', 'get_unit_convert',
     'get_crypto_price',
-})
-REMOTE_ATTACHMENT_TOOLS = frozenset({
+}
+
+REMOTE_ATTACHMENT_TOOLS = {
     'read_file', 'file_info', 'read_pdf', 'read_docx', 'docx_info',
     'read_pptx', 'pptx_info', 'read_xlsx', 'xlsx_info', 'read_csv',
     'image_view', 'image_info', 'ocr_read', 'video_info', 'apk_analyze',
-})
-REMOTE_SOURCES = frozenset({'telegram', 'discord', 'remote'})
+}
+
+SENSITIVE_ARG_NAMES = {
+    'password', 'passcode', 'token', 'api_key', 'secret', 'cookie', 'cookies',
+    'authorization', 'refresh_token', 'id_token', 'private_key',
+}
+
+
+def redact_sensitive_args(value):
+    """Return a recursively redacted copy suitable for UI/session persistence."""
+    if isinstance(value, dict):
+        redacted = {}
+        for key, item in value.items():
+            key_lower = str(key).lower()
+            if any(marker in key_lower for marker in SENSITIVE_ARG_NAMES):
+                redacted[key] = '[REDACTED]'
+            else:
+                redacted[key] = redact_sensitive_args(item)
+        return redacted
+    if isinstance(value, list):
+        return [redact_sensitive_args(item) for item in value]
+    return value
+
+
+def redact_sensitive_text(value: str) -> str:
+    """Redact common credentials from tool output before persistence/provider use."""
+    text = str(value)
+    patterns = [
+        (r'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----.*?-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----', '[REDACTED PRIVATE KEY]'),
+        (r'(?i)\bBearer\s+[A-Za-z0-9._~+\-/]+=*', 'Bearer [REDACTED]'),
+        (r'\bgh[pousr]_[A-Za-z0-9_]{20,}\b', '[REDACTED GITHUB TOKEN]'),
+        (r'\bcfat_[A-Za-z0-9_-]{20,}\b', '[REDACTED CLOUDFLARE TOKEN]'),
+        (r'\bAIza[0-9A-Za-z_-]{30,}\b', '[REDACTED API KEY]'),
+        (r'(?i)(password|passcode|api[_-]?key|token|access[_-]?token|refresh[_-]?token|id[_-]?token|secret|private[_-]?key|cookie)\s*[:=]\s*(["\']?)[^\s,;"\']{6,}\2', r'\1=[REDACTED]'),
+    ]
+    for pattern, replacement in patterns:
+        text = re.sub(pattern, replacement, text, flags=re.DOTALL if 'PRIVATE KEY' in pattern else 0)
+    return text
+
 
 # Pydantic validation (graceful fallback if not installed)
 try:
-    from pydantic import BaseModel, ValidationError, create_model
+    from pydantic import ValidationError, create_model
     # Pydantic v2: FieldInfo moved to pydantic.fields
     # Pydantic v1: use Field (returns FieldInfo internally)
     try:
@@ -66,7 +141,6 @@ try:
     except ImportError:
         # Pydantic v1 fallback
         try:
-            from pydantic import Field as _Field
             class FieldInfo:
                 def __init__(self, default=None, description='', **kwargs):
                     self.default = default
@@ -85,17 +159,15 @@ class ToolRegistry:
     def __init__(self, memory=None):
         self.tools: dict[str, dict] = {}
         self._validation_models: dict[str, type] = {}
-        self._memory = memory
         self._remote_allowed_paths: set[Path] = set()
-        # Tools the user approved for the rest of this session.
-        self._always_allow_tools: set = set()
+        self._memory = memory
         self._register_all()
         # Build Pydantic validation models for all registered tools
         if PYDANTIC_AVAILABLE:
             self._build_validation_models()
 
     def allow_remote_attachment_paths(self, paths: list[str]):
-        """Permit exact connector-downloaded files, never arbitrary host paths."""
+        """Allow connector read-tools to access exact downloaded attachment files."""
         upload_root = (Path.home() / '.deepseek-cli' / 'uploads').resolve()
         current = {path for path in self._remote_allowed_paths if path.exists()}
         for raw_path in paths:
@@ -105,29 +177,21 @@ class ToolRegistry:
                     current.add(path)
             except (OSError, RuntimeError):
                 continue
-        self._remote_allowed_paths = set(sorted(
-            current, key=lambda item: item.stat().st_mtime, reverse=True
-        )[:100])
+        # Bound long-running connector sessions without breaking recent replies.
+        ordered = sorted(current, key=lambda item: item.stat().st_mtime, reverse=True)
+        self._remote_allowed_paths = set(ordered[:100])
 
     def _is_allowed_remote_attachment(self, name: str, arguments: dict) -> bool:
         if name not in REMOTE_ATTACHMENT_TOOLS:
             return False
-        values = [arguments.get(key) for key in ('path', 'file_path', 'input_path')
-                  if arguments.get(key)]
-        if not values:
+        paths = [arguments.get(key) for key in ('path', 'file_path', 'input_path') if arguments.get(key)]
+        if not paths:
             return False
         try:
-            resolved = {Path(value).expanduser().resolve(strict=True) for value in values}
+            resolved = {Path(path).expanduser().resolve(strict=True) for path in paths}
         except (OSError, RuntimeError):
             return False
-        return resolved.issubset(self._remote_allowed_paths)
-
-    def source_policy_error(self, name: str, arguments: dict, source: str = 'cli') -> str | None:
-        if source not in REMOTE_SOURCES:
-            return None
-        if name in REMOTE_SAFE_TOOLS or self._is_allowed_remote_attachment(name, arguments):
-            return None
-        return f"Tool '{name}' is unavailable to remote connectors or its attachment path is not approved"
+        return bool(resolved) and resolved.issubset(self._remote_allowed_paths)
 
     def register(self, name: str, description: str, parameters: dict, handler):
         self.tools[name] = {
@@ -135,16 +199,32 @@ class ToolRegistry:
             'parameters': parameters,
             'handler': handler,
         }
+        # MCP tools are registered after __init__. Build/refresh validation at
+        # registration time so dynamic tools cannot bypass the schema layer.
+        if PYDANTIC_AVAILABLE and hasattr(self, '_validation_models'):
+            try:
+                model = self._create_validation_model(name, parameters)
+                if model:
+                    self._validation_models[name] = model
+                else:
+                    self._validation_models.pop(name, None)
+            except Exception:
+                self._validation_models.pop(name, None)
 
     def get_openai_tools(self, source: str = 'cli') -> list[dict]:
-        """Return a source-scoped OpenAI tool schema."""
+        """Return the tools exposed to a caller in OpenAI function format."""
         result = []
-        allowed_remote = set(REMOTE_SAFE_TOOLS)
-        if self._remote_allowed_paths:
-            allowed_remote.update(REMOTE_ATTACHMENT_TOOLS)
         for name, tool in self.tools.items():
-            if source in REMOTE_SOURCES and name not in allowed_remote:
-                continue
+            if source in {'telegram', 'discord', 'remote'}:
+                allowed = set(REMOTE_SAFE_TOOLS)
+                if self._remote_allowed_paths:
+                    allowed.update(REMOTE_ATTACHMENT_TOOLS)
+                if name not in allowed:
+                    continue
+            if source == 'subagent':
+                tool_desc = str(tool.get('description', ''))
+                if name in DANGEROUS_TOOLS or name.startswith(('browser_', 'se_')) or tool_desc.startswith('[MCP:'):
+                    continue
             result.append({
                 'type': 'function',
                 'function': {
@@ -198,51 +278,105 @@ class ToolRegistry:
             'object': dict,
         }
 
-        from typing import Optional as _Optional
-
         fields = {}
         for prop_name, prop_schema in properties.items():
             json_type = prop_schema.get('type', 'string')
             py_type = type_map.get(json_type, str)
             is_required = prop_name in required
+            # Optional values must be omitted when the caller did not provide
+            # them.  Handlers use args.get(name, default); injecting None here
+            # used to disable those defaults in more than half of all tools.
+            default = ... if is_required else prop_schema.get('default', None)
             description = prop_schema.get('description', '')
 
-            if is_required:
-                annotation = py_type
-                default = ...
-            else:
-                # An optional field defaults to None, so its annotation must
-                # actually admit None. Declaring `timeout: int = None` made
-                # Pydantic reject an explicit null that the model is entitled
-                # to send for an omitted argument.
-                annotation = _Optional[py_type]
-                default = None
-
             fields[prop_name] = (
-                annotation,
+                py_type,
                 FieldInfo(default=default, description=description)
             )
 
         model_name = f'{tool_name}_Input'
         return create_model(model_name, **fields)
 
+    @classmethod
+    def _schema_errors(cls, value, schema: dict, path: str = '$') -> list[str]:
+        """Validate JSON-Schema constraints Pydantic's basic model omits."""
+        errors = []
+        if not isinstance(schema, dict):
+            return errors
+        expected = schema.get('type')
+        type_checks = {
+            'object': lambda item: isinstance(item, dict),
+            'array': lambda item: isinstance(item, list),
+            'string': lambda item: isinstance(item, str),
+            'integer': lambda item: isinstance(item, int) and not isinstance(item, bool),
+            'number': lambda item: isinstance(item, (int, float)) and not isinstance(item, bool),
+            'boolean': lambda item: isinstance(item, bool),
+            'null': lambda item: item is None,
+        }
+        if expected in type_checks and not type_checks[expected](value):
+            return [f'{path}: expected {expected}']
+        if 'enum' in schema and value not in schema['enum']:
+            errors.append(f"{path}: must be one of {schema['enum']}")
+
+        if isinstance(value, dict):
+            required = schema.get('required', [])
+            for key in required:
+                if key not in value:
+                    errors.append(f'{path}.{key}: required')
+            properties = schema.get('properties', {})
+            if schema.get('additionalProperties') is False:
+                for key in value:
+                    if key not in properties:
+                        errors.append(f'{path}.{key}: additional property is not allowed')
+            for key, item in value.items():
+                if key in properties:
+                    errors.extend(cls._schema_errors(item, properties[key], f'{path}.{key}'))
+        elif isinstance(value, list):
+            if 'minItems' in schema and len(value) < schema['minItems']:
+                errors.append(f'{path}: fewer than {schema["minItems"]} items')
+            if 'maxItems' in schema and len(value) > schema['maxItems']:
+                errors.append(f'{path}: more than {schema["maxItems"]} items')
+            item_schema = schema.get('items')
+            if isinstance(item_schema, dict):
+                for index, item in enumerate(value):
+                    errors.extend(cls._schema_errors(item, item_schema, f'{path}[{index}]'))
+        elif isinstance(value, str):
+            if 'minLength' in schema and len(value) < schema['minLength']:
+                errors.append(f'{path}: shorter than {schema["minLength"]} characters')
+            if 'maxLength' in schema and len(value) > schema['maxLength']:
+                errors.append(f'{path}: longer than {schema["maxLength"]} characters')
+            if schema.get('pattern'):
+                try:
+                    if not re.search(schema['pattern'], value):
+                        errors.append(f'{path}: does not match required pattern')
+                except re.error:
+                    errors.append(f'{path}: tool schema has an invalid pattern')
+        elif isinstance(value, (int, float)) and not isinstance(value, bool):
+            if 'minimum' in schema and value < schema['minimum']:
+                errors.append(f'{path}: below minimum {schema["minimum"]}')
+            if 'maximum' in schema and value > schema['maximum']:
+                errors.append(f'{path}: above maximum {schema["maximum"]}')
+        return errors
+
     def validate_args(self, tool_name: str, args: dict) -> tuple[dict, str | None]:
-        """
-        Validate tool arguments against the Pydantic model.
-        Returns (validated_args, error_string_or_None).
-        """
-        if not PYDANTIC_AVAILABLE:
-            return args, None
-        if tool_name not in self._validation_models:
+        """Validate types plus nested JSON-Schema constraints."""
+        if tool_name not in self.tools:
+            return args, f"Unknown tool '{tool_name}'"
+        if not isinstance(args, dict):
+            return args, f'Validation failed for {tool_name}: arguments must be an object'
+        schema_errors = self._schema_errors(args, self.tools[tool_name].get('parameters', {}))
+        if schema_errors:
+            return args, f"Validation failed for {tool_name}:\n  " + "\n  ".join(schema_errors[:20])
+        if not PYDANTIC_AVAILABLE or tool_name not in self._validation_models:
             return args, None
 
         model_cls = self._validation_models[tool_name]
         try:
             validated = model_cls(**args)
             if hasattr(validated, 'model_dump'):
-                return validated.model_dump(), None
+                return validated.model_dump(exclude_none=True), None
             else:
-                return validated.dict(), None
+                return validated.dict(exclude_none=True), None
         except ValidationError as e:
             # Build friendly error message
             errors = []
@@ -256,106 +390,131 @@ class ToolRegistry:
         except Exception as e:
             return args, f"Validation error for {tool_name}: {e}"
 
-    # ══════════════════════════════════════
-    # DANGEROUS-TOOL POLICY (single source of truth)
-    # ══════════════════════════════════════
-    # Any tool that writes, deletes, executes code, installs software, or
-    # drives a browser session must be confirmed by a human. This lives on
-    # the registry — NOT on Agent — so that every caller (main agent,
-    # sub-agents, connectors) is gated identically. Previously the sub-agent
-    # path called handlers directly and bypassed confirmation entirely.
-    DANGEROUS_TOOLS = frozenset({
-        # filesystem mutation
-        'write_file', 'edit_file', 'delete_file',
-        # arbitrary execution
-        'run_shell', 'run_code', 'install_package',
-        # document mutation
-        'create_pdf', 'pdf_edit', 'create_docx', 'edit_docx',
-        'create_xlsx', 'edit_xlsx', 'create_pptx', 'edit_pptx',
-        'create_csv', 'edit_csv', 'todowrite',
-        # browser / remote side effects
-        'browser_download', 'se_execute_js', 'se_upload', 'se_open_gui',
-    })
+    @staticmethod
+    def _workspace_root() -> Path:
+        root = os.environ.get('DEEPSEEK_WORKSPACE') or os.environ.get('DEEPSEEK_ORIGINAL_CWD') or os.getcwd()
+        return Path(root).expanduser().resolve()
 
-    def is_dangerous(self, name: str) -> bool:
-        return name in self.DANGEROUS_TOOLS
+    @classmethod
+    def _path_is_outside_workspace(cls, raw_path: str) -> bool:
+        if not raw_path:
+            return False
+        try:
+            target = Path(raw_path).expanduser()
+            if not target.is_absolute():
+                target = cls._workspace_root() / target
+            target = target.resolve(strict=False)
+            root = cls._workspace_root()
+            return target != root and root not in target.parents
+        except Exception:
+            return True
 
-    def execute(self, name: str, arguments: dict, confirm: bool = True,
-                source: str = 'cli') -> str:
-        """Validate, optionally confirm, then run a tool.
+    @staticmethod
+    def _url_policy_error(raw_url: str) -> str | None:
+        """Apply the shared outbound policy used by every HTTP-capable module."""
+        from .net_policy import url_policy_error
+        return url_policy_error(raw_url)
 
-        `confirm=False` is only for callers that already obtained explicit
-        user approval for this exact invocation (the interactive Agent loop).
+    @staticmethod
+    def _argument_paths(arguments: dict) -> list[str]:
+        paths = []
+        for key, value in (arguments or {}).items():
+            key_lower = str(key).lower()
+            if key_lower in PATH_ARGUMENT_KEYS or key_lower.endswith('_path'):
+                if isinstance(value, str) and value.strip():
+                    paths.append(value)
+        return paths
+
+    @staticmethod
+    def _is_sensitive_path(raw_path: str) -> bool:
+        lowered = str(raw_path).replace('\\', '/').lower()
+        return any(marker in lowered for marker in SENSITIVE_PATH_MARKERS)
+
+    def requires_confirmation(self, name: str, arguments: dict) -> bool:
+        # Every out-of-workspace or credential-like path is approval-gated,
+        # including metadata/list/play tools that the previous allowlist missed.
+        for path in self._argument_paths(arguments):
+            if self._path_is_outside_workspace(path) or self._is_sensitive_path(path):
+                return True
+        if name in DANGEROUS_TOOLS or name.startswith(('browser_', 'se_')):
+            return True
+        tool = self.tools.get(name, {})
+        if str(tool.get('description', '')).startswith('[MCP:'):
+            return True
+        return False
+
+    def approval_key(self, name: str, arguments: dict) -> str | None:
+        """Return a narrowly-scoped key eligible for session remembrance.
+
+        Shell, delete, install, browser, MCP, delegation, sensitive paths, and
+        out-of-workspace operations are intentionally never rememberable.
         """
-        if name not in self.tools:
-            return f"[ERROR] Unknown tool '{name}'"
+        if name not in REMEMBERABLE_WORKSPACE_TOOLS:
+            return None
+        paths = self._argument_paths(arguments)
+        if not paths:
+            return None
+        if any(self._path_is_outside_workspace(path) or self._is_sensitive_path(path)
+               for path in paths):
+            return None
+        return f"{name}|workspace:{self._workspace_root()}"
 
-        # ── v5.5: Validate arguments before execution ──
+    @staticmethod
+    def should_process_isolate(name: str) -> bool:
+        """Whether untrusted parsing should run in a killable child process."""
+        return name in PROCESS_ISOLATED_TOOLS
+
+    def authorize(self, name: str, arguments: dict, source: str = 'cli', approved: bool = False) -> str | None:
+        if name not in self.tools:
+            return f"Unknown tool '{name}'"
+        remote_attachment = False
+        if source in {'telegram', 'discord', 'remote'}:
+            remote_attachment = self._is_allowed_remote_attachment(name, arguments)
+            if name not in REMOTE_SAFE_TOOLS and not remote_attachment:
+                return f"Tool '{name}' is disabled for remote connectors or the attachment path is not approved"
+        if source == 'subagent' and self.requires_confirmation(name, arguments) and not approved:
+            return f"Tool '{name}' requires approval in the parent CLI and is disabled in sub-agents"
+        for key in ('url', 'target_url', 'download_url'):
+            value = arguments.get(key)
+            if isinstance(value, str) and value:
+                error = self._url_policy_error(value)
+                if error:
+                    return error
+        if self.requires_confirmation(name, arguments) and not approved and not remote_attachment:
+            return f"Tool '{name}' requires explicit user approval"
+        return None
+
+    def prepare_execution(self, name: str, arguments: dict, source: str = 'cli',
+                          approved: bool = False):
+        if name not in self.tools:
+            return None, arguments, f"Unknown tool '{name}'"
         validated_args, validation_error = self.validate_args(name, arguments)
         if validation_error:
-            # Return validation error but don't execute
-            return f"[ERROR] {validation_error}"
+            return None, arguments, validation_error
+        policy_error = self.authorize(name, validated_args, source=source, approved=approved)
+        if policy_error:
+            return None, validated_args, policy_error
+        return self.tools[name]['handler'], validated_args, None
 
-        # Drop keys Pydantic filled with None for omitted optional params.
-        # Leaving them in makes handlers' `args.get(k, default)` return None
-        # instead of the intended default (e.g. run_shell timeout -> no limit).
-        validated_args = {k: v for k, v in validated_args.items()
-                          if v is not None or k in (arguments or {})}
-
-        source_error = self.source_policy_error(name, validated_args, source)
-        if source_error:
-            return f'[ERROR] {source_error}'
-
-        if confirm and self.is_dangerous(name):
-            verdict = self._confirm_dangerous(name, validated_args)
-            if verdict == 'reject':
-                return f"[Rejected by user] {name} not executed."
-
+    def execute(self, name: str, arguments: dict, *, source: str = 'subagent',
+                approved: bool = False) -> str:
+        handler, validated_args, error = self.prepare_execution(
+            name, arguments, source=source, approved=approved
+        )
+        if error:
+            return f"[ERROR] {error}"
         try:
-            result = self.tools[name]['handler'](validated_args)
-            # Check for empty/None result
+            result = handler(validated_args)
             if result is None:
                 return "[WARNING] Tool returned no output"
-            return result
+            return str(result)
         except TypeError as e:
-            # Likely wrong argument types — give helpful error
             return f"[ERROR] Wrong arguments for {name}: {e}"
         except KeyError as e:
-            # Missing required argument
             return f"[ERROR] Missing argument for {name}: {e}"
         except Exception as e:
-            # Full traceback for debugging
             tb = traceback.format_exc()
             return f"[ERROR] {name} failed: {e}\n{tb}"
-
-    def _confirm_dangerous(self, name: str, args: dict) -> str:
-        """Ask the user to approve a dangerous tool.
-
-        Fails CLOSED: if we cannot ask (no TTY — e.g. a Telegram/Discord
-        connector thread or a piped session) the call is rejected rather than
-        silently executed. Session-wide approvals are remembered.
-        """
-        if name in self._always_allow_tools:
-            return 'allow_once'
-
-        # Non-interactive context: refuse instead of auto-running.
-        try:
-            import sys as _sys
-            if not (_sys.stdin.isatty() and _sys.stdout.isatty()):
-                return 'reject'
-        except Exception:
-            return 'reject'
-
-        try:
-            from .ui import confirm_action
-            verb = 'write' if any(x in name for x in ('write', 'edit', 'create')) else 'execute'
-            ans = confirm_action(name, args, verb=verb)
-        except Exception:
-            return 'reject'
-
-        if ans == 'always_allow':
-            self._always_allow_tools.add(name)
-        return ans
 
     def _register_all(self):
         self._register_file_tools()
@@ -375,7 +534,6 @@ class ToolRegistry:
         self._register_browser_tools()
         self._register_selenium_tools()
         self._register_doc_tools()
-        self._register_skill_tools()
         self._register_mcp_client_tools()
         self._register_agent_tools()
 
@@ -458,7 +616,7 @@ class ToolRegistry:
 
     def _register_mcp_tools(self):
         try:
-            from .mcp_tools import get_mcp_tool_definitions, execute_mcp_tool
+            from .mcp_tools import execute_mcp_tool, get_mcp_tool_definitions
 
             for defn in get_mcp_tool_definitions():
                 fn = defn['function']
@@ -476,14 +634,13 @@ class ToolRegistry:
             pass  # Error loading MCP — skip silently
 
     # ══════════════════════════════════════
-    # MCP CLIENT TOOLS (v7.7)
+    # MCP CLIENT TOOLS (v7.8.0)
     # Real MCP protocol: connects to external MCP servers
     # Discovers and registers tools from Canva, Context7, GitHub, etc.
     # ══════════════════════════════════════
 
     def _register_mcp_client_tools(self):
         """MCP tools registered on-demand via /mcp connect — no auto-connect."""
-        pass
 
     # ══════════════════════════════════════
     # LIVE SEARCH & MODEL SEARCH TOOLS (v5.2)
@@ -1128,7 +1285,7 @@ class ToolRegistry:
 
     def _register_doc_tools(self):
         try:
-            from .doc_tools import get_doc_tool_definitions, execute_doc_tool
+            from .doc_tools import execute_doc_tool, get_doc_tool_definitions
 
             for defn in get_doc_tool_definitions():
                 fn = defn['function']
@@ -1611,8 +1768,12 @@ class ToolRegistry:
                     'Accept-Language': 'en-US,en;q=0.9',
                 }
 
-                with httpx.Client(timeout=20, follow_redirects=True) as client:
-                    r = client.get(url, headers=headers)
+                from .net_policy import safe_httpx_request
+                with httpx.Client(timeout=20, follow_redirects=False) as client:
+                    r = safe_httpx_request(
+                        client, 'GET', url, headers=headers,
+                        max_redirects=5, max_response_bytes=2 * 1024 * 1024,
+                    )
 
                 # 403/429 — try next UA
                 if r.status_code in (403, 429):
@@ -1731,25 +1892,45 @@ class ToolRegistry:
         text = re.sub(r'\n{3,}', '\n\n', text)
         return text.strip()
 
+    @staticmethod
+    def _run_process_group(argv: list[str], timeout: int, cwd: str):
+        """Run a command and kill its entire descendant group on timeout."""
+        proc = subprocess.Popen(
+            argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, cwd=cwd, start_new_session=(os.name == 'posix'),
+        )
+        try:
+            stdout, stderr = proc.communicate(timeout=max(1, min(int(timeout), 600)))
+            return proc.returncode, stdout, stderr, False
+        except subprocess.TimeoutExpired:
+            if os.name == 'posix':
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            else:
+                proc.kill()
+            stdout, stderr = proc.communicate()
+            return proc.returncode, stdout, stderr, True
+
     def _run_code(self, code: str, timeout: int) -> str:
         try:
             cwd = os.environ.get('DEEPSEEK_ORIGINAL_CWD') or os.getcwd()
             if cwd in ('$PWD', '${PWD}'):
                 cwd = os.getcwd()
-            result = subprocess.run(
-                [sys.executable, '-c', code],
-                capture_output=True, text=True, timeout=timeout, cwd=cwd
+            returncode, stdout, stderr, timed_out = self._run_process_group(
+                [sys.executable, '-c', code], timeout, cwd
             )
+            if timed_out:
+                return f"[TIMEOUT] Code and child processes killed after {timeout}s"
             output = ''
-            if result.stdout:
-                output += result.stdout
-            if result.stderr:
-                output += f"\n[stderr]: {result.stderr}"
-            if result.returncode != 0:
-                output += f"\n[exit code: {result.returncode}]"
+            if stdout:
+                output += stdout
+            if stderr:
+                output += f"\n[stderr]: {stderr}"
+            if returncode != 0:
+                output += f"\n[exit code: {returncode}]"
             return output.strip() if output.strip() else "(no output)"
-        except subprocess.TimeoutExpired:
-            return f"Code timed out after {timeout}s"
         except Exception as e:
             return f"Code execution error: {e}"
 
@@ -1765,29 +1946,36 @@ class ToolRegistry:
             # Safety: reject literal $PWD (wrapper bug in old installs)
             if cwd in ('$PWD', '${PWD}'):
                 cwd = os.getcwd()
-            result = subprocess.run(
-                command, shell=True, capture_output=True, text=True, timeout=timeout, cwd=cwd
+            shell_executable = os.environ.get('SHELL') or shutil.which('bash') or shutil.which('sh')
+            if not shell_executable:
+                return 'Shell error: no shell executable found'
+            returncode, stdout, stderr, timed_out = self._run_process_group(
+                [shell_executable, '-c', command], timeout, cwd
             )
+            if timed_out:
+                return f"[TIMEOUT] Command and child processes killed after {timeout}s"
             output = ''
-            if result.stdout:
-                output += result.stdout
-            if result.stderr:
-                output += f"\n[stderr]: {result.stderr}"
+            if stdout:
+                output += stdout
+            if stderr:
+                output += f"\n[stderr]: {stderr}"
+            if returncode != 0:
+                output += f"\n[exit code: {returncode}]"
             return output.strip() if output.strip() else "(no output)"
-        except subprocess.TimeoutExpired:
-            return f"Command timed out after {timeout}s"
         except Exception as e:
             return f"Shell error: {e}"
 
     def _install_package(self, package: str) -> str:
         try:
-            result = subprocess.run(
-                [sys.executable, '-m', 'pip', 'install', '-q', package],
-                capture_output=True, text=True, timeout=120
+            returncode, stdout, stderr, timed_out = self._run_process_group(
+                [sys.executable, '-m', 'pip', 'install', '-q', '--', package],
+                120, os.environ.get('DEEPSEEK_ORIGINAL_CWD') or os.getcwd(),
             )
-            if result.returncode == 0:
+            if timed_out:
+                return "[TIMEOUT] Package installation and child processes were killed after 120s"
+            if returncode == 0:
                 return f"Package '{package}' installed successfully."
-            return f"Install failed: {result.stderr}"
+            return f"Install failed: {stderr or stdout}"
         except Exception as e:
             return f"Install error: {e}"
 
@@ -1795,7 +1983,12 @@ class ToolRegistry:
         uname = platform.uname()
         mem = ''
         try:
-            total = os.popen('free -h 2>/dev/null || cat /proc/meminfo 2>/dev/null | head -3').read()
+            if shutil.which('free'):
+                total = subprocess.run(['free', '-h'], capture_output=True, text=True, timeout=5).stdout
+            elif Path('/proc/meminfo').exists():
+                total = '\n'.join(Path('/proc/meminfo').read_text(errors='replace').splitlines()[:3])
+            else:
+                total = ''
             mem = f"\nMemory:\n{total.strip()}" if total.strip() else ''
         except Exception:
             pass
@@ -1808,8 +2001,9 @@ class ToolRegistry:
 
     def _process_list(self, filter_name: str) -> str:
         try:
-            cmd = 'ps aux 2>/dev/null || ps -ef 2>/dev/null'
-            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=10)
+            result = subprocess.run(['ps', 'aux'], capture_output=True, text=True, timeout=10)
+            if result.returncode != 0:
+                result = subprocess.run(['ps', '-ef'], capture_output=True, text=True, timeout=10)
             lines = result.stdout.strip().split('\n')
             if filter_name:
                 lines = [l for l in lines if filter_name.lower() in l.lower()]
@@ -1822,7 +2016,7 @@ class ToolRegistry:
 
     def _disk_usage(self) -> str:
         try:
-            result = subprocess.run('df -h 2>/dev/null', shell=True, capture_output=True, text=True, timeout=10)
+            result = subprocess.run(['df', '-h'], capture_output=True, text=True, timeout=10)
             return result.stdout.strip() if result.stdout.strip() else "Disk info not available"
         except Exception as e:
             return f"Error: {e}"
@@ -1838,9 +2032,16 @@ class ToolRegistry:
                 pass
             interfaces = ''
             try:
-                result = subprocess.run('ifconfig 2>/dev/null || ip addr 2>/dev/null || ipconfig 2>/dev/null',
-                                       shell=True, capture_output=True, text=True, timeout=10)
-                interfaces = f"\nInterfaces:\n{result.stdout.strip()[:1000]}"
+                commands = [['ifconfig'], ['ip', 'addr'], ['ipconfig']]
+                result = None
+                for command in commands:
+                    if shutil.which(command[0]):
+                        candidate = subprocess.run(command, capture_output=True, text=True, timeout=10)
+                        if candidate.returncode == 0:
+                            result = candidate
+                            break
+                if result is not None:
+                    interfaces = f"\nInterfaces:\n{result.stdout.strip()[:1000]}"
             except Exception:
                 pass
             return f"Hostname: {hostname}\nIP: {ip}{interfaces}"
@@ -1853,7 +2054,14 @@ class ToolRegistry:
             env = {k: v for k, v in env.items() if filter_name.upper() in k.upper()}
         if not env:
             return f"No env vars matching '{filter_name}'"
-        lines = [f"{k}={v}" for k, v in sorted(env.items())]
+        reveal = os.environ.get('DEEPSEEK_SHOW_SECRETS') == '1'
+        sensitive_markers = ('KEY', 'TOKEN', 'SECRET', 'PASSWORD', 'PASSCODE', 'COOKIE',
+                             'CREDENTIAL', 'AUTH', 'PRIVATE', 'SESSION')
+        lines = []
+        for key, value in sorted(env.items()):
+            if not reveal and any(marker in key.upper() for marker in sensitive_markers):
+                value = '[REDACTED]'
+            lines.append(f"{key}={value}")
         return '\n'.join(lines)
 
     def _calculate(self, expression: str) -> str:
@@ -1870,8 +2078,9 @@ class ToolRegistry:
         
         # AST-based safe evaluation for math expressions
         def safe_eval(node):
-            # ast.Num is deprecated (removed in 3.14); ast.Constant covers it.
-            if isinstance(node, ast.Constant):
+            if isinstance(node, ast.Num):  # <number>
+                return node.n
+            elif isinstance(node, ast.Constant):  # Python 3.8+ Constant
                 if isinstance(node.value, (int, float)):
                     return node.value
                 raise ValueError("Only numeric constants allowed")
@@ -1963,7 +2172,7 @@ class ToolRegistry:
         key = (from_norm, to_norm)
         
         if key not in conversions:
-            available = ', '.join(f"{a}->{b}" for a, b in conversions.keys())
+            available = ', '.join(f"{a}->{b}" for a, b in conversions)
             return f"Conversion {from_unit} -> {to_unit} not supported.\nAvailable: {available}"
         try:
             result = conversions[key](float(value))
@@ -2072,7 +2281,7 @@ class ToolRegistry:
                           'July', 'August', 'September', 'October', 'November', 'December']
 
             lines = [
-                f"Date: {day_names[dt.weekday()]}, {month_names[dt.month]} {dt.day}, {dt.year}",
+                f"Date: {day_names[dt.weekday()]}, {month_names[dt.month - 1]} {dt.day}, {dt.year}",
                 f"Time: {dt.strftime('%H:%M:%S')}",
                 f"Timezone: {tz_name}",
                 f"UTC Offset: {dt.strftime('%z') or '+0000'}",
@@ -2203,7 +2412,7 @@ class ToolRegistry:
             lines.sort(key=str.lower, reverse=reverse)
         return '\n'.join(lines)
 
-    def _count_text(self, text: str, pattern: str = None) -> str:
+    def _count_text(self, text: str, pattern: str | None = None) -> str:
         lines = text.split('\n')
         words = text.split()
         chars = len(text)
@@ -2247,9 +2456,9 @@ class ToolRegistry:
         if not p.exists():
             return f"Error: File not found: {path}"
         try:
-            from PyPDF2 import PdfReader
+            from pypdf import PdfReader
         except ImportError:
-            return "Error: PyPDF2 not installed. Run: pip install PyPDF2"
+            return "Error: pypdf not installed. Run: pip install 'pypdf>=6.15,<7'"
         try:
             reader = PdfReader(str(p))
             total = len(reader.pages)
@@ -2277,11 +2486,11 @@ class ToolRegistry:
     def _create_pdf(self, path: str, content: str, title: str = '') -> str:
         p = Path(path).expanduser()
         try:
-            from reportlab.lib.pagesizes import letter, A4
-            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
-            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
             from reportlab.lib import colors
+            from reportlab.lib.pagesizes import letter
+            from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
             from reportlab.lib.units import inch
+            from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
         except ImportError:
             return "Error: reportlab not installed. Run: pip install reportlab"
         try:
@@ -2309,7 +2518,7 @@ class ToolRegistry:
                     story.append(Paragraph(line[3:], styles['Heading2']))
                 elif line.startswith('# '):
                     story.append(Paragraph(line[2:], styles['Heading1']))
-                elif line.startswith('- ') or line.startswith('* '):
+                elif line.startswith(('- ', '* ')):
                     story.append(Paragraph(f"  - {line[2:]}", styles['Normal']))
                 elif re.match(r'^\d+\.\s', line):
                     story.append(Paragraph(f"  {line}", styles['Normal']))
@@ -2355,9 +2564,9 @@ class ToolRegistry:
             return f"Error: File not found: {path}"
 
         try:
-            from PyPDF2 import PdfReader, PdfWriter, PdfMerger
+            from pypdf import PdfReader, PdfWriter
         except ImportError:
-            return "Error: PyPDF2 not installed. Run: pip install PyPDF2"
+            return "Error: pypdf not installed. Run: pip install 'pypdf>=6.15,<7'"
 
         try:
             if op == 'info':
@@ -2389,11 +2598,12 @@ class ToolRegistry:
                 p2 = Path(path2).expanduser()
                 if not p2.exists():
                     return f"Error: Second file not found: {path2}"
-                merger = PdfMerger()
-                merger.append(str(p))
-                merger.append(str(p2))
-                merger.write(output)
-                merger.close()
+                writer = PdfWriter()
+                writer.append(str(p))
+                writer.append(str(p2))
+                with open(output, 'wb') as merged_file:
+                    writer.write(merged_file)
+                writer.close()
                 return f"Merged: {path} + {path2} -> {output}"
 
             elif op == 'split':
@@ -2463,8 +2673,8 @@ class ToolRegistry:
     def _create_watermark(self, text: str):
         """Create a semi-transparent watermark page."""
         try:
-            from reportlab.pdfgen import canvas
             from reportlab.lib.pagesizes import letter
+            from reportlab.pdfgen import canvas
             buf = io.BytesIO()
             c = canvas.Canvas(buf, pagesize=letter)
             c.saveState()
@@ -2476,7 +2686,7 @@ class ToolRegistry:
             c.restoreState()
             c.save()
             buf.seek(0)
-            from PyPDF2 import PdfReader
+            from pypdf import PdfReader
             return PdfReader(buf).pages[0]
         except Exception:
             return None
@@ -2501,7 +2711,7 @@ class ToolRegistry:
                 doc.add_heading(stripped[3:], level=2)
             elif stripped.startswith('# '):
                 doc.add_heading(stripped[2:], level=1)
-            elif stripped.startswith('- ') or stripped.startswith('* '):
+            elif stripped.startswith(('- ', '* ')):
                 p = doc.add_paragraph(stripped[2:], style='List Bullet')
                 self._apply_inline_format(p, stripped[2:])
             elif re.match(r'^\d+\.\s', stripped):
@@ -2725,7 +2935,7 @@ class ToolRegistry:
             lines.append(f'  [{status}] [{i}] {text}')
         return '\n'.join(lines) + '\n\nUse todolist_update with an index to mark items as done.'
 
-    def _todolist_update(self, index: int, done: bool = None, text: str = '') -> str:
+    def _todolist_update(self, index: int, done: bool | None = None, text: str = '') -> str:
         if not self._memory or not self._memory.todo_items:
             return 'Error: No todo list in memory.'
         if index < 0 or index >= len(self._memory.todo_items):
@@ -2883,15 +3093,13 @@ class ToolRegistry:
         Modes: none, grayscale, threshold, denoise, sharpen, enhance.
         Returns a processed PIL Image.
         """
-        from PIL import Image, ImageFilter, ImageOps
+        from PIL import ImageFilter
 
         if mode == 'none' or not mode:
             return img
 
         # Ensure RGB mode for processing
-        if img.mode == 'RGBA':
-            img = img.convert('RGB')
-        elif img.mode != 'RGB':
+        if img.mode == 'RGBA' or img.mode != 'RGB':
             img = img.convert('RGB')
 
         if mode == 'grayscale':
@@ -3061,11 +3269,15 @@ class ToolRegistry:
             return "Error: httpx not installed. Run: pip install httpx"
 
         try:
-            with httpx.Client(timeout=30, follow_redirects=True) as client:
+            from .net_policy import safe_httpx_request
+            with httpx.Client(timeout=30, follow_redirects=False) as client:
                 headers = {
                     'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/125.0.0.0 Safari/537.36'
                 }
-                response = client.get(url, headers=headers)
+                response = safe_httpx_request(
+                    client, 'GET', url, headers=headers,
+                    max_redirects=5, max_response_bytes=20 * 1024 * 1024,
+                )
                 response.raise_for_status()
 
             # Determine file extension from URL or content-type
@@ -3081,7 +3293,6 @@ class ToolRegistry:
                 ext = '.bmp'
             else:
                 # Try to guess from URL
-                from urllib.parse import urlparse
                 parsed = urlparse(url)
                 path_lower = parsed.path.lower()
                 for e in ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.tiff']:
@@ -3257,18 +3468,17 @@ class ToolRegistry:
             if 32 <= char_code <= 126:
                 current += chr(char_code)
             elif char_code == 0 or char_code > 126:
-                if len(current) > 2:
-                    if any(kw in current for kw in [
-                        '.', 'permission', 'activity', 'service', 'receiver',
-                        'provider', 'application', 'manifest', 'uses-',
-                        'intent', 'action', 'category', 'version', 'package',
-                        'android', 'com.', 'org.', 'net.', 'io.', 'gov.',
-                        'minSdk', 'targetSdk', 'debuggable', 'exported',
-                        'enabled', 'name', 'value', 'scheme', 'host', 'path',
-                        'portrait', 'landscape', 'configChanges', 'theme',
-                        'label', 'icon', 'backup', 'supportsRtl'
-                    ]):
-                        strings.append(current)
+                if len(current) > 2 and any(kw in current for kw in [
+                    '.', 'permission', 'activity', 'service', 'receiver',
+                    'provider', 'application', 'manifest', 'uses-',
+                    'intent', 'action', 'category', 'version', 'package',
+                    'android', 'com.', 'org.', 'net.', 'io.', 'gov.',
+                    'minSdk', 'targetSdk', 'debuggable', 'exported',
+                    'enabled', 'name', 'value', 'scheme', 'host', 'path',
+                    'portrait', 'landscape', 'configChanges', 'theme',
+                    'label', 'icon', 'backup', 'supportsRtl'
+                ]):
+                    strings.append(current)
                 current = ""
             else:
                 current = ""
@@ -3863,9 +4073,10 @@ class ToolRegistry:
             if not result['cookies']:
                 return "No cookies in session."
             parts = [f"Cookies ({result['count']}):"]
-            for name, value in sorted(result['cookies'].items()):
-                display_val = value[:50] + '...' if len(value) > 50 else value
-                parts.append(f"  {name} = {display_val}")
+            for name, _value in sorted(result['cookies'].items()):
+                # Cookie values are credentials. Expose names only so they are
+                # never persisted in session memory or sent back to a provider.
+                parts.append(f"  {name} = [REDACTED]")
             return '\n'.join(parts)
         except Exception as e:
             return f"Error: {e}"
@@ -3916,48 +4127,9 @@ class ToolRegistry:
                     '\n'
                     'FIX: Use browser_navigate, browser_snapshot, and other browser_* tools instead.')
 
-    def _register_skill_tools(self):
-        """Skill tools. Registered unconditionally.
-
-        These were previously nested inside _register_selenium_tools(),
-        which returns early when Selenium is absent — silently dropping
-        both skill tools even though they have nothing to do with a
-        browser.
-        """
-        self.register(
-            'list_skills',
-            'List all installed agent skills with descriptions.',
-            {
-                'type': 'object',
-                'properties': {},
-                'required': [],
-            },
-            lambda args: self._list_skills()
-        )
-
-        self.register(
-            'read_skill',
-            'Read the content of an installed skill (SKILL.md). Use list_skills first to see available skills.',
-            {
-                'type': 'object',
-                'properties': {
-                    'name': {'type': 'string', 'description': 'Skill name (e.g. "find-skills", "pdf")'},
-                },
-                'required': ['name'],
-            },
-            lambda args: self._read_skill(args['name'])
-        )
-
-
     def _register_selenium_tools(self):
-        # Check availability (don't register if missing)
-        try:
-            from .selenium_browser import SELENIUM_AVAILABLE
-            if not SELENIUM_AVAILABLE:
-                return
-        except ImportError:
-            return
-
+        # Register schemas lazily. Handlers import Selenium only when called, so
+        # normal CLI startup stays fast and optional dependencies remain optional.
         self.register(
             'se_navigate',
             'SELENIUM BROWSER: Open a URL in a real Firefox browser. '
@@ -4425,6 +4597,31 @@ class ToolRegistry:
             lambda args: self._se_get_session().close_tab(tab_index=args.get('tab_index', -1))
         )
 
+        # ── Skill Management Tools ──
+        self.register(
+            'list_skills',
+            'List all installed agent skills with descriptions.',
+            {
+                'type': 'object',
+                'properties': {},
+                'required': [],
+            },
+            lambda args: self._list_skills()
+        )
+
+        self.register(
+            'read_skill',
+            'Read the content of an installed skill (SKILL.md). Use list_skills first to see available skills.',
+            {
+                'type': 'object',
+                'properties': {
+                    'name': {'type': 'string', 'description': 'Skill name (e.g. "find-skills", "pdf")'},
+                },
+                'required': ['name'],
+            },
+            lambda args: self._read_skill(args['name'])
+        )
+
     # ── Selenium Tool Handler Implementations ───────────────
 
     def _se_get_session(self):
@@ -4590,8 +4787,7 @@ class ToolRegistry:
                 output = [f"Browser Cookies ({result['count']} total)"]
                 output.append(f"Domains: {', '.join(result['domains'][:10])}")
                 for c in result['cookies'][:20]:
-                    display_val = str(c.get('value', ''))[:30] + '...' if len(str(c.get('value', ''))) > 30 else str(c.get('value', ''))
-                    output.append(f"  {c.get('name', '?')} = {display_val} (domain: {c.get('domain', '?')})")
+                    output.append(f"  {c.get('name', '?')} = [REDACTED] (domain: {c.get('domain', '?')})")
                 if len(result['cookies']) > 20:
                     output.append(f"  ... and {len(result['cookies']) - 20} more")
                 return '\n'.join(output)
