@@ -1,15 +1,15 @@
-# DeepSeek CLI v7.7 — Multi-Agent System
+# DeepSeek CLI v7.8.0 — Multi-Agent System
 # Agent delegation, specialized profiles, and concurrent execution
-
-from __future__ import annotations
 
 import json
 import threading
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .config import cfg
 from .memory import Memory
-
+from .providers import create_provider
+from .toolkit import ToolRegistry, redact_sensitive_args, redact_sensitive_text
 
 # ══════════════════════════════════════
 # AGENT PROFILES
@@ -97,7 +97,7 @@ class AgentWorker:
     """
 
     def __init__(self, profile_id: str, task: str, tools: ToolRegistry,
-                 provider_id: str = None, model: str = None):
+                 provider_id: str | None = None, model: str | None = None):
         self.profile_id = profile_id
         self.profile = AGENT_PROFILES.get(profile_id, AGENT_PROFILES['general'])
         self.task = task
@@ -115,7 +115,6 @@ class AgentWorker:
         pid = provider_id or cfg.active_provider
         provider_config = cfg.get_provider_config(pid)
         api_key = cfg.get_api_key(pid)
-        from .providers import create_provider
         self.provider = create_provider(pid, provider_config, api_key)
         self.model = model or cfg.get_provider_model(pid)
 
@@ -129,7 +128,7 @@ class AgentWorker:
             self.memory.add_user(self.task)
 
             full_content = ''
-            send_tools = self.tools.get_openai_tools() if self.provider.supports_tools else None
+            send_tools = self.tools.get_openai_tools(source='subagent') if self.provider.supports_tools else None
 
             # Full loop: call LLM, execute tools, feed results back to LLM
             max_rounds = 6
@@ -157,12 +156,18 @@ class AgentWorker:
                     memory_tool_calls = []
                     for tc in tool_calls_list:
                         fn = tc.get('function', {})
+                        raw_arguments = fn.get('arguments', '{}')
+                        try:
+                            parsed_arguments = json.loads(raw_arguments) if isinstance(raw_arguments, str) else raw_arguments
+                            persisted_arguments = json.dumps(redact_sensitive_args(parsed_arguments), ensure_ascii=False)
+                        except Exception:
+                            persisted_arguments = '{}'
                         memory_tool_calls.append({
                             'id': tc.get('id', ''),
                             'type': 'function',
                             'function': {
                                 'name': fn.get('name', ''),
-                                'arguments': fn.get('arguments', '{}')
+                                'arguments': persisted_arguments,
                             }
                         })
                     self.memory.add_assistant_tool_calls(round_content, memory_tool_calls)
@@ -172,7 +177,11 @@ class AgentWorker:
                         tool_name = fn.get('name', '')
                         raw_args = fn.get('arguments', '{}')
                         
-                        self.live_output += f"\n  [Call Tool] {tool_name} with args: {raw_args}\n"
+                        try:
+                            display_args = redact_sensitive_args(json.loads(raw_args) if isinstance(raw_args, str) else raw_args)
+                        except Exception:
+                            display_args = {}
+                        self.live_output += f"\n  [Call Tool] {tool_name} with args: {json.dumps(display_args, ensure_ascii=False)}\n"
                         try:
                             args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
                         except json.JSONDecodeError:
@@ -181,6 +190,7 @@ class AgentWorker:
                         result = self.tools.execute(tool_name, args)
                         if result is None:
                             result = '[ERROR] Tool execution failed'
+                        result = redact_sensitive_text(str(result))
                         
                         self.live_output += f"  [Tool Result] {tool_name} returned: {str(result)[:200]}...\n"
                         
@@ -250,24 +260,26 @@ class MultiAgentManager:
         return profile.get('system_prompt_extra', '')
 
     def delegate(self, profile_id: str, task: str,
-                 tools: ToolRegistry, provider_id: str = None,
-                 model: str = None, timeout: int = 120) -> str:
+                 tools: ToolRegistry, provider_id: str | None = None,
+                 model: str | None = None, timeout: int = 120) -> str:
         """Delegate a task to a specialized agent (blocking/interactive progress)."""
-        import sys
         import os
         import select
+        import sys
         import termios
         import time
+
         from rich.console import Console
 
         console = Console()
         worker = AgentWorker(profile_id, task, tools, provider_id, model)
-        self.history.append({'profile': profile_id, 'task': task, 'worker': worker})
+        task_id = f'{profile_id}-{uuid.uuid4().hex[:8]}'
+        self.history.append({'task_id': task_id, 'profile': profile_id, 'task': task, 'worker': worker})
 
-        console.print(f"\n[bold yellow]┌── Sub-agent delegation ──────────────────────────[/bold yellow]")
+        console.print("\n[bold yellow]┌── Sub-agent delegation ──────────────────────────[/bold yellow]")
         console.print(f"[bold yellow]│[/bold yellow] Profile: [cyan]{profile_id}[/cyan]")
         console.print(f"[bold yellow]│[/bold yellow] Task: [dim]{task}[/dim]")
-        console.print(f"[bold yellow]└──────────────────────────────────────────────────[/bold yellow]")
+        console.print("[bold yellow]└──────────────────────────────────────────────────[/bold yellow]")
         console.print("Choose action:")
         console.print("  [1] View Progress (default)")
         console.print("  [0] Run in Background (detach)")
@@ -307,7 +319,9 @@ class MultiAgentManager:
 
         # Start worker execution in a thread
         future = self._executor.submit(worker.run)
-        self.running_tasks[profile_id] = {
+        self.running_tasks[task_id] = {
+            'task_id': task_id,
+            'profile': profile_id,
             'worker': worker,
             'future': future,
             'status': 'running',
@@ -315,7 +329,7 @@ class MultiAgentManager:
         }
 
         if choice == '0':
-            console.print(f"\n[bold green][INFO] Sub-agent delegated and running in background.[/bold green]")
+            console.print("\n[bold green][INFO] Sub-agent delegated and running in background.[/bold green]")
             return f"[INFO] Agent {profile_id} delegated and running in background."
 
         # Choice was 1 (View Progress)
@@ -383,11 +397,12 @@ class MultiAgentManager:
             return f'[ERROR] Agent {profile_id} failed: {e}'
 
     def delegate_async(self, profile_id: str, task: str,
-                       tools: ToolRegistry, provider_id: str = None,
-                       model: str = None) -> threading.Thread:
+                       tools: ToolRegistry, provider_id: str | None = None,
+                       model: str | None = None) -> threading.Thread:
         """Delegate a task to a specialized agent (non-blocking)."""
         worker = AgentWorker(profile_id, task, tools, provider_id, model)
-        self.history.append({'profile': profile_id, 'task': task, 'worker': worker})
+        task_id = f'{profile_id}-{uuid.uuid4().hex[:8]}'
+        self.history.append({'task_id': task_id, 'profile': profile_id, 'task': task, 'worker': worker})
         t = threading.Thread(target=worker.run, daemon=True)
         t.start()
         return t
@@ -428,14 +443,17 @@ class MultiAgentManager:
         for profile_id, task in tasks:
             worker = AgentWorker(profile_id, task, tools)
             future = self._executor.submit(worker.run)
-            self.history.append({'profile': profile_id, 'task': task, 'worker': worker})
-            self.running_tasks[profile_id] = {
+            task_id = f'{profile_id}-{uuid.uuid4().hex[:8]}'
+            self.history.append({'task_id': task_id, 'profile': profile_id, 'task': task, 'worker': worker})
+            self.running_tasks[task_id] = {
+                'task_id': task_id,
+                'profile': profile_id,
                 'worker': worker,
                 'future': future,
                 'status': 'running',
                 'output': '',
             }
-            ids.append(profile_id)
+            ids.append(task_id)
 
         # Background checker to update status when done
         def _check():

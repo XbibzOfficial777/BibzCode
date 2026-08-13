@@ -1,35 +1,39 @@
-# ─── Python ───────────────────────────────────────────────────────
+# Python
 __pycache__/
 *.py[cod]
-*$py.class
 *.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
 build/
 dist/
+.venv/
 
-# ─── React / Vite / Dashboard ────────────────────────────────────
-# Keep dashboard source + Worker config in git, but ignore generated assets.
-dashboard/
+# Node / dashboard build
+node_modules/
 dashboard-react/node_modules/
 dashboard-react/dist/
-dashboard-react/.vite/
 dashboard-react/.wrangler/
-dashboard-react/.dev.vars
+*.tsbuildinfo
 
-# ─── OS ────────────────────────────────────────────────────────────
-.DS_Store
-Thumbs.db
-
-# ─── Secrets (NEVER commit) ───────────────────────────────────────
-*.env
+# Secrets and local credentials
 .env
-.env.local
+.env.*
 *.pem
 *.key
+*service-account*.json
+*service_account*.json
+*adminsdk*.json
 secrets.json
+credentials.json
 
-# ─── Editor / runtime ────────────────────────────────────────────
+# Runtime/user artifacts
+.config/
+uploads/
 *.log
 .tmp/
+.DS_Store
+Thumbs.db
 .idea/
 .vscode/
 *.swp

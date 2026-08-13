@@ -12,16 +12,13 @@
 #   python-docx  — Word files (edit)
 #   Pillow       — Image handling in PPTX
 
-import os
+import csv
 import json
 import re
-import io
-import csv
-import zipfile
 import traceback
+import zipfile
+from datetime import datetime
 from pathlib import Path
-from datetime import datetime, timedelta
-from typing import Any
 
 # ═══════════════════════════════════════════════════════════════
 # PPTX STUBS — module-level Emu/Pt for cross-module imports
@@ -45,16 +42,9 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════════
 
 def _check_pptx():
-    """Check if python-pptx is available."""
-    try:
-        from pptx import Presentation
-        from pptx.util import Inches, Pt, Emu
-        from pptx.dml.color import RGBColor
-        from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
-        from pptx.enum.shapes import MSO_SHAPE
-        return True
-    except ImportError:
-        return False
+    """Check if python-pptx is available without importing heavy symbols."""
+    import importlib.util
+    return importlib.util.find_spec('pptx') is not None
 
 
 def read_pptx(path: str) -> str:
@@ -68,7 +58,7 @@ def read_pptx(path: str) -> str:
 
     try:
         from pptx import Presentation
-        from pptx.util import Inches, Pt, Emu
+        from pptx.util import Emu
     except ImportError:
         return "Error: python-pptx not installed. Run: pip install python-pptx"
 
@@ -230,10 +220,10 @@ def create_pptx(path: str, title: str = '', slides_json: str = '') -> str:
     out_file = Path(path).expanduser()
     try:
         from pptx import Presentation
-        from pptx.util import Inches, Pt, Emu
         from pptx.dml.color import RGBColor
-        from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
         from pptx.enum.shapes import MSO_SHAPE
+        from pptx.enum.text import PP_ALIGN
+        from pptx.util import Inches
     except ImportError:
         return "Error: python-pptx not installed. Run: pip install python-pptx"
 
@@ -399,7 +389,7 @@ def create_pptx(path: str, title: str = '', slides_json: str = '') -> str:
                             for j, cell_val in enumerate(row):
                                 if j < num_cols:
                                     table.cell(i + 1, j).text = str(cell_val)
-                    except Exception as e:
+                    except Exception:
                         pass  # Skip table on error
 
             # Add custom shapes
@@ -504,10 +494,9 @@ def edit_pptx(path: str, output: str = '', operations_json: str = '') -> str:
 
     try:
         from pptx import Presentation
-        from pptx.util import Inches, Pt, Emu
         from pptx.dml.color import RGBColor
-        from pptx.enum.text import PP_ALIGN
         from pptx.enum.shapes import MSO_SHAPE
+        from pptx.util import Inches
     except ImportError:
         return "Error: python-pptx not installed. Run: pip install python-pptx"
 
@@ -748,7 +737,6 @@ def pptx_info(path: str) -> str:
             slide_text = ''
             img_count = 0
             tbl_count = 0
-            has_title = False
             layout_name = ''
 
             if slide.slide_layout:
@@ -764,7 +752,7 @@ def pptx_info(path: str) -> str:
                 if shape.shape_type == 13:  # PICTURE
                     img_count += 1
                 if shape.name == 'Title 1' or (hasattr(shape, 'is_placeholder') and shape.has_text_frame and shape == slide.shapes.title):
-                    has_title = True
+                    pass
 
             total_images += img_count
             total_tables += tbl_count
@@ -788,7 +776,7 @@ def pptx_info(path: str) -> str:
         try:
             with zipfile.ZipFile(str(p), 'r') as zf:
                 if 'docProps/core.xml' in zf.namelist():
-                    import xml.etree.ElementTree as ET
+                    from defusedxml import ElementTree as ET
                     core_xml = zf.read('docProps/core.xml').decode('utf-8')
                     root = ET.fromstring(core_xml)
                     ns = {'cp': 'http://schemas.openxmlformats.org/package/2006/metadata/core-properties',
@@ -945,7 +933,7 @@ def create_xlsx(path: str, sheets_json: str = '', title: str = '') -> str:
     p = Path(path).expanduser()
     try:
         import openpyxl
-        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
         from openpyxl.utils import get_column_letter
     except ImportError:
         return "Error: openpyxl not installed. Run: pip install openpyxl"
@@ -1132,9 +1120,8 @@ def edit_xlsx(path: str, output: str = '', operations_json: str = '') -> str:
 
     try:
         import openpyxl
-        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
         from openpyxl.chart import BarChart, LineChart, PieChart, Reference
-        from openpyxl.utils import get_column_letter
+        from openpyxl.styles import Alignment, Font, PatternFill
     except ImportError:
         return "Error: openpyxl not installed. Run: pip install openpyxl"
 
@@ -1338,7 +1325,7 @@ def edit_xlsx(path: str, output: str = '', operations_json: str = '') -> str:
                     chart_title = add_chart.get('title', 'Chart')
                     data_range = add_chart.get('data_range', '')
                     categories = add_chart.get('categories', '')
-                    values = add_chart.get('values', '')
+                    add_chart.get('values', '')
                     position = add_chart.get('position', 'E2')
 
                     if chart_type == 'bar':
@@ -1457,7 +1444,6 @@ def xlsx_info(path: str) -> str:
 
     try:
         import openpyxl
-        from openpyxl.utils import get_column_letter
     except ImportError:
         return "Error: openpyxl not installed. Run: pip install openpyxl"
 
@@ -1588,8 +1574,7 @@ def edit_docx(path: str, output: str = '', operations_json: str = '') -> str:
 
     try:
         from docx import Document
-        from docx.shared import Pt, Inches, RGBColor
-        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        from docx.shared import Pt, RGBColor
     except ImportError:
         return "Error: python-docx not installed. Run: pip install python-docx"
 
@@ -1668,7 +1653,7 @@ def edit_docx(path: str, output: str = '', operations_json: str = '') -> str:
                     doc.add_heading(stripped[3:], level=2)
                 elif stripped.startswith('# '):
                     doc.add_heading(stripped[2:], level=1)
-                elif stripped.startswith('- ') or stripped.startswith('* '):
+                elif stripped.startswith(('- ', '* ')):
                     doc.add_paragraph(stripped[2:], style='List Bullet')
                 elif re.match(r'^\d+\.\s', stripped):
                     doc.add_paragraph(stripped, style='List Number')
@@ -1726,7 +1711,7 @@ def edit_docx(path: str, output: str = '', operations_json: str = '') -> str:
             # We need to delete XML elements
             try:
                 body = doc.element.body
-                paras = list(body)
+                list(body)
                 to_remove = []
                 para_count = 0
                 for child in body:
@@ -1825,7 +1810,7 @@ def read_csv(path: str, delimiter: str = ',', max_rows: int = 200, encoding: str
         except Exception as e:
             return f"CSV read error: {e}"
 
-    return f"Error: Could not decode file with any encoding"
+    return "Error: Could not decode file with any encoding"
 
 
 def create_csv(path: str, data_json: str = '', headers_json: str = '', delimiter: str = ',', encoding: str = 'utf-8') -> str:
@@ -1886,9 +1871,9 @@ def convert_document(input_path: str, output_path: str, options: str = '') -> st
     out.parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        opts = json.loads(options) if options else {}
+        json.loads(options) if options else {}
     except Exception:
-        opts = {}
+        pass
 
     # XLSX -> CSV
     if ext_in == '.xlsx' and ext_out == '.csv':
@@ -1963,7 +1948,7 @@ def convert_document(input_path: str, output_path: str, options: str = '') -> st
                     doc.add_heading(s[3:], level=2)
                 elif s.startswith('# '):
                     doc.add_heading(s[2:], level=1)
-                elif s.startswith('- ') or s.startswith('* '):
+                elif s.startswith(('- ', '* ')):
                     doc.add_paragraph(s[2:], style='List Bullet')
                 elif re.match(r'^\d+\.\s', s):
                     doc.add_paragraph(s, style='List Number')
@@ -1986,8 +1971,8 @@ def convert_document(input_path: str, output_path: str, options: str = '') -> st
     elif ext_in == '.md' and ext_out == '.pdf':
         try:
             from reportlab.lib.pagesizes import letter
-            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            from reportlab.lib.styles import getSampleStyleSheet
+            from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
         except ImportError:
             return "Error: reportlab not installed"
         try:
@@ -2008,7 +1993,7 @@ def convert_document(input_path: str, output_path: str, options: str = '') -> st
                     story.append(Paragraph(s[3:], styles['Heading2']))
                 elif s.startswith('# '):
                     story.append(Paragraph(s[2:], styles['Heading1']))
-                elif s.startswith('- ') or s.startswith('* '):
+                elif s.startswith(('- ', '* ')):
                     story.append(Paragraph(f"  - {s[2:]}", styles['Normal']))
                 else:
                     story.append(Paragraph(s, styles['Normal']))

@@ -1,15 +1,16 @@
-# DeepSeek CLI v7.7 — Firebase Authentication Gate
+# DeepSeek CLI v7.8.0 — Firebase Authentication Gate
 # Email/password login + register (with username) + email verification +
 # forgot-password (email reset). Profiles are mirrored to Realtime Database so
 # the web dashboard can manage them. Pure stdlib (urllib) — Termux friendly.
 
-import os
-import sys
-import json
-import time
 import getpass
-import urllib.request
+import json
+import os
+import re
+import sys
+import time
 import urllib.error
+import urllib.request
 from pathlib import Path
 
 from .ui import console
@@ -22,6 +23,8 @@ FIREBASE_DB_URL = os.environ.get(
     "DEEPSEEK_FIREBASE_DB_URL",
     "https://xbibzstorage-default-rtdb.asia-southeast1.firebasedatabase.app",
 ).rstrip("/")
+if not FIREBASE_DB_URL.startswith('https://'):
+    raise RuntimeError('DEEPSEEK_FIREBASE_DB_URL must use HTTPS')
 # RTDB node where CLI user profiles live (dashboard reads/writes the same node).
 RTDB_USERS_PATH = "dscliUsers"
 
@@ -45,7 +48,7 @@ def _post_json(url: str, payload: dict, timeout: int = 15) -> dict:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310
             return json.loads(resp.read().decode())
     except urllib.error.HTTPError as e:
         body = {}
@@ -122,7 +125,7 @@ def fb_refresh(refresh_token: str) -> dict:
         headers={"Content-Type": "application/x-www-form-urlencoded"}, method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=15) as resp:  # nosec B310
             return json.loads(resp.read().decode())
     except Exception:
         return {}
@@ -132,16 +135,26 @@ def fb_refresh(refresh_token: str) -> dict:
 # Realtime Database (REST) — user profile mirror
 # ════════════════════════════════════════════════════════════════════════════
 
-def _rtdb_url(uid: str, id_token: str = "") -> str:
-    url = f"{FIREBASE_DB_URL}/{RTDB_USERS_PATH}/{uid}.json"
+def _rtdb_url(uid: str) -> str:
+    if not isinstance(uid, str) or not uid or any(char in uid for char in '/.#$[]'):
+        raise ValueError('Invalid Firebase uid')
+    return f"{FIREBASE_DB_URL}/{RTDB_USERS_PATH}/{uid}.json"
+
+
+def _rtdb_headers(id_token: str = "", *, json_body: bool = False) -> dict:
+    headers = {"Accept": "application/json"}
+    if json_body:
+        headers["Content-Type"] = "application/json"
     if id_token:
-        url += f"?auth={id_token}"
-    return url
+        # Keep bearer credentials out of URLs, proxy logs, and exception text.
+        headers["Authorization"] = f"Bearer {id_token}"
+    return headers
 
 
 def rtdb_get_user(uid: str, id_token: str = "") -> dict:
     try:
-        with urllib.request.urlopen(_rtdb_url(uid, id_token), timeout=10) as resp:
+        req = urllib.request.Request(_rtdb_url(uid), headers=_rtdb_headers(id_token), method="GET")
+        with urllib.request.urlopen(req, timeout=10) as resp:  # nosec B310
             return json.loads(resp.read().decode()) or {}
     except Exception:
         return {}
@@ -150,10 +163,10 @@ def rtdb_get_user(uid: str, id_token: str = "") -> dict:
 def rtdb_put_user(uid: str, profile: dict, id_token: str = "") -> bool:
     try:
         data = json.dumps(profile).encode()
-        req = urllib.request.Request(_rtdb_url(uid, id_token), data=data,
-                                     headers={"Content-Type": "application/json"}, method="PUT")
-        urllib.request.urlopen(req, timeout=10)
-        return True
+        req = urllib.request.Request(_rtdb_url(uid), data=data,
+                                     headers=_rtdb_headers(id_token, json_body=True), method="PUT")
+        with urllib.request.urlopen(req, timeout=10):  # nosec B310
+            return True
     except Exception:
         return False
 
@@ -161,10 +174,10 @@ def rtdb_put_user(uid: str, profile: dict, id_token: str = "") -> bool:
 def rtdb_patch_user(uid: str, fields: dict, id_token: str = "") -> bool:
     try:
         data = json.dumps(fields).encode()
-        req = urllib.request.Request(_rtdb_url(uid, id_token), data=data,
-                                     headers={"Content-Type": "application/json"}, method="PATCH")
-        urllib.request.urlopen(req, timeout=10)
-        return True
+        req = urllib.request.Request(_rtdb_url(uid), data=data,
+                                     headers=_rtdb_headers(id_token, json_body=True), method="PATCH")
+        with urllib.request.urlopen(req, timeout=10):  # nosec B310
+            return True
     except Exception:
         return False
 
@@ -175,7 +188,11 @@ def rtdb_patch_user(uid: str, fields: dict, id_token: str = "") -> bool:
 
 def _save_session(session: dict):
     try:
-        AUTH_DIR.mkdir(parents=True, exist_ok=True)
+        AUTH_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+        try:
+            os.chmod(AUTH_DIR, 0o700)
+        except OSError:
+            pass
         with open(AUTH_FILE, "w") as f:
             json.dump(session, f)
         os.chmod(AUTH_FILE, 0o600)
@@ -204,14 +221,18 @@ def logout():
 
 def _build_session(auth_resp: dict, username: str = "") -> dict:
     expires_in = int(auth_resp.get("expiresIn", "3600"))
-    return {
+    result = {
         "uid": auth_resp.get("localId") or auth_resp.get("user_id", ""),
-        "email": auth_resp.get("email", ""),
         "username": username,
         "id_token": auth_resp.get("idToken") or auth_resp.get("id_token", ""),
         "refresh_token": auth_resp.get("refreshToken") or auth_resp.get("refresh_token", ""),
         "expires_at": time.time() + expires_in - 60,  # refresh a minute early
     }
+    # Secure Token refresh responses do not contain email. Omitting the key
+    # preserves the verified email already stored in the local session.
+    if auth_resp.get("email"):
+        result["email"] = auth_resp["email"]
+    return result
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -268,8 +289,8 @@ def _do_register() -> dict:
     """Register a new account, send verification email, mirror to RTDB."""
     console.print("  [bold]Create a new account[/bold]")
     username = _prompt("Username    :")
-    while not username:
-        console.print("  [red]Username cannot be empty.[/red]")
+    while not re.fullmatch(r'[a-zA-Z0-9_@.\-]{2,32}', username or ''):
+        console.print("  [red]Username must be 2-32 characters: letters, digits, _, @, ., -[/red]")
         username = _prompt("Username    :")
     email = _prompt("Email       :")
     password = _prompt_password("Password    :")
@@ -289,17 +310,21 @@ def _do_register() -> dict:
 
     session = _build_session(resp, username)
 
-    # Mirror profile to RTDB so the dashboard can see it
-    rtdb_put_user(session["uid"], {
+    # Mirror profile to RTDB so the dashboard can see it. Do not silently
+    # continue with a partially-created identity when rules/backend reject it.
+    profile_saved = rtdb_put_user(session["uid"], {
         "uid": session["uid"],
         "username": username,
         "email": email,
         "email_verified": False,
-        "banned": False,
         "created_at": int(time.time() * 1000),
         "last_login": int(time.time() * 1000),
         "platform": sys.platform,
     }, session["id_token"])
+    if not profile_saved:
+        console.print("  [red]Account was created, but the secure profile could not be saved.[/red]")
+        console.print("  [yellow]Check Firebase Rules/backend deployment, then log in again to repair the profile.[/yellow]")
+        return {}
 
     # Send verification email
     try:
@@ -380,7 +405,7 @@ def _do_login() -> dict:
     if not prof:
         rtdb_put_user(uid, {
             "uid": uid, "username": username or email.split("@")[0], "email": email,
-            "email_verified": True, "banned": False,
+            "email_verified": True,
             "created_at": int(time.time() * 1000), "last_login": int(time.time() * 1000),
             "platform": sys.platform,
         }, session["id_token"])
@@ -433,6 +458,24 @@ def _try_restore_session() -> dict:
     return sess
 
 
+def get_valid_id_token() -> str:
+    """Return a refreshed Firebase ID token for authenticated backend calls."""
+    if os.environ.get("DEEPSEEK_SKIP_AUTH") == "1":
+        return ""
+    sess = _load_session()
+    if not sess or not sess.get("refresh_token"):
+        return ""
+    if sess.get("id_token") and float(sess.get("expires_at", 0)) > time.time() + 120:
+        return sess["id_token"]
+    refreshed = fb_refresh(sess["refresh_token"])
+    if not refreshed:
+        return ""
+    fresh = _build_session(refreshed, sess.get("username", ""))
+    sess.update(fresh)
+    _save_session(sess)
+    return sess.get("id_token", "")
+
+
 def ensure_authenticated() -> dict:
     """Gate the CLI behind Firebase auth. Returns the active session dict.
 
@@ -448,7 +491,7 @@ def ensure_authenticated() -> dict:
         # (saved as a side-effect for the welcome banner to pick up).
         # We no longer print a separate "Signed in as" line — it was redundant
         # with the welcome message and cluttered recursive invocations.
-        setattr(sys.modules[__name__], '_current_session', sess)
+        sys.modules[__name__]._current_session = sess
         return sess
 
     # 2) Interactive auth menu

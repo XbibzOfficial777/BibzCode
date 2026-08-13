@@ -22,10 +22,11 @@
 #   browser_screenshot  — Visual text-based page rendering
 #   browser_cookies     — View/manage session cookies
 
-import re
-import json
 import os
-from urllib.parse import urljoin, urlparse, parse_qs, urlencode
+import re
+from urllib.parse import urljoin, urlparse
+
+from .net_policy import safe_httpx_request
 
 # httpx is required for webcontrol — graceful error if missing
 try:
@@ -33,6 +34,21 @@ try:
     HTTPX_AVAILABLE = True
 except ImportError:
     HTTPX_AVAILABLE = False
+
+
+_SENSITIVE_FORM_MARKERS = (
+    'pass', 'pwd', 'token', 'secret', 'api_key', 'apikey', 'authorization',
+    'cookie', 'credential', 'otp', 'pin', 'csrf',
+)
+
+
+def _redact_form_data(values: dict) -> dict:
+    """Return form metadata without persisting credentials or hidden tokens."""
+    redacted = {}
+    for key, value in (values or {}).items():
+        lowered = str(key).lower()
+        redacted[key] = '[REDACTED]' if any(marker in lowered for marker in _SENSITIVE_FORM_MARKERS) else value
+    return redacted
 
 
 # ══════════════════════════════════════
@@ -70,7 +86,7 @@ class BrowserSession:
         if self._client is None or self._client.is_closed:
             self._client = httpx.Client(
                 timeout=30,
-                follow_redirects=True,
+                follow_redirects=False,
                 headers={
                     'User-Agent': self.UA_MOBILE,
                     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -80,6 +96,14 @@ class BrowserSession:
                 },
             )
         return self._client
+
+    def _request(self, method: str, url: str, *, stream: bool = False,
+                 max_response_bytes: int = 4 * 1024 * 1024, **kwargs):
+        """Request a URL while re-validating every redirect destination."""
+        return safe_httpx_request(
+            self._get_client(), method, url, stream=stream,
+            max_redirects=5, max_response_bytes=max_response_bytes, **kwargs,
+        )
 
     def _parse_html(self, html: str):
         """Parse HTML with BeautifulSoup."""
@@ -113,9 +137,8 @@ class BrowserSession:
 
     def navigate(self, url: str) -> dict:
         """Navigate to URL. Returns {url, status, title, text, links_count, forms_count}."""
-        client = self._get_client()
         try:
-            r = client.get(url)
+            r = self._request('GET', url)
         except httpx.TimeoutException:
             return {'error': 'Request timed out (30s)'}
         except httpx.ConnectError:
@@ -319,12 +342,11 @@ class BrowserSession:
         method = (login_form.get('method', 'POST')).upper()
 
         # Submit the login
-        client = self._get_client()
         try:
             if method == 'POST':
-                r = client.post(submit_url, data=form_data)
+                r = self._request('POST', submit_url, data=form_data)
             else:
-                r = client.get(submit_url, params=form_data)
+                r = self._request('GET', submit_url, params=form_data)
         except httpx.TimeoutException:
             return {'error': 'Login request timed out'}
         except Exception as e:
@@ -357,8 +379,7 @@ class BrowserSession:
             'title': title,
             'success': not has_error and r.status_code == 200,
             'has_error_indicators': has_error,
-            'form_data_sent': {k: '***' if 'pass' in k.lower() or 'pwd' in k.lower() else v
-                               for k, v in form_data.items()},
+            'form_data_sent': _redact_form_data(form_data),
             'redirected': r.url != submit_url,
             'text_preview': page_text[:1000],
         }
@@ -463,12 +484,11 @@ class BrowserSession:
             if btn_name:
                 form_data[btn_name] = extra_button.get('value', extra_button.get_text(strip=True))
 
-        client = self._get_client()
         try:
             if method == 'POST':
-                r = client.post(submit_url, data=form_data)
+                r = self._request('POST', submit_url, data=form_data)
             else:
-                r = client.get(submit_url, params=form_data)
+                r = self._request('GET', submit_url, params=form_data)
         except Exception as e:
             return {'error': f'Form submission failed: {e}'}
 
@@ -523,7 +543,7 @@ class BrowserSession:
                 'url': self._current_url,
                 'form_action': submit_url,
                 'method': method,
-                'filled_data': form_data,
+                'filled_data': _redact_form_data(form_data),
                 'message': 'Form data prepared (not submitted). Use submit=True to submit.',
             }
 
@@ -548,12 +568,11 @@ class BrowserSession:
         # Override with user-provided data
         merged_data.update(form_data)
 
-        client = self._get_client()
         try:
             if method == 'POST':
-                r = client.post(submit_url, data=merged_data)
+                r = self._request('POST', submit_url, data=merged_data)
             else:
-                r = client.get(submit_url, params=merged_data)
+                r = self._request('GET', submit_url, params=merged_data)
         except Exception as e:
             return {'error': f'Submission failed: {e}'}
 
@@ -574,7 +593,7 @@ class BrowserSession:
             'status': r.status_code,
             'title': title,
             'method': method,
-            'submitted_data': merged_data,
+            'submitted_data': _redact_form_data(merged_data),
         }
 
     def extract(self, css_selector: str) -> dict:
@@ -762,7 +781,6 @@ class BrowserSession:
 
     def download(self, url: str, save_path: str = '') -> dict:
         """Download a file from URL (uses session cookies)."""
-        client = self._get_client()
 
         if not save_path:
             parsed = urlparse(url)
@@ -771,24 +789,33 @@ class BrowserSession:
 
         save_path = os.path.expanduser(save_path)
 
+        max_bytes = max(1, int(os.environ.get('DEEPSEEK_BROWSER_MAX_DOWNLOAD_MB', '50'))) * 1024 * 1024
         try:
-            with client.stream('GET', url) as r:
+            r = self._request('GET', url, stream=True, max_response_bytes=max_bytes)
+            with r:
                 if r.status_code != 200:
                     return {'error': f'HTTP {r.status_code}'}
 
                 total = 0
                 with open(save_path, 'wb') as f:
                     for chunk in r.iter_bytes(chunk_size=8192):
-                        f.write(chunk)
                         total += len(chunk)
+                        if total > max_bytes:
+                            raise ValueError(f'download exceeded {max_bytes} byte limit')
+                        f.write(chunk)
 
                 return {
                     'saved_to': os.path.abspath(save_path),
                     'size_bytes': total,
                     'size_human': f'{total / 1024:.1f} KB' if total < 1024 * 1024 else f'{total / (1024*1024):.1f} MB',
-                    'url': url,
+                    'url': str(r.url),
                 }
         except Exception as e:
+            try:
+                if os.path.exists(save_path):
+                    os.unlink(save_path)
+            except OSError:
+                pass
             return {'error': f'Download failed: {e}'}
 
     def screenshot(self) -> dict:
@@ -825,7 +852,6 @@ class BrowserSession:
                 return
 
             text = elem.get_text(strip=False).strip()
-            tag_text = f'<{tag}>'
 
             if tag in ('h1', 'h2', 'h3', 'h4', 'h5', 'h6'):
                 clean = re.sub(r'\s+', ' ', elem.get_text(strip=True))

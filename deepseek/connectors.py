@@ -9,14 +9,15 @@
 #   - Graceful start/stop with status tracking
 #   - Whitelist: restrict to specific user IDs (optional)
 
+import json
+import mimetypes
 import os
 import re
-import sys
-import time
-import json
 import threading
-import traceback
-from datetime import datetime
+import time
+import uuid
+from pathlib import Path
+from urllib.parse import urlparse
 
 # Telegram support — uses httpx (same HTTP library used by providers.py)
 # No separate 'requests' dependency needed
@@ -29,6 +30,85 @@ except ImportError:
 
 TELEGRAM_LIB_AVAILABLE = _HTTPX_AVAILABLE
 DISCORD_LIB_AVAILABLE = _HTTPX_AVAILABLE
+
+CONNECTOR_UPLOAD_ROOT = Path.home() / '.deepseek-cli' / 'uploads'
+MAX_CONNECTOR_FILE_BYTES = max(1, int(os.environ.get('DEEPSEEK_CONNECTOR_MAX_FILE_MB', '25'))) * 1024 * 1024
+MAX_CONNECTOR_IDENTITY_BYTES = max(25, int(os.environ.get('DEEPSEEK_CONNECTOR_MAX_IDENTITY_MB', '250'))) * 1024 * 1024
+MAX_CONNECTOR_IDENTITY_FILES = max(10, int(os.environ.get('DEEPSEEK_CONNECTOR_MAX_IDENTITY_FILES', '100')))
+CONNECTOR_FILE_TTL_SECONDS = max(3600, int(os.environ.get('DEEPSEEK_CONNECTOR_FILE_TTL_HOURS', '168')) * 3600)
+
+
+def _safe_filename(filename: str, fallback: str = 'attachment.bin') -> str:
+    name = Path(str(filename or '')).name
+    name = re.sub(r'[^a-zA-Z0-9._()\- ]+', '_', name).strip(' .')
+    if not name or name in {'.', '..'}:
+        name = fallback
+    stem, suffix = os.path.splitext(name)
+    return f'{stem[:100]}{suffix[:20]}'
+
+
+def _prune_attachment_directory(directory: Path) -> None:
+    """Enforce per-identity age, count, and disk-usage retention limits."""
+    now = time.time()
+    files = []
+    try:
+        for path in directory.iterdir():
+            try:
+                if not path.is_file() or path.is_symlink():
+                    continue
+                stat = path.stat()
+                if now - stat.st_mtime > CONNECTOR_FILE_TTL_SECONDS:
+                    path.unlink(missing_ok=True)
+                    continue
+                files.append((path, stat.st_mtime, stat.st_size))
+            except OSError:
+                continue
+        files.sort(key=lambda item: item[1], reverse=True)
+        total = 0
+        for index, (path, _mtime, size) in enumerate(files):
+            total += size
+            if index >= MAX_CONNECTOR_IDENTITY_FILES or total > MAX_CONNECTOR_IDENTITY_BYTES:
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+    except OSError:
+        pass
+
+
+def _attachment_directory(platform_name: str, chat_id: str, user_id: str) -> Path:
+    directory = CONNECTOR_UPLOAD_ROOT / platform_name / _safe_filename(chat_id, 'chat') / _safe_filename(user_id, 'user')
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        current = directory
+        while True:
+            os.chmod(current, 0o700)
+            if current == CONNECTOR_UPLOAD_ROOT:
+                break
+            current = current.parent
+    except OSError:
+        pass
+    _prune_attachment_directory(directory)
+    return directory
+
+
+def _public_attachment(info: dict, local_path: Path) -> dict:
+    return {
+        'filename': _safe_filename(info.get('filename'), local_path.name),
+        'path': str(local_path),
+        'mime_type': info.get('mime_type') or mimetypes.guess_type(local_path.name)[0] or 'application/octet-stream',
+        'size': local_path.stat().st_size,
+        'caption': info.get('caption', ''),
+        'relation': info.get('relation', 'current_message'),
+    }
+
+
+def _json_context(value: dict) -> str:
+    return json.dumps(value, ensure_ascii=False, indent=2, default=str)[:12_000]
+
+
+def _redact_secret(text: str, secret: str) -> str:
+    return str(text).replace(secret, '[REDACTED]') if secret else str(text)
 
 # ── Telegram Bot API (pure httpx — no external deps needed) ──
 
@@ -80,7 +160,7 @@ class TelegramBot:
             return f'Running{uptime} | {self._message_count} msgs'
         return 'Stopped'
 
-    def _api(self, method: str, data: dict = None, files: dict = None,
+    def _api(self, method: str, data: dict | None = None, files: dict | None = None,
              timeout: int = 30) -> dict:
         """Make a Telegram Bot API call."""
         if not _HTTPX_AVAILABLE or _httpx_client is None:
@@ -102,8 +182,9 @@ class TelegramBot:
                 return {'ok': False, 'error': desc}
             return result
         except Exception as e:
-            self._last_error = str(e)
-            return {'ok': False, 'error': str(e)}
+            error = _redact_secret(str(e), self.token)
+            self._last_error = error
+            return {'ok': False, 'error': error}
 
     def validate_token(self) -> tuple:
         """Validate the bot token. Returns (True, info_str) or (False, error_str)."""
@@ -217,16 +298,22 @@ class TelegramBot:
         return text
 
     def _is_allowed(self, user_id: int) -> bool:
-        """Check if a user is allowed to interact with the bot."""
-        if self.allowed_users is None:
-            return True  # Allow all
-        return user_id in self.allowed_users
+        """Deny by default even when TelegramBot is used without the manager."""
+        if not self.allowed_users:
+            return False
+        try:
+            return int(user_id) in {int(item) for item in self.allowed_users}
+        except (TypeError, ValueError):
+            return False
 
     def start(self):
         """Start the bot in a background thread."""
         if self._running:
             return
         if not self.token:
+            return
+        if not self.allowed_users:
+            self._last_error = 'Refusing to start: configure an explicit Telegram user-ID whitelist.'
             return
 
         # Validate token first
@@ -271,108 +358,203 @@ class TelegramBot:
                 if self._running:
                     time.sleep(3)
 
+    @staticmethod
+    def _telegram_file_specs(message: dict, relation: str) -> list[dict]:
+        specs = []
+        caption = message.get('caption', '') or ''
+        document = message.get('document')
+        if document:
+            specs.append({
+                'file_id': document.get('file_id'),
+                'filename': document.get('file_name') or 'document.bin',
+                'mime_type': document.get('mime_type') or 'application/octet-stream',
+                'size': document.get('file_size', 0), 'caption': caption, 'relation': relation,
+            })
+        photos = message.get('photo') or []
+        if photos:
+            photo = photos[-1]
+            specs.append({
+                'file_id': photo.get('file_id'),
+                'filename': f"photo_{message.get('message_id', 'unknown')}.jpg",
+                'mime_type': 'image/jpeg', 'size': photo.get('file_size', 0),
+                'caption': caption, 'relation': relation,
+            })
+        media_map = {
+            'audio': ('audio.mp3', 'audio/mpeg'), 'voice': ('voice.ogg', 'audio/ogg'),
+            'video': ('video.mp4', 'video/mp4'), 'animation': ('animation.mp4', 'video/mp4'),
+            'video_note': ('video_note.mp4', 'video/mp4'),
+        }
+        for field, (fallback, mime) in media_map.items():
+            media = message.get(field)
+            if media:
+                specs.append({
+                    'file_id': media.get('file_id'),
+                    'filename': media.get('file_name') or fallback,
+                    'mime_type': media.get('mime_type') or mime,
+                    'size': media.get('file_size', 0), 'caption': caption, 'relation': relation,
+                })
+        sticker = message.get('sticker')
+        if sticker:
+            suffix = '.webm' if sticker.get('is_video') else ('.tgs' if sticker.get('is_animated') else '.webp')
+            specs.append({
+                'file_id': sticker.get('file_id'),
+                'filename': f"sticker_{message.get('message_id', 'unknown')}{suffix}",
+                'mime_type': sticker.get('mime_type') or 'application/octet-stream',
+                'size': sticker.get('file_size', 0), 'caption': caption, 'relation': relation,
+            })
+        return [spec for spec in specs if spec.get('file_id')]
+
+    @staticmethod
+    def _telegram_message_context(message: dict) -> dict:
+        sender = message.get('from', {}) or {}
+        chat = message.get('chat', {}) or {}
+        context = {
+            'message_id': message.get('message_id'),
+            'date': message.get('date'),
+            'sender': {
+                'id': sender.get('id'), 'username': sender.get('username'),
+                'first_name': sender.get('first_name'), 'last_name': sender.get('last_name'),
+                'is_bot': sender.get('is_bot', False),
+            },
+            'chat': {'id': chat.get('id'), 'type': chat.get('type'), 'title': chat.get('title')},
+            'text': message.get('text') or message.get('caption') or '',
+            'media': [
+                {key: value for key, value in spec.items() if key != 'file_id'}
+                for spec in TelegramBot._telegram_file_specs(message, 'context_only')
+            ],
+        }
+        for field in ('contact', 'location', 'venue', 'poll', 'quote', 'forward_origin', 'link_preview_options'):
+            if message.get(field) is not None:
+                context[field] = message[field]
+        return context
+
+    def _download_telegram_file(self, spec: dict, chat_id: int, user_id: int) -> tuple[dict | None, str | None]:
+        expected_size = int(spec.get('size') or 0)
+        if expected_size > MAX_CONNECTOR_FILE_BYTES:
+            return None, f"{spec.get('filename')}: file exceeds {MAX_CONNECTOR_FILE_BYTES // (1024 * 1024)} MB limit"
+        file_info = self._api('getFile', data={'file_id': spec['file_id']}, timeout=30)
+        if not file_info.get('ok'):
+            return None, f"{spec.get('filename')}: Telegram getFile failed"
+        remote_path = file_info.get('result', {}).get('file_path')
+        if not remote_path:
+            return None, f"{spec.get('filename')}: Telegram returned no file path"
+        directory = _attachment_directory('telegram', str(chat_id), str(user_id))
+        filename = _safe_filename(spec.get('filename'), Path(remote_path).name or 'attachment.bin')
+        destination = directory / f"{int(time.time())}_{uuid.uuid4().hex[:8]}_{filename}"
+        download_url = f'https://api.telegram.org/file/bot{self.token}/{remote_path}'
+        written = 0
+        try:
+            from .net_policy import safe_httpx_request
+            with _httpx_client.Client(timeout=60, follow_redirects=False) as client:
+                response = safe_httpx_request(
+                    client, 'GET', download_url, stream=True,
+                    max_redirects=5, max_response_bytes=MAX_CONNECTOR_FILE_BYTES,
+                )
+                with response:
+                    response.raise_for_status()
+                    with open(destination, 'wb') as output:
+                        for chunk in response.iter_bytes(64 * 1024):
+                            written += len(chunk)
+                            if written > MAX_CONNECTOR_FILE_BYTES:
+                                raise ValueError('download exceeded size limit')
+                            output.write(chunk)
+            os.chmod(destination, 0o600)
+            return _public_attachment(spec, destination), None
+        except Exception as exc:
+            try:
+                destination.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return None, f'{filename}: download failed ({_redact_secret(str(exc), self.token)[:120]})'
+
     def _handle_update(self, update: dict):
-        """Handle a single Telegram update."""
+        """Handle text, replies, metadata, and downloadable Telegram media."""
         message = update.get('message', {})
         if not message:
             return
-
-        # Check if it's a text message
-        text = message.get('text', '')
-        if not text:
-            # Handle non-text (photo, sticker, etc.)
-            caption = message.get('caption', '')
-            if caption:
-                text = caption
-            else:
-                return
-
-        chat = message.get('chat', {})
+        chat = message.get('chat', {}) or {}
         chat_id = chat.get('id', 0)
-        from_user = message.get('from', {})
-        user_id = from_user.get('id', 0)
-        user_name = from_user.get('first_name', 'Unknown')
-
-        # Check whitelist
+        sender = message.get('from', {}) or {}
+        user_id = sender.get('id', 0)
+        user_name = sender.get('first_name', 'Unknown')
         if not self._is_allowed(user_id):
-            self.send_message(chat_id,
-                              'Sorry, you are not authorized to use this bot.')
+            self.send_message(chat_id, 'Sorry, you are not authorized to use this bot.')
             return
-
         self.last_chat_id = chat_id
 
-        # Handle commands
+        text = (message.get('text') or message.get('caption') or '').strip()
         if text.startswith('/'):
             cmd = text.split()[0].lower()
             if cmd == '/start':
                 self.send_message(chat_id,
-                    'Hello! I\'m your DeepSeek CLI Agent.\n'
-                    'Send me any message and I\'ll respond.\n\n'
-                    'Commands:\n'
-                    '/start — Show this message\n'
-                    '/status — Bot status\n'
-                    '/clear — Clear conversation\n'
-                    '/help — Show help')
+                    "Hello! I'm your DeepSeek CLI Agent.\n"
+                    'Send text, reply to a message, or attach a supported file.\n\n'
+                    'Commands: /start /status /clear /help')
                 return
-            elif cmd == '/help':
+            if cmd == '/help':
                 self.send_message(chat_id,
                     '**DeepSeek CLI Agent**\n\n'
-                    'Send any message and I\'ll respond using AI.\n\n'
-                    'Commands:\n'
-                    '/start — Welcome message\n'
-                    '/status — Bot status\n'
-                    '/clear — Clear conversation\n'
-                    '/help — This message')
+                    'I can read the message you reply to and analyze documents, images, audio/video metadata, '
+                    'spreadsheets, presentations, PDFs, CSV, APK, and text files.\n\n'
+                    'Commands: /status /clear /help')
                 return
-            elif cmd == '/status':
-                uptime = ''
-                if self._start_time:
-                    elapsed = time.time() - self._start_time
-                    mins = int(elapsed // 60)
-                    uptime = f'{mins} minutes'
+            if cmd == '/status':
+                elapsed = time.time() - self._start_time if self._start_time else 0
                 self.send_message(chat_id,
-                    f'**Bot Status**\n'
-                    f'State: Running\n'
-                    f'Messages: {self._message_count}\n'
-                    f'Uptime: {uptime}')
+                    f'**Bot Status**\nState: Running\nMessages: {self._message_count}\n'
+                    f'Uptime: {int(elapsed // 60)} minutes')
                 return
-            elif cmd == '/clear':
-                # Trigger clear via callback if supported
+            if cmd == '/clear':
                 if self.agent_callback and hasattr(self.agent_callback, 'clear_memory'):
-                    self.agent_callback.clear_memory()
-                    self.send_message(chat_id, 'Conversation cleared.')
+                    self.agent_callback.clear_memory('telegram', str(user_id), str(chat_id))
+                    self.send_message(chat_id, 'Your isolated connector conversation was cleared.')
                 else:
                     self.send_message(chat_id, 'Clear is not supported in this mode.')
                 return
 
-        # Regular message — relay to agent
+        replied = message.get('reply_to_message') or {}
+        specs = self._telegram_file_specs(message, 'current_message')
+        specs.extend(self._telegram_file_specs(replied, 'replied_message'))
+        unique_specs = []
+        seen_ids = set()
+        for spec in specs:
+            if spec['file_id'] not in seen_ids:
+                seen_ids.add(spec['file_id'])
+                unique_specs.append(spec)
+
+        files = []
+        file_errors = []
+        for spec in unique_specs:
+            downloaded, error = self._download_telegram_file(spec, chat_id, user_id)
+            if downloaded:
+                files.append(downloaded)
+            if error:
+                file_errors.append(error)
+
+        connector_context = {
+            'platform': 'telegram',
+            'current_message': self._telegram_message_context(message),
+            'replied_message': self._telegram_message_context(replied) if replied else None,
+            'attachment_download_errors': file_errors,
+        }
+        has_structured_event = any(message.get(field) for field in ('contact', 'location', 'venue', 'poll', 'quote', 'forward_origin'))
+        if not text and not files and not replied and not has_structured_event:
+            return
+
         self._message_count += 1
-
-        if self.agent_callback:
-            try:
-                # Show "typing" action
-                self._api('sendChatAction', data={
-                    'chat_id': chat_id,
-                    'action': 'typing',
-                })
-
-                # Call agent
-                display_name = f'{user_name} (TG)'
-                response = self.agent_callback(text, source='telegram',
-                                               user=display_name)
-
-                # Send response
-                if response:
-                    self.send_message(chat_id, str(response))
-                else:
-                    self.send_message(chat_id, '(No response)')
-
-            except Exception as e:
-                self.send_message(chat_id, f'Error: {str(e)[:500]}')
-        else:
-            self.send_message(chat_id,
-                'Bot is running but no agent callback is configured.')
-
+        if not self.agent_callback:
+            self.send_message(chat_id, 'Bot is running but no agent callback is configured.')
+            return
+        try:
+            self._api('sendChatAction', data={'chat_id': chat_id, 'action': 'typing'})
+            response = self.agent_callback(
+                text, source='telegram', user=f'{user_name} (TG)',
+                user_id=str(user_id), chat_id=str(chat_id), files=files,
+                reply_context=_json_context(connector_context),
+            )
+            self.send_message(chat_id, str(response) if response else '(No response)')
+        except Exception as exc:
+            self.send_message(chat_id, f'Error: {str(exc)[:500]}')
 
 # ── Discord Bot (using webhooks / REST — no discord.py dependency) ──
 
@@ -431,8 +613,8 @@ class DiscordBot:
             'User-Agent': 'DeepSeekCLI/7.0',
         }
 
-    def _api(self, method: str, endpoint: str, data: dict = None,
-             files: dict = None, timeout: int = 30) -> dict:
+    def _api(self, method: str, endpoint: str, data: dict | None = None,
+             files: dict | None = None, timeout: int = 30) -> dict:
         """Make a Discord API call."""
         url = self.API_BASE + endpoint
         try:
@@ -579,6 +761,9 @@ class DiscordBot:
             return
         if not self.channel_id:
             return
+        if not self.allowed_users:
+            self._last_error = 'Refusing to start: configure an explicit Discord user-ID whitelist.'
+            return
 
         ok, info = self.validate_token()
         if not ok:
@@ -591,9 +776,8 @@ class DiscordBot:
         # Initialize: get the last message ID so we don't replay old messages
         init_result = self._api('GET',
             f'/channels/{self.channel_id}/messages?limit=1')
-        if isinstance(init_result, list):
-            if init_result:
-                self._last_message_id = init_result[0].get('id')
+        if isinstance(init_result, list) and init_result:
+            self._last_message_id = init_result[0].get('id')
 
         self._thread = threading.Thread(target=self._poll_loop, daemon=True)
         self._thread.start()
@@ -605,96 +789,186 @@ class DiscordBot:
             self._thread.join(timeout=5)
             self._thread = None
 
+    @staticmethod
+    def _discord_attachment_specs(message: dict, relation: str) -> list[dict]:
+        specs = []
+        for attachment in message.get('attachments') or []:
+            url = attachment.get('url') or ''
+            host = (urlparse(url).hostname or '').lower()
+            if not url.startswith('https://') or not (host.endswith('.discordapp.com') or host.endswith('.discordapp.net')):
+                continue
+            specs.append({
+                'url': url,
+                'filename': attachment.get('filename') or 'attachment.bin',
+                'mime_type': attachment.get('content_type') or 'application/octet-stream',
+                'size': attachment.get('size', 0),
+                'caption': attachment.get('description') or '',
+                'relation': relation,
+            })
+        return specs
+
+    @staticmethod
+    def _discord_message_context(message: dict) -> dict:
+        author = message.get('author', {}) or {}
+        return {
+            'message_id': message.get('id'),
+            'timestamp': message.get('timestamp'),
+            'edited_timestamp': message.get('edited_timestamp'),
+            'author': {
+                'id': author.get('id'), 'username': author.get('username'),
+                'global_name': author.get('global_name'), 'bot': author.get('bot', False),
+            },
+            'content': message.get('content', ''),
+            'attachments': [
+                {key: value for key, value in spec.items() if key != 'url'}
+                for spec in DiscordBot._discord_attachment_specs(message, 'context_only')
+            ],
+            'embeds': message.get('embeds') or [],
+            'stickers': message.get('sticker_items') or [],
+            'mentions': [
+                {'id': item.get('id'), 'username': item.get('username'), 'global_name': item.get('global_name')}
+                for item in (message.get('mentions') or [])
+            ],
+            'message_reference': message.get('message_reference'),
+            'poll': message.get('poll'),
+        }
+
+    def _download_discord_attachment(self, spec: dict, user_id: str) -> tuple[dict | None, str | None]:
+        expected_size = int(spec.get('size') or 0)
+        filename = _safe_filename(spec.get('filename'), 'attachment.bin')
+        if expected_size > MAX_CONNECTOR_FILE_BYTES:
+            return None, f'{filename}: file exceeds {MAX_CONNECTOR_FILE_BYTES // (1024 * 1024)} MB limit'
+        directory = _attachment_directory('discord', str(self.channel_id), str(user_id))
+        destination = directory / f"{int(time.time())}_{uuid.uuid4().hex[:8]}_{filename}"
+        written = 0
+        try:
+            from .net_policy import safe_httpx_request
+            with _httpx_client.Client(timeout=60, follow_redirects=False) as client:
+                response = safe_httpx_request(
+                    client, 'GET', spec['url'], stream=True,
+                    max_redirects=5, max_response_bytes=MAX_CONNECTOR_FILE_BYTES,
+                )
+                with response:
+                    response.raise_for_status()
+                    with open(destination, 'wb') as output:
+                        for chunk in response.iter_bytes(64 * 1024):
+                            written += len(chunk)
+                            if written > MAX_CONNECTOR_FILE_BYTES:
+                                raise ValueError('download exceeded size limit')
+                            output.write(chunk)
+            os.chmod(destination, 0o600)
+            return _public_attachment(spec, destination), None
+        except Exception as exc:
+            try:
+                destination.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return None, f'{filename}: download failed ({str(exc)[:120]})'
+
+    def _referenced_discord_message(self, message: dict) -> dict:
+        referenced = message.get('referenced_message')
+        if isinstance(referenced, dict):
+            return referenced
+        reference = message.get('message_reference') or {}
+        message_id = reference.get('message_id')
+        channel_id = reference.get('channel_id') or self.channel_id
+        if not message_id or str(channel_id) != str(self.channel_id):
+            return {}
+        result = self._api('GET', f'/channels/{self.channel_id}/messages/{message_id}')
+        return result if isinstance(result, dict) and result.get('id') else {}
+
     def _poll_loop(self):
-        """Background polling loop for Discord messages."""
+        """Poll Discord while preserving replies and downloading attachments."""
         while self._running:
             try:
                 if not self.channel_id:
                     time.sleep(5)
                     continue
-
-                result = self._api('GET',
-                    f'/channels/{self.channel_id}/messages?limit=10')
-
+                query = f'?after={self._last_message_id}&limit=10' if self._last_message_id else '?limit=10'
+                result = self._api('GET', f'/channels/{self.channel_id}/messages{query}')
                 if not isinstance(result, list):
                     time.sleep(3)
                     continue
-
-                # Process messages in reverse chronological order (oldest first)
-                messages = list(reversed(result))
-                seen_any_new = False
-                for msg in messages:
-                    msg_id = msg.get('id', '')
-                    author = msg.get('author', {})
-                    author_id = author.get('id', '')
-
-                    # Skip if we've already processed this message
-                    if self._last_message_id:
-                        if msg_id == self._last_message_id:
-                            break  # Hit our last seen message, stop processing
-                        # Only process messages that come AFTER our last known
-                        # Discord snowflake IDs are lexicographically ordered
-                        if msg_id < self._last_message_id:
-                            continue
-
-                    # Skip bot's own messages
-                    if author.get('bot', False):
-                        if not self._last_message_id:
-                            self._last_message_id = msg_id
-                        continue
-
-                    content = msg.get('content', '').strip()
-                    if not content:
-                        if not self._last_message_id:
-                            self._last_message_id = msg_id
-                        continue
-
-                    # Update last message ID
-                    self._last_message_id = msg_id
-                    seen_any_new = True
-
-                    # Check whitelist
-                    if not self._is_allowed(author_id):
-                        continue
-
-                    # Handle commands
-                    if content.startswith('/'):
-                        cmd = content.split()[0].lower()
-                        if cmd == '/help':
-                            self.send_message(
-                                '**DeepSeek CLI Agent**\n\n'
-                                'Send any message and I\'ll respond using AI.\n\n'
-                                'Commands:\n'
-                                '/help — This message\n'
-                                '/status — Bot status\n'
-                                '/clear — Clear conversation')
-                            continue
-
-                    # Relay to agent
-                    self._message_count += 1
-                    if self.agent_callback:
-                        try:
-                            user_name = author.get('username', 'Unknown')
-                            response = self.agent_callback(
-                                content, source='discord',
-                                user=f'{user_name} (DC)')
-
-                            if response:
-                                self.send_message(str(response))
-                        except Exception as e:
-                            self.send_message(f'Error: {str(e)[:500]}')
-
-                # If no new messages, poll rate is lower
-                if not seen_any_new:
-                    time.sleep(3)
+                if self._last_message_id:
+                    messages = [item for item in result if int(item.get('id', '0')) > int(self._last_message_id)]
                 else:
-                    time.sleep(1)
+                    messages = []
+                messages.sort(key=lambda item: int(item.get('id', '0')))
+                seen_any_new = False
+                for message in messages:
+                    message_id = message.get('id', '')
+                    author = message.get('author', {}) or {}
+                    author_id = str(author.get('id', ''))
+                    self._last_message_id = message_id
+                    seen_any_new = True
+                    if author.get('bot', False) or not self._is_allowed(author_id):
+                        continue
 
-            except Exception as e:
-                self._last_error = str(e)
+                    content = (message.get('content') or '').strip()
+                    if content.startswith('/'):
+                        command = content.split()[0].lower()
+                        if command == '/help':
+                            self.send_message(
+                                '**DeepSeek CLI Agent**\n\nSend text, reply to an existing message, '
+                                'or attach a supported file.\nCommands: /status /clear /help')
+                            continue
+                        if command == '/status':
+                            elapsed = time.time() - self._start_time if self._start_time else 0
+                            self.send_message(f'Running · {self._message_count} messages · {int(elapsed // 60)} minutes')
+                            continue
+                        if command == '/clear':
+                            if self.agent_callback and hasattr(self.agent_callback, 'clear_memory'):
+                                self.agent_callback.clear_memory('discord', author_id, str(self.channel_id))
+                                self.send_message('Your isolated connector conversation was cleared.')
+                            continue
+
+                    referenced = self._referenced_discord_message(message)
+                    specs = self._discord_attachment_specs(message, 'current_message')
+                    specs.extend(self._discord_attachment_specs(referenced, 'replied_message'))
+                    files = []
+                    file_errors = []
+                    seen_urls = set()
+                    for spec in specs:
+                        if spec['url'] in seen_urls:
+                            continue
+                        seen_urls.add(spec['url'])
+                        downloaded, error = self._download_discord_attachment(spec, author_id)
+                        if downloaded:
+                            files.append(downloaded)
+                        if error:
+                            file_errors.append(error)
+
+                    connector_context = {
+                        'platform': 'discord',
+                        'current_message': self._discord_message_context(message),
+                        'replied_message': self._discord_message_context(referenced) if referenced else None,
+                        'attachment_download_errors': file_errors,
+                    }
+                    has_event = bool(
+                        files or referenced or message.get('embeds') or message.get('sticker_items')
+                        or message.get('poll') or message.get('attachments')
+                    )
+                    if not content and not has_event:
+                        continue
+                    self._message_count += 1
+                    if not self.agent_callback:
+                        continue
+                    try:
+                        response = self.agent_callback(
+                            content, source='discord',
+                            user=f"{author.get('username', 'Unknown')} (DC)",
+                            user_id=author_id, chat_id=str(self.channel_id), files=files,
+                            reply_context=_json_context(connector_context),
+                        )
+                        if response:
+                            self.send_message(str(response))
+                    except Exception as exc:
+                        self.send_message(f'Error: {str(exc)[:500]}')
+                time.sleep(1 if seen_any_new else 3)
+            except Exception as exc:
+                self._last_error = str(exc)
                 if self._running:
                     time.sleep(3)
-
 
 # ── Connector Manager ──
 
@@ -722,7 +996,7 @@ class ConnectorManager:
         """Set the agent memory reference for /clear support."""
         self._agent_memory = memory
 
-    def configure_telegram(self, token: str, allowed_users: list = None):
+    def configure_telegram(self, token: str, allowed_users: list | None = None):
         """Configure and create Telegram bot instance."""
         if self.telegram and self.telegram.is_running:
             self.telegram.stop()
@@ -735,7 +1009,7 @@ class ConnectorManager:
         return self.telegram
 
     def configure_discord(self, token: str, channel_id: str,
-                          allowed_users: list = None):
+                          allowed_users: list | None = None):
         """Configure and create Discord bot instance."""
         if self.discord and self.discord.is_running:
             self.discord.stop()
@@ -756,6 +1030,8 @@ class ConnectorManager:
             return False, 'Telegram is already running.'
         if not TELEGRAM_LIB_AVAILABLE:
             return False, 'Install httpx: pip install httpx'
+        if not self.telegram.allowed_users:
+            return False, 'Refusing to start without an explicit Telegram user-ID whitelist.'
         self.telegram.agent_callback = self._agent_callback
         self.telegram.start()
         if self.telegram.is_running:
@@ -777,6 +1053,8 @@ class ConnectorManager:
             return False, 'Discord is already running.'
         if not DISCORD_LIB_AVAILABLE:
             return False, 'Install httpx: pip install httpx'
+        if not self.discord.allowed_users:
+            return False, 'Refusing to start without an explicit Discord user-ID whitelist.'
         self.discord.agent_callback = self._agent_callback
         self.discord.start()
         if self.discord.is_running:

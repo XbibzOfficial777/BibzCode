@@ -1,37 +1,47 @@
-# DeepSeek CLI v7.7 — Interactive REPL
+# DeepSeek CLI v7.8.0 — Interactive REPL
 # Main loop: reads user input, handles slash commands, delegates to Agent
 # Features: Ctrl+P settings panel, arrow-key select menus, command history
 
-from pathlib import Path
+import datetime
 import json
 import os
 import sys
-import traceback
 import threading
-import datetime
-import re
-from rich.console import Console
-from rich.table import Table
-from rich import box
+import traceback
+from pathlib import Path
 
-from .config import cfg, MAX_TOOL_ROUNDS, mask_key, DEFAULT_PROVIDERS
+from rich import box
+from rich.table import Table
+
+from .agent import Agent
+from .config import DEFAULT_PROVIDERS, MAX_TOOL_ROUNDS, cfg, mask_key
+from .connectors import connectors as connector_manager
 from .memory import Memory
 from .multi_agent import AGENT_PROFILES, multi_agent_manager
-from .toolkit import ToolRegistry
 from .providers import create_provider
-from .agent import Agent
-from .ui import (console, show_banner, show_welcome, show_help,
-                 show_version, with_spinner, interactive_select,
-                 prompt_input, CTRL_P_SENTINEL, CTRL_X_SENTINEL,
-                 CTRL_DOWN_SENTINEL, CTRL_LEFT_SENTINEL, CTRL_RIGHT_SENTINEL)
-from .connectors import connectors as connector_manager
+from .toolkit import ToolRegistry
+from .ui import (
+    CTRL_DOWN_SENTINEL,
+    CTRL_LEFT_SENTINEL,
+    CTRL_P_SENTINEL,
+    CTRL_RIGHT_SENTINEL,
+    CTRL_X_SENTINEL,
+    console,
+    interactive_select,
+    prompt_input,
+    show_banner,
+    show_help,
+    show_welcome,
+    with_spinner,
+)
+from .version import __version__
 
 
 def _flush_stdin_safe():
     """Flush any pending bytes from stdin to prevent leftover data after interactive_select."""
     try:
-        import select as _sel
         import os as _os
+        import select as _sel
         fd = sys.stdin.fileno()
         while True:
             ready, _, _ = _sel.select([fd], [], [], 0.0)
@@ -48,6 +58,7 @@ _reminders = []
 def _reminder_worker(seconds, message):
     """Daemon thread worker — sleeps N seconds then prints reminder."""
     import time
+
     from rich.markup import escape
     time.sleep(seconds)
     msg = message if message else "Time's up!"
@@ -57,34 +68,12 @@ def _reminder_worker(seconds, message):
     _reminders[:] = [r for r in _reminders if r['seconds'] != seconds or r['message'] != message]
 
 
-VERSION = '7.7'
-VERSION_BANNER = 'DeepSeek CLI Agent v7.7'
+VERSION = __version__
+VERSION_BANNER = f'DeepSeek CLI Agent v{__version__}'
 VERSION_FEATURES = 'Multi-Provider | 7 AI Services | 80+ Tools | Real-Time Stream | Rich Markdown | Web Browser | Smart Loop | OCR | Telegram & Discord | Auth Automation'
 
 
-def _sync_active_profile_prompt(memory):
-    """Ensure only the currently active multi-agent profile prompt is attached once."""
-    from .multi_agent import AGENT_PROFILES, multi_agent_manager
-
-    prompt = memory.system_prompt or ''
-    for info in AGENT_PROFILES.values():
-        extra = (info.get('system_prompt_extra', '') or '').strip()
-        if extra:
-            prompt = prompt.replace('\n' + extra, '\n')
-            prompt = prompt.replace(extra + '\n', '\n')
-            prompt = prompt.replace(extra, '')
-
-    prompt = re.sub(r'\n{3,}', '\n\n', prompt).strip()
-    active_extra = (multi_agent_manager.get_system_extra() or '').strip()
-    if active_extra:
-        prompt = (prompt + '\n' + active_extra).strip()
-
-    memory.system_prompt = prompt
-    if memory.messages and memory.messages[0]['role'] == 'system':
-        memory.messages[0]['content'] = memory.system_prompt
-
-
-def main(session_id: str = None, memory=None, user=None):
+def main(session_id: str | None = None, memory=None, user=None):
     """Main entry point — start the REPL."""
     show_banner()
 
@@ -114,8 +103,7 @@ def main(session_id: str = None, memory=None, user=None):
     provider = create_provider(provider_id, provider_config, api_key)
 
     # Initialize multi-agent profile
-    from .multi_agent import multi_agent_manager
-    _sync_active_profile_prompt(memory)
+    _apply_agent_profile(memory, multi_agent_manager.active_profile)
 
     agent = Agent(memory, tools, provider, model, thinking_visible=True)
 
@@ -126,7 +114,7 @@ def main(session_id: str = None, memory=None, user=None):
     show_welcome(provider.name, model, bool(api_key))
 
     if not api_key:
-        console.print(f'  [yellow]No API key set. Use [bold]/key[/bold] or [bold]Ctrl+P[/bold] to set one.[/yellow]')
+        console.print('  [yellow]No API key set. Use [bold]/key[/bold] or [bold]Ctrl+P[/bold] to set one.[/yellow]')
         console.print(f'  [dim]Get a key: {provider_config.get("get_key_url", "")}[/dim]')
         console.print()
 
@@ -199,28 +187,29 @@ def main(session_id: str = None, memory=None, user=None):
             if depth == 0:
                 depth = 1
                 console.print(f'  [dim]Session: [cyan]{session_id}[/cyan] | [cyan]{memory.count()}[/cyan] messages[/dim]')
-                console.print(f'  [dim]Ctrl+X or [bold]Up[/bold] to go back[/dim]')
-                console.print(f'  [dim][bold]Down[/bold] to view sub-agent history (Left/Right to switch)[/dim]')
+                console.print('  [dim]Ctrl+X or [bold]Up[/bold] to go back[/dim]')
+                console.print('  [dim][bold]Down[/bold] to view sub-agent history (Left/Right to switch)[/dim]')
             else:
                 depth = 0
-                console.print(f'  [dim]Back to main.[/dim]')
+                console.print('  [dim]Back to main.[/dim]')
             continue
 
         if user_input in (CTRL_DOWN_SENTINEL, CTRL_LEFT_SENTINEL, CTRL_RIGHT_SENTINEL):
-            from .multi_agent import multi_agent_manager
             history = multi_agent_manager.history
             running = multi_agent_manager.running_tasks
             all_items = list(history)
             if running:
-                for pid, info in running.items():
+                for task_id, info in running.items():
                     if info['status'] in ('running', 'done'):
+                        profile_id = info.get('profile', getattr(info['worker'], 'profile_id', 'unknown'))
                         already = any(
-                            h.get('profile') == pid and h.get('task') == getattr(info['worker'], 'task', '')
+                            h.get('task_id') == task_id
                             for h in history
                         )
                         if not already:
                             all_items.append({
-                                'profile': pid,
+                                'task_id': task_id,
+                                'profile': profile_id,
                                 'task': getattr(info['worker'], 'task', ''),
                                 'worker': info['worker'],
                                 '_running': info,
@@ -258,7 +247,7 @@ def main(session_id: str = None, memory=None, user=None):
                     if output:
                         console.print(f"\n[dim]Result:[/dim]\n{output}")
                 else:
-                    console.print(f"  [bold red]Status:[/bold red] [red]x Error[/red]")
+                    console.print("  [bold red]Status:[/bold red] [red]x Error[/red]")
                     if output:
                         console.print(f"\n[red]{output}[/red]")
             elif worker:
@@ -269,7 +258,7 @@ def main(session_id: str = None, memory=None, user=None):
                 else:
                     console.print("\n[dim]Status:[/dim] Still running...")
 
-            console.print(f"  [dim cyan]-----------------------------------------------[/dim cyan]\n")
+            console.print("  [dim cyan]-----------------------------------------------[/dim cyan]\n")
             continue
 
         if not user_input:
@@ -314,32 +303,30 @@ def main(session_id: str = None, memory=None, user=None):
                 pass
             console.print()
             # ── Check for background delegating tasks ──
-            from .multi_agent import multi_agent_manager
             if multi_agent_manager.running_tasks:
                 console.print('  [bold cyan]═══ Background Delegating ═══[/bold cyan]')
-                for pid, info in list(multi_agent_manager.running_tasks.items())[:3]:
+                for task_id, info in list(multi_agent_manager.running_tasks.items())[:3]:
                     status_color = {'running': 'yellow', 'done': 'green', 'error': 'red'}.get(info['status'], 'dim')
-                    console.print(f'  [{status_color}]{pid}: {info["status"]}[/{status_color}]')
+                    label = f"{info.get('profile', 'agent')} ({task_id})"
+                    console.print(f'  [{status_color}]{label}: {info["status"]}[/{status_color}]')
                 console.print()
                 console.print('  [0] [bold]View Delegating[/bold]    [1] [bold]Back To Main[/bold]')
                 console.print('  [dim](Delegating Running In Background)[/dim]')
                 choice = console.input('[bold]you > [/bold]').strip()
                 if choice == '0':
                     depth = 1
-                    from .multi_agent import multi_agent_manager
                     history = multi_agent_manager.history
                     running = multi_agent_manager.running_tasks
                     all_items = list(history)
                     if running:
-                        for pid, info in running.items():
+                        for task_id, info in running.items():
                             if info['status'] in ('running', 'done'):
-                                already = any(
-                                    h.get('profile') == pid and h.get('task') == getattr(info['worker'], 'task', '')
-                                    for h in history
-                                )
+                                profile_id = info.get('profile', getattr(info['worker'], 'profile_id', 'unknown'))
+                                already = any(h.get('task_id') == task_id for h in history)
                                 if not already:
                                     all_items.append({
-                                        'profile': pid,
+                                        'task_id': task_id,
+                                        'profile': profile_id,
                                         'task': getattr(info['worker'], 'task', ''),
                                         'worker': info['worker'],
                                         '_running': info,
@@ -383,10 +370,31 @@ def main(session_id: str = None, memory=None, user=None):
                 console.print(f'  [dim]{tb[:300]}[/dim]')
             console.print()
 
-    # Cleanup connectors on exit
+    # Persist slash-command-only changes as well, then clean up connectors.
+    try:
+        from .memory import save_session
+        save_session(session_id, memory)
+    except Exception as exc:
+        console.print(f'  [yellow]Session save warning: {exc}[/yellow]')
     connector_manager.stop_all()
     console.print(f'  [dim]Session [cyan]{session_id}[/cyan] saved.[/dim]')
 
+
+
+def _apply_agent_profile(memory: Memory, profile_id: str) -> None:
+    """Replace, rather than append, the profile-specific prompt fragment."""
+    custom = memory._custom_addition or ''
+    for profile in AGENT_PROFILES.values():
+        fragment = (profile.get('system_prompt_extra') or '').strip()
+        if fragment:
+            custom = custom.replace(fragment, '')
+    fragment = (AGENT_PROFILES.get(profile_id, {}).get('system_prompt_extra') or '').strip()
+    custom = custom.strip()
+    if fragment:
+        custom = f'{custom}\n\n{fragment}'.strip()
+    memory._custom_addition = custom
+    if memory.messages and memory.messages[0].get('role') == 'system':
+        memory.messages[0]['content'] = memory.system_prompt
 
 
 def handle_command(cmd: str, agent: Agent, memory: Memory, tools: ToolRegistry) -> str:
@@ -432,12 +440,12 @@ def handle_command(cmd: str, agent: Agent, memory: Memory, tools: ToolRegistry) 
     # ── /system ───────────────────────
     elif command == '/system':
         if not args:
-            console.print(f'  [dim]Current system prompt:[/dim]')
+            console.print('  [dim]Current system prompt:[/dim]')
             console.print(f'  {memory.system_prompt[:200]}')
-            console.print(f'  [dim]Usage: /system <new prompt>[/dim]')
+            console.print('  [dim]Usage: /system <new prompt>[/dim]')
         else:
             memory.add_system(args)
-            console.print(f'  [green]System prompt updated.[/green]')
+            console.print('  [green]System prompt updated.[/green]')
             console.print()
 
     # ── /provider (with optional args) ─
@@ -509,8 +517,15 @@ def handle_command(cmd: str, agent: Agent, memory: Memory, tools: ToolRegistry) 
 
     # ── /compact ──────────────────────
     elif command == '/compact':
-        compact_memory(memory)
-        console.print(f'  [green]Conversation compacted (system + last 10).[/green]')
+        result = agent.compact_memory(force=True, execution_source='cli')
+        if result.get('compacted'):
+            console.print(
+                f"  [green]Conversation compacted.[/green] "
+                f"[dim]{result['archived_messages']} messages archived losslessly; "
+                f"{result['active_messages']} remain active.[/dim]"
+            )
+        else:
+            console.print('  [dim yellow]Not enough history to compact yet.[/dim yellow]')
         console.print()
 
     # ── /remind ──────────────────────────
@@ -580,13 +595,13 @@ def handle_command(cmd: str, agent: Agent, memory: Memory, tools: ToolRegistry) 
         if args:
             arg = args.strip().lower()
             if arg == 'list':
-                console.print(f'  [bold cyan]Agent Profiles[/bold cyan]')
+                console.print('  [bold cyan]Agent Profiles[/bold cyan]')
                 for pid, info in AGENT_PROFILES.items():
                     active = ' [green](active)[/green]' if pid == multi_agent_manager.active_profile else ''
                     console.print(f'  {info["emoji"]} [bold]{pid}[/bold] — {info["description"]}{active}')
             elif arg in AGENT_PROFILES:
                 multi_agent_manager.set_profile(arg)
-                _sync_active_profile_prompt(memory)
+                _apply_agent_profile(memory, arg)
                 console.print(f'  [green]Switched to {AGENT_PROFILES[arg]["emoji"]} {AGENT_PROFILES[arg]["name"]} agent.[/green]')
             else:
                 console.print(f'  [yellow]Unknown profile: {arg}. Use /agent list[/yellow]')
@@ -603,13 +618,13 @@ def handle_command(cmd: str, agent: Agent, memory: Memory, tools: ToolRegistry) 
             if idx >= 0:
                 selected = names[idx]
                 multi_agent_manager.set_profile(selected)
-                _sync_active_profile_prompt(memory)
+                _apply_agent_profile(memory, selected)
                 console.print(f'  [green]Switched to {AGENT_PROFILES[selected]["emoji"]} {AGENT_PROFILES[selected]["name"]} agent.[/green]')
         console.print()
 
     # ── /session ─────────────────────────
     elif command in ('/session', '/sessions'):
-        from .memory import list_sessions, delete_session, SESSIONS_DIR
+        from .memory import SESSIONS_DIR, delete_session, list_sessions
         sessions = list_sessions()
         if not sessions:
             console.print('  [yellow]No saved sessions.[/yellow]')
@@ -629,62 +644,47 @@ def handle_command(cmd: str, agent: Agent, memory: Memory, tools: ToolRegistry) 
         console.print()
         for s in sessions:
             c = (s.get('created_at', '') or '?')[:19]
-            u = (s.get('updated_at', '') or '?')[:19]
+            (s.get('updated_at', '') or '?')[:19]
             n = s.get('message_count', 0)
             sid = s['session_id']
             name = s.get('session_name', '') or sid
             console.print(f'  [bold]{name}[/bold]')
             console.print(f'    [dim]ID: {sid}  |  {n} msgs  |  {c}[/dim]')
         console.print()
-        console.print(f'  [dim]Resume: dscli -s <session_id>[/dim]')
-        console.print(f'  [dim]Delete: /session delete <session_id>[/dim]')
+        console.print('  [dim]Resume: dscli -s <session_id>[/dim]')
+        console.print('  [dim]Delete: /session delete <session_id>[/dim]')
         console.print()
 
     # ── /rename ───────────────────────
     elif command == '/rename':
-        from .memory import _session_path
+        import re
         from rich.markup import escape
-        import json
+        from .memory import load_session, save_session
+
         if not args:
             console.print('  [yellow]Usage: /rename <new_name> or /rename <session_id> <new_name>[/yellow]')
             console.print()
             return ''
-
-        current_sid = getattr(memory, '_current_session_id', None)
-        rparts = args.split(maxsplit=1)
-        candidate_sid = rparts[0] if rparts else ''
-        candidate_path = _session_path(candidate_sid) if candidate_sid else ''
-
-        if len(rparts) == 1:
-            sid = current_sid
-            new_name = args.strip()
-        elif candidate_sid and os.path.exists(candidate_path):
-            sid = candidate_sid
-            new_name = rparts[1].strip()
+        first, separator, remainder = args.partition(' ')
+        if separator and re.fullmatch(r'dscli-[0-9a-f]{12}', first):
+            sid, new_name = first, remainder.strip()
+            target_memory = load_session(sid)
         else:
-            sid = current_sid
+            sid = getattr(memory, '_current_session_id', None)
             new_name = args.strip()
-
-        if not sid:
-            console.print('  [red]No current session.[/red]')
+            target_memory = memory
+        if not sid or target_memory is None:
+            console.print(f'  [red]Session {sid or "(current)"} not found.[/red]')
             console.print()
             return ''
+        new_name = new_name[:120].strip()
         if not new_name:
-            console.print('  [red]New session name cannot be empty.[/red]')
-            console.print()
+            console.print('  [red]Session name cannot be empty.[/red]')
             return ''
-
-        path = _session_path(sid)
-        if not os.path.exists(path):
-            console.print(f'  [red]Session {sid} not found.[/red]')
-            console.print()
-            return ''
-        with open(path) as f:
-            data = json.load(f)
-        data['session_name'] = new_name
-        with open(path, 'w') as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-        if sid == current_sid:
+        target_memory.session_name = new_name
+        target_memory._session_named = True
+        save_session(sid, target_memory)
+        if sid == getattr(memory, '_current_session_id', None):
             memory.session_name = new_name
             memory._session_named = True
         console.print(f'  [green]Session renamed to:[/green] [bold yellow]{escape(new_name)}[/bold yellow]')
@@ -692,7 +692,7 @@ def handle_command(cmd: str, agent: Agent, memory: Memory, tools: ToolRegistry) 
 
     else:
         console.print(f'  [yellow]Unknown command: {command}[/yellow]')
-        console.print(f'  [dim]Type /help for available commands.[/dim]')
+        console.print('  [dim]Type /help for available commands.[/dim]')
         console.print()
 
     return ''
@@ -818,7 +818,7 @@ def _toggle_live_search(agent):
 
 def _list_sessions_cli(agent, memory, current_session_id):
     """List saved sessions with IDs from settings panel."""
-    from .memory import list_sessions, delete_session, SESSIONS_DIR
+    from .memory import SESSIONS_DIR, list_sessions
     sessions = list_sessions()
     if not sessions:
         console.print('  [yellow]No saved sessions.[/yellow]')
@@ -828,7 +828,7 @@ def _list_sessions_cli(agent, memory, current_session_id):
     console.print()
     for s in sessions:
         c = (s.get('created_at', '') or '?')[:19]
-        u = (s.get('updated_at', '') or '?')[:19]
+        (s.get('updated_at', '') or '?')[:19]
         n = s.get('message_count', 0)
         sid = s['session_id']
         name = s.get('session_name', '') or sid
@@ -836,13 +836,13 @@ def _list_sessions_cli(agent, memory, current_session_id):
         console.print(f'  [bold]{name}{marker}[/bold]')
         console.print(f'    [dim]ID: {sid}  |  {n} msgs  |  {c}[/dim]')
     console.print()
-    console.print(f'  [dim]Resume: dscli -s <session_id>[/dim]')
+    console.print('  [dim]Resume: dscli -s <session_id>[/dim]')
     console.print()
 
 
 def _settings_switch_profile(agent, memory):
     """Switch agent profile interactively."""
-    from .multi_agent import AGENT_PROFILES, get_profile_names, multi_agent_manager
+    from .multi_agent import AGENT_PROFILES, get_profile_names
     names = get_profile_names()
     active_idx = names.index(multi_agent_manager.active_profile) if multi_agent_manager.active_profile in names else 0
     items = []
@@ -854,7 +854,11 @@ def _settings_switch_profile(agent, memory):
     if idx >= 0:
         selected = names[idx]
         multi_agent_manager.set_profile(selected)
-        _sync_active_profile_prompt(memory)
+        extra = multi_agent_manager.get_system_extra()
+        if extra:
+            memory.system_prompt += '\n' + extra
+            if memory.messages and memory.messages[0]['role'] == 'system':
+                memory.messages[0]['content'] = memory.system_prompt
         console.print(f'  [green]Switched to {AGENT_PROFILES[selected]["emoji"]} {AGENT_PROFILES[selected]["name"]} agent.[/green]')
     else:
         console.print('  [dim]Cancelled.[/dim]')
@@ -1048,7 +1052,7 @@ def _settings_discord_menu():
 
 def _settings_edit_system(memory):
     """Edit system prompt from settings panel."""
-    console.print(f'  [dim]Current system prompt:[/dim]')
+    console.print('  [dim]Current system prompt:[/dim]')
     current = memory.system_prompt
     if len(current) > 300:
         console.print(f'  {current[:300]}...')
@@ -1064,7 +1068,7 @@ def _settings_edit_system(memory):
 
     if new_prompt:
         memory.add_system(new_prompt)
-        console.print(f'  [green]System prompt updated.[/green]')
+        console.print('  [green]System prompt updated.[/green]')
 
 
 # ══════════════════════════════════════
@@ -1215,7 +1219,7 @@ def _do_switch_provider(agent: Agent, provider_id: str):
 
     console.print(f'  [green]Switched to {provider.name}[/green]')
     if not api_key:
-        console.print(f'  [yellow]No API key. Use /key to set one.[/yellow]')
+        console.print('  [yellow]No API key. Use /key to set one.[/yellow]')
         console.print(f'  [dim]Get key: {pconfig.get("get_key_url", "")}[/dim]')
     console.print(f'  [dim]Model: {model}[/dim]')
     console.print()
@@ -1269,7 +1273,7 @@ def _do_switch_model(agent: Agent, model_input: str):
         if 0 <= idx < len(popular):
             model_input = popular[idx]
         else:
-            console.print(f'  [red]Invalid model number.[/red]')
+            console.print('  [red]Invalid model number.[/red]')
             return
     except ValueError:
         pass
@@ -1327,7 +1331,7 @@ def list_models(agent: Agent):
         models = agent.provider.fetch_models()
 
     if not models:
-        console.print(f'  [yellow]No models found or unable to fetch.[/yellow]')
+        console.print('  [yellow]No models found or unable to fetch.[/yellow]')
         pid = cfg.active_provider
         pconfig = cfg.get_provider_config(pid)
         popular = pconfig.get('popular_models', [])
@@ -1348,39 +1352,35 @@ def list_models(agent: Agent):
     console.print()
 
 
-def _estimate_tokens(text: str) -> int:
-    """Rough token estimate: 4 chars per token on average."""
-    return max(1, len(text) // 4)
-
 def show_context_usage(agent: Agent, memory: Memory):
-    """Show token/context usage."""
+    """Show active context plus losslessly archived conversation memory."""
     messages = memory.get_messages()
-    total_chars = 0
     role_counts = {}
-    for m in messages:
-        role = m.get('role', 'unknown')
+    for message in messages:
+        role = message.get('role', 'unknown')
         role_counts[role] = role_counts.get(role, 0) + 1
-        content = m.get('content', '') or ''
-        if isinstance(content, list):
-            for part in content:
-                if isinstance(part, dict):
-                    total_chars += len(str(part.get('text', '')))
-        else:
-            total_chars += len(str(content))
-    estimated_tokens = _estimate_tokens(str(messages))
-    context_size = _estimate_tokens(str(messages))
+    active_tokens = memory.estimate_active_tokens()
+    tool_schema = agent.tools.get_openai_tools() if agent.provider.supports_tools else []
+    tool_tokens = int(len(json.dumps(tool_schema, ensure_ascii=False)) / 3.2)
+    estimated_tokens = active_tokens + tool_tokens
+    context_limit = agent._context_window_limit()
 
     table = Table(box=box.ROUNDED, show_header=False,
                   border_style='cyan', title_style='bold cyan',
-                  title='Context Usage')
-    table.add_column('Metric', style='bold cyan', min_width=20)
+                  title='Context & Long-Term Memory')
+    table.add_column('Metric', style='bold cyan', min_width=22)
     table.add_column('Value', style='white')
 
-    table.add_row('Messages', str(len(messages)))
+    table.add_row('Active Messages', str(memory.count()))
+    table.add_row('Archived Messages', str(len(memory.archived_messages)))
+    table.add_row('Full History', str(memory.full_count()))
+    table.add_row('Compactions', str(memory.compaction_count))
+    table.add_row('Summary', 'active' if memory.conversation_summary else 'not created')
     for role, count in sorted(role_counts.items()):
-        table.add_row(f'  ├─ {role}', str(count))
-    table.add_row('Est. Prompt Tokens', f'~{estimated_tokens:,}')
-    table.add_row('Est. Context Tokens', f'~{context_size:,}')
+        table.add_row(f'  ├─ active {role}', str(count))
+    table.add_row('Est. Active Tokens', f'~{active_tokens:,}')
+    table.add_row('Tool Schema Tokens', f'~{tool_tokens:,}')
+    table.add_row('Est. Request Context', f'~{estimated_tokens:,} / {context_limit:,}')
     table.add_row('Model', cfg.get_provider_model(cfg.active_provider))
 
     console.print(table)
@@ -1389,7 +1389,7 @@ def show_context_usage(agent: Agent, memory: Memory):
 def show_info(agent: Agent, memory: Memory):
     """Show current configuration info."""
     pid = cfg.active_provider
-    pconfig = cfg.get_provider_config(pid)
+    cfg.get_provider_config(pid)
     api_key = cfg.get_api_key(pid)
     model = cfg.get_provider_model(pid)
 
@@ -1411,7 +1411,9 @@ def show_info(agent: Agent, memory: Memory):
     table.add_row('Thinking', 'visible' if agent.thinking_visible else 'hidden')
     rounds_str = 'unlimited' if MAX_TOOL_ROUNDS <= 0 else str(MAX_TOOL_ROUNDS)
     table.add_row('Max Rounds', rounds_str)
-    table.add_row('Messages', str(memory.count()))
+    table.add_row('Active Messages', str(memory.count()))
+    table.add_row('Archived Messages', str(len(memory.archived_messages)))
+    table.add_row('Auto Compact', 'enabled' if cfg.config.get('auto_compact', True) else 'disabled')
     table.add_row('Tools', str(len(agent.tools.get_tool_list())))
 
     # Fetch and add client usage status securely
@@ -1441,15 +1443,6 @@ def toggle_thinking(agent: Agent):
     console.print()
 
 
-def compact_memory(memory: Memory):
-    """Compact conversation to system + last 10 messages."""
-    messages = memory.get_messages()
-    system = [m for m in messages if m['role'] == 'system']
-    non_system = [m for m in messages if m['role'] != 'system']
-    keep = non_system[-10:] if len(non_system) > 10 else non_system
-    memory.messages = system + keep
-
-
 def do_live_search(query: str):
     """Execute a live web search and display results directly."""
     console.print()
@@ -1462,11 +1455,11 @@ def do_live_search(query: str):
     for line in result.split('\n'):
         if line.startswith(('1.', '2.', '3.', '4.', '5.', '6.', '7.', '8.', '9.')):
             console.print(f'  [bold cyan]{line[:3]}[/bold cyan]{line[3:]}')
-        elif line.startswith('   http') or line.startswith('   [Source'):
+        elif line.startswith(('   http', '   [Source')):
             console.print(f'  [dim]{line.strip()}[/dim]')
         elif line.startswith('   '):
             console.print(f'  [white]{line.strip()}[/white]')
-        elif line.startswith('Live Search') or line.startswith('='):
+        elif line.startswith(('Live Search', '=')):
             console.print(f'  [bold yellow]{line.strip()}[/bold yellow]')
         elif line.startswith('  ['):
             console.print(f'  [dim red]{line.strip()}[/dim red]')
@@ -1477,8 +1470,6 @@ def do_live_search(query: str):
 
 def do_init_project(agent, memory):
     """Scan current project directory and create AGENTS.md."""
-    import subprocess
-    import glob as glob_mod
     from pathlib import Path
     cwd = Path.cwd()
     console.print(f'  [bold cyan]🔍 Scanning project:[/bold cyan] {cwd}')
@@ -1586,7 +1577,7 @@ def do_init_project(agent, memory):
     lines.append(f'# {info["project_name"]}')
     lines.append('')
     if info['language']:
-        lines.append(f'## Language & Framework')
+        lines.append('## Language & Framework')
         lines.append(f'- Language: {info["language"]}')
         if info['framework']:
             lines.append(f'- Framework: {info["framework"]}')
@@ -1657,7 +1648,7 @@ def do_install_skill(args: str):
                     console.print(f'    [dim]{line}[/dim]')
             console.print('  [dim]Restart the session to load new skill.[/dim]')
         else:
-            console.print(f'  [red]✗ Failed:[/red]')
+            console.print('  [red]✗ Failed:[/red]')
             for line in result.stderr.strip().split('\n'):
                 console.print(f'    [dim]{line}[/dim]')
             # Fallback: npx install
@@ -1665,20 +1656,19 @@ def do_install_skill(args: str):
             r2 = subprocess.run(['npm', 'install', '-g', package],
                                 capture_output=True, text=True, timeout=120)
             if r2.returncode == 0:
-                console.print(f'  [green]✓ Installed globally.[/green]')
+                console.print('  [green]✓ Installed globally.[/green]')
             else:
                 console.print(f'  [red]✗ {r2.stderr.strip()}[/red]')
     except FileNotFoundError:
         console.print(f'  [yellow]npx not found. Try: npm install -g {package}[/yellow]')
     except subprocess.TimeoutExpired:
-        console.print(f'  [red]✗ Timed out (120s).[/red]')
+        console.print('  [red]✗ Timed out (120s).[/red]')
     console.print()
 
 
 def manage_skills():
     """List and manage installed skills."""
     from pathlib import Path
-    import shutil
     skills_dir = Path(os.path.expanduser('~/.agents/skills'))
     lock_file = Path(os.path.expanduser('~/.agents/.skill-lock.json'))
 
@@ -1706,7 +1696,7 @@ def manage_skills():
     items = []
     for name in skill_names:
         meta = lock_data.get(name, {})
-        source = meta.get('source', 'local')
+        meta.get('source', 'local')
         desc = ''
         skill_md = skills_dir / name / 'SKILL.md'
         if skill_md.exists():
@@ -1747,7 +1737,7 @@ def _confirm_delete_skill(skill_name: str, skills_dir):
     from .ui import confirm_action
     ans = confirm_action(skill_name, {'skill': skill_name}, verb='delete')
     if ans == 'reject':
-        console.print(f'  [dim]Canceled.[/dim]')
+        console.print('  [dim]Canceled.[/dim]')
         return
     import shutil
     skill_path = skills_dir / skill_name
@@ -1839,7 +1829,7 @@ def do_search_model(agent: Agent, query: str):
         models = agent.provider.fetch_models()
 
     if not models:
-        console.print(f'  [yellow]Unable to fetch models. Showing config matches:[/yellow]')
+        console.print('  [yellow]Unable to fetch models. Showing config matches:[/yellow]')
         popular = pconfig.get('popular_models', [])
         filtered = [m for m in popular if query.lower() in m.lower()]
         if filtered:
@@ -1948,36 +1938,55 @@ def _do_live_model_select(agent: Agent):
 # ══════════════════════════════════════
 
 def _init_connectors(agent, memory):
-    """Initialize connector manager with agent callback."""
-    def agent_callback(message, source='cli', user='User'):
-        """Bridge: connector message -> agent.chat()"""
+    """Initialize isolated, capability-limited connector sessions.
+
+    Each remote identity gets its own Memory/Agent. Calls are serialized because
+    Rich terminal rendering and provider clients are not designed for concurrent
+    writes to the same TTY.
+    """
+    remote_agents = {}
+    remote_lock = threading.RLock()
+
+    def _remote_agent(source: str, user_id: str):
+        key = (source, user_id)
+        remote = remote_agents.get(key)
+        if remote is None:
+            remote_memory = Memory()
+            remote_tools = ToolRegistry(memory=remote_memory)
+            remote = Agent(remote_memory, remote_tools, agent.provider,
+                           agent.model, thinking_visible=False)
+            remote_agents[key] = remote
+        # Follow provider/model changes made in the local settings panel.
+        remote.set_provider(agent.provider)
+        remote.set_model(agent.model)
+        return remote
+
+    def agent_callback(message, source='remote', user='User', user_id='', chat_id='',
+                       files=None, reply_context=''):
         try:
-            result = agent.chat(message)
-            text = result.get('content', '(No response)')
-
-            # Auto-send created files back through the connector
-            if source == 'telegram' and agent.created_files:
-                tg = connector_manager.telegram
-                if tg and hasattr(tg, 'last_chat_id'):
-                    for fpath in agent.created_files:
-                        try:
-                            tg.send_document(tg.last_chat_id, fpath,
-                                             caption=f'Created: {os.path.basename(fpath)}')
-                        except Exception:
-                            pass
-            elif source == 'discord' and agent.created_files:
-                dc = connector_manager.discord
-                if dc:
-                    for fpath in agent.created_files:
-                        try:
-                            dc.send_document(fpath, caption=f'Created: {os.path.basename(fpath)}')
-                        except Exception:
-                            pass
-
-            return text
+            identity = f'{chat_id}:{user_id or user}'
+            with remote_lock:
+                remote = _remote_agent(source, identity)
+                if files or reply_context:
+                    result = remote.chat_with_files(
+                        message, files or [], execution_source=source,
+                        reply_context=reply_context,
+                    )
+                else:
+                    result = remote.chat(message, execution_source=source)
+            return result.get('content', '(No response)')
         except Exception as e:
             return f'Agent error: {e}'
 
+    def clear_remote_memory(source=None, user_id=None, chat_id=None):
+        with remote_lock:
+            if source is not None and user_id is not None:
+                identity = f'{chat_id or ""}:{user_id}'
+                remote_agents.pop((source, identity), None)
+            else:
+                remote_agents.clear()
+
+    agent_callback.clear_memory = clear_remote_memory
     connector_manager.set_agent_callback(agent_callback)
     connector_manager.set_agent_memory(memory)
 
@@ -2077,7 +2086,7 @@ def _do_telegram(action: str):
         else:
             console.print(f'  [yellow]{msg}[/yellow]')
             if 'not configured' in msg:
-                console.print(f'  [dim]Use /telegram setup to configure.[/dim]')
+                console.print('  [dim]Use /telegram setup to configure.[/dim]')
         console.print()
 
     elif action == 'stop':
@@ -2086,8 +2095,8 @@ def _do_telegram(action: str):
         console.print()
 
     elif action == 'setup':
-        console.print(f'  [cyan]Telegram Bot Setup[/cyan]')
-        console.print(f'  [dim]Get a bot token from @BotFather on Telegram.[/dim]')
+        console.print('  [cyan]Telegram Bot Setup[/cyan]')
+        console.print('  [dim]Get a bot token from @BotFather on Telegram.[/dim]')
         console.print()
 
         _flush_stdin_safe()
@@ -2133,8 +2142,8 @@ def _do_telegram(action: str):
         console.print()
 
     elif action == 'allow':
-        console.print(f'  [cyan]Set Allowed Users[/cyan]')
-        console.print(f'  [dim]Enter Telegram user IDs (comma separated). Leave empty to allow all.[/dim]')
+        console.print('  [cyan]Set Allowed Users[/cyan]')
+        console.print('  [dim]Enter Telegram user IDs (comma separated). A non-empty whitelist is required.[/dim]')
         _flush_stdin_safe()
         try:
             users_input = console.input('  [bold]User IDs:[/bold] ').strip()
@@ -2150,17 +2159,14 @@ def _do_telegram(action: str):
                     connector_manager.telegram.allowed_users = user_ids
                 console.print(f'  [green]Allowed users set: {user_ids}[/green]')
             except ValueError:
-                console.print(f'  [red]Invalid user IDs. Use comma-separated numbers.[/red]')
+                console.print('  [red]Invalid user IDs. Use comma-separated numbers.[/red]')
         else:
-            cfg.set_connector_config('telegram', 'allowed_users', '')
-            if connector_manager.telegram:
-                connector_manager.telegram.allowed_users = None
-            console.print(f'  [green]All users allowed (whitelist disabled).[/green]')
+            console.print('  [yellow]Whitelist unchanged: at least one Telegram user ID is required.[/yellow]')
         console.print()
 
     else:
         console.print(f'  [yellow]Unknown action: {action}[/yellow]')
-        console.print(f'  [dim]Use: start, stop, setup, allow[/dim]')
+        console.print('  [dim]Use: start, stop, setup, allow[/dim]')
         console.print()
 
 
@@ -2200,7 +2206,7 @@ def _do_discord(action: str):
         else:
             console.print(f'  [yellow]{msg}[/yellow]')
             if 'not configured' in msg:
-                console.print(f'  [dim]Use /discord setup to configure.[/dim]')
+                console.print('  [dim]Use /discord setup to configure.[/dim]')
         console.print()
 
     elif action == 'stop':
@@ -2209,9 +2215,9 @@ def _do_discord(action: str):
         console.print()
 
     elif action == 'setup':
-        console.print(f'  [cyan]Discord Bot Setup[/cyan]')
-        console.print(f'  [dim]Get a bot token from Discord Developer Portal.[/dim]')
-        console.print(f'  [dim]Channel ID: Right-click channel -> Copy ID (enable Developer Mode first).[/dim]')
+        console.print('  [cyan]Discord Bot Setup[/cyan]')
+        console.print('  [dim]Get a bot token from Discord Developer Portal.[/dim]')
+        console.print('  [dim]Channel ID: Right-click channel -> Copy ID (enable Developer Mode first).[/dim]')
         console.print()
 
         _flush_stdin_safe()
@@ -2262,8 +2268,8 @@ def _do_discord(action: str):
         console.print()
 
     elif action == 'allow':
-        console.print(f'  [cyan]Set Allowed Users[/cyan]')
-        console.print(f'  [dim]Enter Discord user IDs (comma separated). Leave empty to allow all.[/dim]')
+        console.print('  [cyan]Set Allowed Users[/cyan]')
+        console.print('  [dim]Enter Discord user IDs (comma separated). A non-empty whitelist is required.[/dim]')
         _flush_stdin_safe()
         try:
             users_input = console.input('  [bold]User IDs:[/bold] ').strip()
@@ -2278,15 +2284,12 @@ def _do_discord(action: str):
                 connector_manager.discord.allowed_users = user_ids
             console.print(f'  [green]Allowed users set: {user_ids}[/green]')
         else:
-            cfg.set_connector_config('discord', 'allowed_users', '')
-            if connector_manager.discord:
-                connector_manager.discord.allowed_users = None
-            console.print(f'  [green]All users allowed (whitelist disabled).[/green]')
+            console.print('  [yellow]Whitelist unchanged: at least one Discord user ID is required.[/yellow]')
         console.print()
 
     else:
         console.print(f'  [yellow]Unknown action: {action}[/yellow]')
-        console.print(f'  [dim]Use: start, stop, setup, allow[/dim]')
+        console.print('  [dim]Use: start, stop, setup, allow[/dim]')
         console.print()
 
 
@@ -2355,7 +2358,7 @@ def _do_mcp(action: str, tools):
             _mcp_remove_server(tools)
     else:
         console.print(f'  [yellow]Unknown MCP action: {sub}[/yellow]')
-        console.print(f'  [dim]Use: list, connect, status, disconnect, remove[/dim]')
+        console.print('  [dim]Use: list, connect, status, disconnect, remove[/dim]')
         console.print()
 
 
@@ -2396,8 +2399,8 @@ def _mcp_list_popular():
         console.print(f'      [dim]Tools: {", ".join(info.get("tools_hint", [])[:4])}[/dim]')
 
     console.print()
-    console.print(f'  [dim]Usage: /mcp connect <server_id>[/dim]')
-    console.print(f'  [dim]Example: /mcp connect context7[/dim]')
+    console.print('  [dim]Usage: /mcp connect <server_id>[/dim]')
+    console.print('  [dim]Example: /mcp connect context7[/dim]')
     console.print()
 
 
@@ -2432,7 +2435,7 @@ def _mcp_connect_popular(tools):
     _mcp_connect_by_id(server_id, tools)
 
 
-def _mcp_connect_by_id(server_id: str, tools, env_value: str = None):
+def _mcp_connect_by_id(server_id: str, tools, env_value: str | None = None):
     """Connect to an MCP server by ID."""
     ok, mod = _mcp_try_import()
     if not ok:
@@ -2446,7 +2449,7 @@ def _mcp_connect_by_id(server_id: str, tools, env_value: str = None):
 
     if server_id not in POPULAR_MCP_SERVERS:
         console.print(f'  [red]Unknown server: {server_id}[/red]')
-        console.print(f'  [dim]Use /mcp list to see available servers.[/dim]')
+        console.print('  [dim]Use /mcp list to see available servers.[/dim]')
         return
 
     info = POPULAR_MCP_SERVERS[server_id]
@@ -2465,11 +2468,11 @@ def _mcp_connect_by_id(server_id: str, tools, env_value: str = None):
             if info.get('help_text'):
                 console.print(f'  [dim]{info["help_text"]}[/dim]')
             if server_id == 'canva':
-                console.print(f'  [dim]Your Canva App ID: AAHAALoYlkA[/dim]')
-                console.print(f'  [dim]App Origin: https://app-aahaaloylka.canva-apps.com[/dim]')
-                console.print(f'  [dim]HMAR: enabled[/dim]')
-                console.print(f'  [dim]To get API key: go to Canva Developer Console → Apps → AAHAALoYlkA → Credentials[/dim]')
-                console.print(f'  [dim]Or visit: https://www.canva.com/developer/apps/AAHAALoYlkA/credentials[/dim]')
+                console.print('  [dim]Your Canva App ID: AAHAALoYlkA[/dim]')
+                console.print('  [dim]App Origin: https://app-aahaaloylka.canva-apps.com[/dim]')
+                console.print('  [dim]HMAR: enabled[/dim]')
+                console.print('  [dim]To get API key: go to Canva Developer Console → Apps → AAHAALoYlkA → Credentials[/dim]')
+                console.print('  [dim]Or visit: https://www.canva.com/developer/apps/AAHAALoYlkA/credentials[/dim]')
             try:
                 _flush_stdin_safe()
                 env_value = console.input(f'  [bold]{info["env_key"]}:[/bold] ').strip()
@@ -2477,7 +2480,7 @@ def _mcp_connect_by_id(server_id: str, tools, env_value: str = None):
                 console.print('\n  [dim]Cancelled.[/dim]')
                 return
             if not env_value:
-                console.print(f'  [yellow]No key provided. Server may fail to connect.[/yellow]')
+                console.print('  [yellow]No key provided. Server may fail to connect.[/yellow]')
 
     # Get config
     config = get_server_config(server_id, env_value)
@@ -2525,7 +2528,7 @@ def _mcp_connect_by_id(server_id: str, tools, env_value: str = None):
 def _mcp_add_stdio(tools):
     """Add a custom stdio MCP server."""
     console.print()
-    console.print(f'  [cyan]Add Custom MCP Server (stdio)[/cyan]')
+    console.print('  [cyan]Add Custom MCP Server (stdio)[/cyan]')
     console.print()
 
     try:
@@ -2601,7 +2604,7 @@ def _mcp_add_stdio(tools):
 def _mcp_add_sse(tools):
     """Add a custom SSE MCP server."""
     console.print()
-    console.print(f'  [cyan]Add Custom MCP Server (SSE)[/cyan]')
+    console.print('  [cyan]Add Custom MCP Server (SSE)[/cyan]')
     console.print()
 
     try:
@@ -2673,7 +2676,7 @@ def _mcp_show_connected():
     console.print()
     servers = cfg.get_mcp_servers()
     if not servers:
-        console.print(f'  [dim]No MCP servers configured. Use /mcp connect to add one.[/dim]')
+        console.print('  [dim]No MCP servers configured. Use /mcp connect to add one.[/dim]')
         console.print()
         return
 

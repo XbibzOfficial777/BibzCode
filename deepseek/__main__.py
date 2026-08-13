@@ -1,23 +1,35 @@
-# DeepSeek CLI v7.7 — Entry Point
+# DeepSeek CLI v7.8.0 — Entry Point
 
 import argparse
+import atexit
 import os
 import shutil
+import shlex
 import subprocess
 import sys
 import threading
 import time
+import tempfile
 import warnings
-import atexit
+
 warnings.filterwarnings("ignore")
 
-from .memory import list_sessions, delete_session, new_session_id
-from .ui import console
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn, TimeRemainingColumn
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+)
 
+from .memory import delete_session, list_sessions, new_session_id
+from .repl import main as repl_main
+from .ui import console
+from .version import __version__
 
 def _close_selenium_session_lazy():
-    """Import Selenium cleanup only on process exit to keep startup lighter."""
+    """Avoid importing the optional browser stack during normal startup."""
     try:
         from .selenium_browser import close_selenium_session
         close_selenium_session()
@@ -25,7 +37,7 @@ def _close_selenium_session_lazy():
         pass
 
 
-# Ensure orphaned browser sessions are closed on exit
+# Ensure orphaned browser sessions are closed on exit.
 atexit.register(_close_selenium_session_lazy)
 
 CLI_EPILOG = '''Examples:
@@ -43,7 +55,7 @@ Inside the interactive REPL use /help for the full slash-command reference.
 def _build_parser():
     parser = argparse.ArgumentParser(
         prog='dscli',
-        description='DeepSeek CLI Agent v7.7',
+        description=f'DeepSeek CLI Agent v{__version__}',
         epilog=CLI_EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -58,14 +70,6 @@ def _build_parser():
     parser.add_argument('command', nargs='*',
                         help='Commands: help | list session | delete <id> | logout | uninstall-full')
     return parser
-
-
-def _show_cli_help(parser):
-    parser.print_help()
-    print()
-    print('Extra notes:')
-    print('  - `dscli help` and `dscli /help` both show CLI help.')
-    print('  - After launching the REPL, run `/help` for the full interactive command list.')
 
 
 def _run_cmd_with_progress(cmd, desc='Running', stdin_input='y\n'):
@@ -189,7 +193,7 @@ def _cmd_install_skill(package: str):
     console.print(f'  [yellow]Trying: npm install -g {package}[/yellow]')
 
     cmd2 = ['npm', 'install', '-g', package]
-    rc2, out2, err2 = _run_cmd_with_progress(cmd2, f'npm install -g {package}')
+    rc2, _out2, err2 = _run_cmd_with_progress(cmd2, f'npm install -g {package}')
 
     if rc2 == 0:
         console.print(f'  [green]✓ Package "{package}" installed globally.[/green]')
@@ -219,32 +223,18 @@ def _cmd_uninstall_full():
         '/usr/bin/dscli',
     ]
 
-    # 4. Clean PATH entries from shell rc files
-    for rc in [os.path.expanduser('~/.bashrc'), os.path.expanduser('~/.zshrc'),
-               os.path.expanduser('~/.bash_profile')]:
-        if os.path.exists(rc):
-            with open(rc) as f:
-                content = f.read()
-            orig = content
-            lines = content.splitlines()
-            lines = [l for l in lines if '# DeepSeek CLI' not in l and 'deepseek-cli' not in l and 'dscli' not in l]
-            content = '\n'.join(lines)
-            if content != orig:
-                with open(rc, 'w') as f:
-                    f.write(content)
-                print(f'Cleaned PATH entries in: {rc}')
+    # 4. Shell startup files are user-owned and are never edited or sourced by
+    # the r6 installer, so uninstall must not delete matching user lines.
 
     # 5. Write background cleanup script (removes install dir + wrapper after process exits)
-    cleanup_script = '/tmp/deepseek-cleanup.sh'
-    with open(cleanup_script, 'w') as f:
+    fd, cleanup_script = tempfile.mkstemp(prefix='deepseek-cleanup-', suffix='.sh')
+    with os.fdopen(fd, 'w') as f:
         f.write('#!/bin/bash\n')
         f.write('sleep 1\n')
-        f.write(f'rm -rf "{install_dir}"\n')
-        f.write(f'rm -f /tmp/deepseek-*.sh 2>/dev/null\n')
-        for wp in wrapper_paths:
-            f.write(f'[ -f "{wp}" ] && rm -f "{wp}"\n')
-        f.write(f'rm -f "$0"\n')
-    os.chmod(cleanup_script, 0o755)
+        f.write(f'rm -rf -- {shlex.quote(install_dir)}\n')
+        f.writelines(f'rm -f -- {shlex.quote(wp)}\n' for wp in wrapper_paths)
+        f.write('rm -f -- "$0"\n')
+    os.chmod(cleanup_script, 0o700)
 
     # 6. Run cleanup script detached
     subprocess.Popen(['bash', cleanup_script],
@@ -256,12 +246,7 @@ def _cmd_uninstall_full():
     print(' Run bash install.sh to reinstall anytime.')
     print()
 
-    # Remove the temp cleanup
-    try:
-        os.remove(cleanup_script)
-    except Exception:
-        pass
-
+    # The detached script removes itself after deleting the installation.
     sys.exit(0)
 
 
@@ -306,10 +291,10 @@ def main():
         cmd0 = args.command[0].lower() if args.command else ''
         cmd1 = args.command[1] if len(args.command) > 1 else ''
 
-        if cmd0 in ('help', '/help', '?'):
-            _show_cli_help(parser)
+        if cmd0 in ('help', '/help', '-h', '--help'):
+            parser.print_help()
             return
-        elif cmd0 == 'logout':
+        if cmd0 == 'logout':
             from .auth import logout
             logout()
             print('Logged out. You will be asked to sign in next time you run dscli.')
@@ -320,13 +305,10 @@ def main():
             return _cmd_delete(cmd1)
         elif cmd0 == 'list':
             return _cmd_list()
-        elif cmd0 == 'uninstall-full' or cmd0 == 'uninstall':
-            return _cmd_uninstall_full()
-        elif cmd0 == '--uninstall-full':
+        elif cmd0 == 'uninstall-full' or cmd0 == 'uninstall' or cmd0 == '--uninstall-full':
             return _cmd_uninstall_full()
         else:
             print(f'Unknown command: {" ".join(args.command)}', file=sys.stderr)
-            print('Tip: use `dscli help` or `dscli --help` to see available CLI commands.', file=sys.stderr)
             sys.exit(1)
 
     if args.list:
@@ -355,8 +337,6 @@ def main():
     from .config import enforce_gist
     enforce_gist()
 
-    # Import the full REPL only when we are actually entering interactive mode.
-    from .repl import main as repl_main
     repl_main(session_id=session_id, memory=memory, user=user)
 
 

@@ -1,18 +1,8 @@
-# DeepSeek CLI v7.7 — Cleanup old v2 directories on import
+"""DeepSeek CLI package.
 
-import shutil
-from pathlib import Path
+Upgrade/migration work intentionally does not run at import time.
+"""
 
-def _cleanup_old_dirs():
-    """Remove stale v2 subdirectories from package upgrades."""
-    pkg_dir = Path(__file__).parent
-    old_dirs = ['core', 'ui', 'cli', 'tools']
-    for d in old_dirs:
-        target = pkg_dir / d
-        if target.is_dir():
-            try:
-                shutil.rmtree(target)
-            except Exception:
-                pass
+from .version import __version__
 
-_cleanup_old_dirs()
+__all__ = ["__version__"]

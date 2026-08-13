@@ -1,0 +1,1 @@
+2636deb695ac6881a218fbb2aab7891db1e71cee7ad723b83f0a4dc53970a8fe  deepseek-cli-7.8.0-r6.tar.gz

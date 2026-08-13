@@ -130,7 +130,7 @@ def test_sessions_alias_lists_saved_sessions(tmp_path):
     try:
         memory = Memory()
         memory.session_name = 'Audit Session'
-        save_session('dscli-test-session', memory)
+        save_session('dscli-aaaaaaaaaaaa', memory)
         assert handle_command('/sessions', None, memory, None) == ''
     finally:
         memory_module.SESSIONS_DIR = original_sessions_dir
@@ -139,7 +139,7 @@ def test_sessions_alias_lists_saved_sessions(tmp_path):
 
     output = buffer.getvalue()
     assert 'Saved Sessions' in output
-    assert 'dscli-test-session' in output
+    assert 'dscli-aaaaaaaaaaaa' in output
 
 
 def test_rename_current_session_updates_file(tmp_path):
@@ -157,10 +157,10 @@ def test_rename_current_session_updates_file(tmp_path):
     repl.console = ui.console
     try:
         memory = Memory()
-        memory._current_session_id = 'dscli-rename-test'
-        save_session('dscli-rename-test', memory)
+        memory._current_session_id = 'dscli-bbbbbbbbbbbb'
+        save_session('dscli-bbbbbbbbbbbb', memory)
         assert handle_command('/rename Stable Build Session', None, memory, None) == ''
-        with open(tmp_path / 'dscli-rename-test.json', encoding='utf-8') as f:
+        with open(tmp_path / 'dscli-bbbbbbbbbbbb.json', encoding='utf-8') as f:
             data = json.load(f)
     finally:
         memory_module.SESSIONS_DIR = original_sessions_dir
@@ -185,15 +185,15 @@ def test_session_delete_command_removes_saved_session(tmp_path):
     repl.console = ui.console
     try:
         memory = Memory()
-        save_session('dscli-delete-test', memory)
-        assert (tmp_path / 'dscli-delete-test.json').exists()
-        assert handle_command('/session delete dscli-delete-test', None, memory, None) == ''
+        save_session('dscli-cccccccccccc', memory)
+        assert (tmp_path / 'dscli-cccccccccccc.json').exists()
+        assert handle_command('/session delete dscli-cccccccccccc', None, memory, None) == ''
     finally:
         memory_module.SESSIONS_DIR = original_sessions_dir
         ui.console = original_ui_console
         repl.console = original_repl_console
 
-    assert not (tmp_path / 'dscli-delete-test.json').exists()
+    assert not (tmp_path / 'dscli-cccccccccccc.json').exists()
 
 
 def test_rename_specific_session_updates_target_file(tmp_path):
@@ -211,14 +211,14 @@ def test_rename_specific_session_updates_target_file(tmp_path):
     repl.console = ui.console
     try:
         current_memory = Memory()
-        current_memory._current_session_id = 'dscli-current'
-        save_session('dscli-current', current_memory)
+        current_memory._current_session_id = 'dscli-dddddddddddd'
+        save_session('dscli-dddddddddddd', current_memory)
 
         target_memory = Memory()
-        save_session('dscli-target', target_memory)
+        save_session('dscli-eeeeeeeeeeee', target_memory)
 
-        assert handle_command('/rename dscli-target Stable Session Name', None, current_memory, None) == ''
-        with open(tmp_path / 'dscli-target.json', encoding='utf-8') as f:
+        assert handle_command('/rename dscli-eeeeeeeeeeee Stable Session Name', None, current_memory, None) == ''
+        with open(tmp_path / 'dscli-eeeeeeeeeeee.json', encoding='utf-8') as f:
             data = json.load(f)
     finally:
         memory_module.SESSIONS_DIR = original_sessions_dir

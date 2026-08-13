@@ -13,18 +13,31 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
-import json
-import time
-import base64
-import hashlib
 import shutil
 import subprocess
 import tempfile
-from pathlib import Path
-from urllib.parse import urlparse
+import time
 from datetime import datetime
+from pathlib import Path
+
+from .net_policy import NetworkPolicyError, validate_url
+
+
+def _safe_driver_get(driver, url: str) -> None:
+    """Validate requested and final redirect URLs for Selenium navigation."""
+    validate_url(url)
+    driver.get(url)
+    try:
+        validate_url(driver.current_url)
+    except NetworkPolicyError:
+        try:
+            driver.quit()
+        finally:
+            raise
+
 
 # Selenium imports
 SELENIUM_AVAILABLE = False
@@ -32,22 +45,23 @@ WEBDRIVER_MANAGER_AVAILABLE = False
 FirefoxDriver = None  # Type hint placeholder (defined properly below if available)
 try:
     from selenium import webdriver
-    from selenium.webdriver.firefox.options import Options as FirefoxOptions
-    from selenium.webdriver.firefox.service import Service as FirefoxService
+    from selenium.webdriver.common.action_chains import ActionChains
     from selenium.webdriver.common.by import By
     from selenium.webdriver.common.keys import Keys
-    from selenium.webdriver.common.action_chains import ActionChains
-    from selenium.webdriver.support.ui import WebDriverWait, Select
+    from selenium.webdriver.firefox.options import Options as FirefoxOptions
+    from selenium.webdriver.firefox.service import Service as FirefoxService
     from selenium.webdriver.support import expected_conditions as EC
+    from selenium.webdriver.support.ui import Select, WebDriverWait
     # FirefoxProfile removed in Selenium 4.9+ — use Options instead
     try:
         from selenium.webdriver.firefox.firefox_profile import FirefoxProfile
     except ImportError:
         FirefoxProfile = None
     from selenium.common.exceptions import (
-        TimeoutException, NoSuchElementException, ElementNotInteractableException,
-        StaleElementReferenceException, WebDriverException, NoSuchFrameException,
-        NoSuchWindowException, InvalidArgumentException
+        NoSuchElementException,
+        NoSuchFrameException,
+        StaleElementReferenceException,
+        TimeoutException,
     )
     try:
         from selenium.webdriver.firefox.webdriver import WebDriver as FirefoxDriver
@@ -210,7 +224,7 @@ class SeleniumBrowserSession:
             driver.set_window_size(w, h)
 
             return driver
-        except Exception as e:
+        except Exception:
             return None
 
     def get_driver(self) -> FirefoxDriver:
@@ -245,7 +259,7 @@ class SeleniumBrowserSession:
         """Navigate to a URL. Returns page info."""
         driver = self.get_driver()
         try:
-            driver.get(url)
+            _safe_driver_get(driver, url)
             time.sleep(min(wait_seconds, 10))
         except TimeoutException:
             pass
@@ -271,7 +285,7 @@ class SeleniumBrowserSession:
             url = self._history[self._history_idx]
             driver = self.get_driver()
             try:
-                driver.get(url)
+                _safe_driver_get(driver, url)
                 time.sleep(1)
             except Exception as e:
                 return {'error': str(e)}
@@ -345,7 +359,7 @@ class SeleniumBrowserSession:
 
         # Step 1: Navigate to login page
         try:
-            driver.get(url)
+            _safe_driver_get(driver, url)
             time.sleep(2)
         except TimeoutException:
             result_log.append('Page load timed out (continuing...)')
@@ -519,9 +533,7 @@ class SeleniumBrowserSession:
                     if not inp.is_displayed():
                         continue
                     inp_type = inp.get_attribute('type') or 'text'
-                    if field_type == 'username' and inp_type in ('text', 'email', 'tel'):
-                        return inp
-                    elif field_type == 'password' and inp_type == 'password':
+                    if field_type == 'username' and inp_type in ('text', 'email', 'tel') or field_type == 'password' and inp_type == 'password':
                         return inp
                 except Exception:
                     continue
@@ -679,7 +691,7 @@ class SeleniumBrowserSession:
     def select_dropdown(self, target: str, value: str, by: str = 'css',
                         select_by: str = 'value') -> dict:
         """Select an option from a dropdown."""
-        driver = self.get_driver()
+        self.get_driver()
 
         try:
             elem = self._locate_element(target, by)
@@ -898,9 +910,9 @@ class SeleniumBrowserSession:
             if full_page:
                 # Full page screenshot
                 total_height = driver.execute_script('return document.body.scrollHeight;')
-                viewport_height = driver.execute_script('return window.innerHeight;')
+                driver.execute_script('return window.innerHeight;')
                 total_width = driver.execute_script('return document.body.scrollWidth;')
-                viewport_width = driver.execute_script('return window.innerWidth;')
+                driver.execute_script('return window.innerWidth;')
 
                 # Simple full-page: resize, screenshot, restore
                 original_size = driver.get_window_size()
@@ -925,7 +937,7 @@ class SeleniumBrowserSession:
 
     def get_element_screenshot(self, target: str, filename: str = '', by: str = 'css') -> dict:
         """Screenshot a specific element."""
-        driver = self.get_driver()
+        self.get_driver()
 
         try:
             elem = self._locate_element(target, by)
@@ -1151,7 +1163,7 @@ class SeleniumBrowserSession:
             return {
                 'cookies': cookies,
                 'count': len(cookies),
-                'domains': sorted(set(c.get('domain', '') for c in cookies)),
+                'domains': sorted({c.get('domain', '') for c in cookies}),
             }
         except Exception as e:
             return {'error': str(e)}
@@ -1199,7 +1211,7 @@ class SeleniumBrowserSession:
 
     def upload_file(self, target: str, file_path: str, by: str = 'css') -> dict:
         """Upload a file to a file input element."""
-        driver = self.get_driver()
+        self.get_driver()
         try:
             elem = self._locate_element(target, by)
             if not elem:
@@ -1234,7 +1246,7 @@ class SeleniumBrowserSession:
 
         # Step 1: Navigate to the page with Google login button
         try:
-            driver.get(page_url)
+            _safe_driver_get(driver, page_url)
             time.sleep(2)
         except Exception as e:
             return {'error': f'Failed to open page: {e}', 'steps': log, 'success': False, 'needs_gui': False}
@@ -1280,7 +1292,7 @@ class SeleniumBrowserSession:
                         elem = driver.find_element(By.XPATH, xpath)
                         if elem.is_displayed():
                             elem.click()
-                            log.append(f'Step 2: Clicked Google button (XPath)')
+                            log.append('Step 2: Clicked Google button (XPath)')
                             break
                     except Exception:
                         continue
@@ -1301,7 +1313,7 @@ class SeleniumBrowserSession:
         try:
             # Check if we're on Google login page
             if 'accounts.google.com' in driver.current_url:
-                log.append(f'Step 3: On Google login page')
+                log.append('Step 3: On Google login page')
 
                 # Handle email/identifier input
                 email_selectors = [
@@ -1410,12 +1422,10 @@ class SeleniumBrowserSession:
                     '#code', 'input[name="code"]',
                     'input[data-testid="otp-input"]',
                 ]
-                otp_needed = False
                 for sel in otp_selectors:
                     try:
                         elem = driver.find_element(By.CSS_SELECTOR, sel)
                         if elem.is_displayed():
-                            otp_needed = True
                             if otp_code:
                                 elem.send_keys(otp_code)
                                 time.sleep(0.3)
@@ -1742,7 +1752,7 @@ class SeleniumBrowserSession:
             has_password = bool(driver.find_elements(By.CSS_SELECTOR, 'input[type="password"]'))
             has_username = bool(driver.find_elements(By.CSS_SELECTOR, 'input[type="text"][name*="user"], input[type="text"][name*="login"], input[name*="username"]'))
             has_phone = bool(driver.find_elements(By.CSS_SELECTOR, 'input[type="tel"], input[type="tel"][name*="phone"]'))
-            has_submit = bool(driver.find_elements(By.CSS_SELECTOR, 'button[type="submit"], input[type="submit"]'))
+            bool(driver.find_elements(By.CSS_SELECTOR, 'button[type="submit"], input[type="submit"]'))
 
             fields = []
             if has_email:
@@ -1807,7 +1817,7 @@ class SeleniumBrowserSession:
         return (
             os.environ.get('DISPLAY') is not None
             or os.environ.get('WAYLAND_DISPLAY') is not None
-            or os.path.exists('/tmp/.X11-unix')
+            or os.path.exists('/tmp/.X11-unix')  # nosec B108
             or shutil.which('xdg-open') is not None
             or shutil.which('gnome-open') is not None
         )
@@ -1883,14 +1893,15 @@ class SeleniumBrowserSession:
             pass
 
         # Check X11 socket
-        x11_socket = os.path.exists('/tmp/.X11-unix/X0') or os.path.exists('/tmp/.X11-unix/X1')
+        x11_socket = (os.path.exists('/tmp/.X11-unix/X0') or  # nosec B108
+                      os.path.exists('/tmp/.X11-unix/X1'))  # nosec B108
 
         if display_var or x11_running or vnc_running or xsdl_running or x11_socket:
             display_ready = True
             # Determine display number
             if not display_var:
                 if x11_socket:
-                    if os.path.exists('/tmp/.X11-unix/X1'):
+                    if os.path.exists('/tmp/.X11-unix/X1'):  # nosec B108
                         display_var = ':1'
                     else:
                         display_var = ':0'
@@ -2057,7 +2068,7 @@ class SeleniumBrowserSession:
                 'success': True,
                 'saved_to': save_to,
                 'cookie_count': len(cookies),
-                'domains': list(set(c.get('domain', '') for c in cookies)),
+                'domains': list({c.get('domain', '') for c in cookies}),
             }
         except Exception as e:
             return {'error': str(e)}
@@ -2150,9 +2161,7 @@ class SeleniumBrowserSession:
         if os.path.exists('/data/data/com.termux'):
             return True
         # Method 4: Check PREFIX
-        if os.environ.get('PREFIX', '').startswith('/data/data/com.termux'):
-            return True
-        return False
+        return bool(os.environ.get('PREFIX', '').startswith('/data/data/com.termux'))
 
     def _detect_android(self) -> bool:
         """Detect if running on Android."""
@@ -2267,7 +2276,7 @@ class SeleniumBrowserSession:
         self._headless = False
         self.close()
         try:
-            driver = self.get_driver()
+            self.get_driver()
             result['success'] = True
             result['mode'] = 'gui'
             result['display'] = ':0'
@@ -2455,7 +2464,7 @@ class SeleniumBrowserSession:
         # Step 1: Navigate to Google login
         log.append('Navigating to Google login...')
         try:
-            driver.get(login_url)
+            _safe_driver_get(driver, login_url)
             time.sleep(3)
             log.append(f'Page loaded: {driver.current_url}')
         except TimeoutException:

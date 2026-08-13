@@ -1,0 +1,5 @@
+reportlab>=4,<5
+selenium>=4.20,<5
+webdriver-manager>=4,<5
+mcp>=1.10,<2
+matplotlib>=3.8,<4

@@ -8,8 +8,8 @@
 
 import json
 import os
-import sys
 import warnings
+
 # Monkey-patch warnings.warn to suppress duckduckgo_search renaming RuntimeWarnings
 _orig_warn = warnings.warn
 def _custom_warn(message, category=None, stacklevel=1, source=None):
@@ -20,14 +20,14 @@ warnings.warn = _custom_warn
 
 warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*duckduckgo_search.*")
 warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*renamed to.*")
-import random
 import calendar as cal_mod
 import datetime
-import re
 import math
-import httpx
+import random
+import re
 from zoneinfo import ZoneInfo
-from typing import Any
+
+import httpx
 
 # MCP types for tool schema definitions
 try:
@@ -450,7 +450,6 @@ def tool_get_datetime(args: dict) -> str:
 
     # Use user-specified timezone or auto-detected local
     tz_name = tz_arg if tz_arg else local_tz_name
-    tz_display = tz_name  # For display
 
     try:
         tz = ZoneInfo(tz_name)
@@ -472,7 +471,7 @@ def tool_get_datetime(args: dict) -> str:
         return now.isoformat()
 
     elif fmt == 'date':
-        return f"{now.strftime('%Y-%m-%d')} ({day_names[now.weekday()]}, {month_names[now.month]} {now.day}, {now.year})"
+        return f"{now.strftime('%Y-%m-%d')} ({day_names[now.weekday()]}, {month_names[now.month - 1]} {now.day}, {now.year})"
 
     elif fmt == 'time':
         return f"{now.strftime('%H:%M:%S')} ({tz_name})"
@@ -484,13 +483,13 @@ def tool_get_datetime(args: dict) -> str:
         remaining = days_in_year - day_of_year
 
         lines = [
-            f"Date: {day_names[now.weekday()]}, {month_names[now.month]} {now.day}, {now.year}",
+            f"Date: {day_names[now.weekday()]}, {month_names[now.month - 1]} {now.day}, {now.year}",
             f"Time: {now.strftime('%H:%M:%S')}",
             f"ISO 8601: {now.isoformat()}",
             f"Timezone: {tz_name}",
             f"UTC Offset: {now.strftime('%z') or '+0000'}",
-            f"",
-            f"Details:",
+            "",
+            "Details:",
             f"  Week: {iso_week[1]} of {iso_week[0]} (ISO)",
             f"  Day of Year: {day_of_year} of {days_in_year}",
             f"  Days Remaining: {remaining}",
@@ -733,7 +732,6 @@ def tool_get_stock_price(args: dict) -> str:
         # Yahoo Finance via query1 API (free, no key)
         # For crypto like BTC-IDR, use BTC-USD and convert
         lookup_symbol = symbol
-        is_idr = False
 
         # Try to detect Indonesian stock (.JK suffix)
         if not lookup_symbol.endswith(('.JK', '-USD', '-IDR')):
@@ -754,7 +752,8 @@ def tool_get_stock_price(args: dict) -> str:
                 test = symbol if suffix == '' else f"{symbol}{suffix}"
                 url2 = f'https://query1.finance.yahoo.com/v8/finance/chart/{test}?range=1d&interval=1d'
                 try:
-                    r2 = client.get(url2, headers=headers)
+                    with httpx.Client(timeout=10, follow_redirects=True) as fallback_client:
+                        r2 = fallback_client.get(url2, headers=headers)
                     if r2.status_code == 200:
                         r = r2
                         lookup_symbol = test
@@ -837,7 +836,7 @@ def tool_get_holidays(args: dict) -> str:
             local = h.get('localName', '')
             fixed = h.get('fixed', True)
             global_h = h.get('global', True)
-            counties = h.get('counties', '')
+            h.get('counties', '')
             typ = h.get('types', [])
 
             flags = []
@@ -846,7 +845,7 @@ def tool_get_holidays(args: dict) -> str:
             if not global_h:
                 flags.append('regional')
 
-            flag_str = f" ({', '.join(flags)})" if flags else ''
+            f" ({', '.join(flags)})" if flags else ''
             lines.append(f"\n  {date} — {name}")
             if local and local != name:
                 lines.append(f"    Local: {local}")
@@ -943,12 +942,12 @@ def tool_get_countdown(args: dict) -> str:
         lines.append(f"  This event was {days_passed} days ago")
         lines.append(f"  Date: {target_date.strftime('%A, %B %d, %Y')}")
     elif diff.days == 0:
-        lines.append(f"  TODAY is the day!")
+        lines.append("  TODAY is the day!")
         lines.append(f"  Date: {target_date.strftime('%A, %B %d, %Y')}")
     else:
         weeks = diff.days // 7
         remain_days = diff.days % 7
-        hours = diff.seconds // 3600
+        diff.seconds // 3600
         lines.append(f"  {diff.days} days remaining")
         if weeks > 0:
             lines.append(f"  = {weeks} weeks and {remain_days} days")
@@ -960,7 +959,7 @@ def tool_get_countdown(args: dict) -> str:
 def tool_get_sun_times(args: dict) -> str:
     """Get sunrise/sunset for a location."""
     city = args.get('city', 'Jakarta')
-    date = args.get('date', '')
+    args.get('date', '')
 
     try:
         url = f'https://wttr.in/{city}?format=j1'
@@ -1024,8 +1023,6 @@ def tool_get_day_info(args: dict) -> str:
         target = datetime.datetime.now(tz).date()
 
     day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-    month_names = ['January', 'February', 'March', 'April', 'May', 'June',
-                   'July', 'August', 'September', 'October', 'November', 'December']
 
     iso = target.isocalendar()
     day_of_year = target.timetuple().tm_yday
@@ -1033,19 +1030,16 @@ def tool_get_day_info(args: dict) -> str:
     week_number = int(target.strftime('%U'))  # US week number
 
     # Zodiac sign
+    # End-date boundaries for the conventional tropical zodiac ranges.
     zodiac_dates = [
-        (120, 'Aquarius'), (219, 'Pisces'), (321, 'Aries'),
-        (420, 'Taurus'), (521, 'Gemini'), (621, 'Cancer'),
-        (723, 'Leo'), (823, 'Virgo'), (923, 'Libra'),
-        (1023, 'Scorpio'), (1122, 'Sagittarius'), (1222, 'Capricorn'),
+        (119, 'Capricorn'), (218, 'Aquarius'), (320, 'Pisces'),
+        (419, 'Aries'), (520, 'Taurus'), (620, 'Gemini'),
+        (722, 'Cancer'), (822, 'Leo'), (922, 'Virgo'),
+        (1022, 'Libra'), (1121, 'Scorpio'), (1221, 'Sagittarius'),
         (1231, 'Capricorn'),
     ]
     day_num = target.month * 100 + target.day
-    zodiac = 'Capricorn'
-    for zdate, zname in zodiac_dates:
-        if day_num <= zdate:
-            zodiac = zname
-            break
+    zodiac = next(name for end_date, name in zodiac_dates if day_num <= end_date)
 
     # Chinese zodiac
     chinese_animals = ['Rat', 'Ox', 'Tiger', 'Rabbit', 'Dragon', 'Snake',
@@ -1077,26 +1071,26 @@ def tool_get_day_info(args: dict) -> str:
     lines = [
         f"Date Info: {target.strftime('%A, %B %d, %Y')}",
         "=" * 45,
-        f"",
-        f"Calendar:",
+        "",
+        "Calendar:",
         f"  Day of Week: {day_names[target.weekday()]}",
         f"  Week Number: {iso[1]} (ISO), {week_number} (US)",
         f"  Day of Year: {day_of_year} of {days_in_year}",
         f"  Quarter: Q{(target.month - 1) // 3 + 1}",
         f"  Season: {season} (Northern Hemisphere)",
-        f"",
-        f"Astrology:",
+        "",
+        "Astrology:",
         f"  Zodiac Sign: {zodiac}",
         f"  Chinese Zodiac: {chinese} ({target.year})",
         f"  Birthstone: {birthstone}",
-        f"",
-        f"Year Info:",
+        "",
+        "Year Info:",
         f"  Leap Year: {'Yes' if cal_mod.isleap(target.year) else 'No'}",
         f"  Century: {(target.year - 1) // 100 + 1}",
     ]
 
     if days_from_now == 0:
-        lines.append(f"\n  ** TODAY **")
+        lines.append("\n  ** TODAY **")
     elif days_from_now > 0:
         lines.append(f"\n  {days_from_now} days from now")
     else:
@@ -1116,7 +1110,7 @@ def tool_get_ip_info(args: dict) -> str:
             return f"IP: {ip.strip()}\n(Geolocation not available)"
 
         lines = [
-            f"Network Information",
+            "Network Information",
             "=" * 40,
             f"  IP Address: {data.get('ip', 'N/A')}",
             f"  City: {data.get('city', 'N/A')}",
@@ -1249,7 +1243,7 @@ def tool_get_qibla(args: dict) -> str:
             f"Qibla & Prayer Times: {area_name}, {country}",
             f"Location: {lat:.4f}, {lon:.4f}",
             "=" * 45,
-            f"",
+            "",
             f"Qibla Direction: {qibla:.1f} degrees ({cardinal})",
         ]
 
@@ -1270,7 +1264,7 @@ def tool_get_qibla(args: dict) -> str:
                     'Maghrib': 'Maghrib',
                     'Isha': 'Isya',
                 }
-                lines.append(f"\nPrayer Times (today):")
+                lines.append("\nPrayer Times (today):")
                 for key, indo in prayer_names.items():
                     if key in timings:
                         time_str = timings[key].split(' ')[0]  # Remove timezone
@@ -1280,7 +1274,7 @@ def tool_get_qibla(args: dict) -> str:
                 if hijri:
                     lines.append(f"\nHijri Date: {hijri.get('date', 'N/A')} {hijri.get('month', {}).get('en', '')} {hijri.get('year', 'N/A')}")
         except Exception:
-            lines.append(f"\n(Prayer times unavailable)")
+            lines.append("\n(Prayer times unavailable)")
 
         return '\n'.join(lines)
 
