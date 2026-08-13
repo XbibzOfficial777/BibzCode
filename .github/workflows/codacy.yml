@@ -38,12 +38,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Codacy 4.0.0's SARIF formatter tries to decode binary release artifacts
-      # as UTF-8 and crashes with MalformedInputException. The archive is
-      # deterministically verified elsewhere; remove only the runner copy so
-      # this remains a source-code security scan.
-      - name: Exclude binary release artifact from source scan
-        run: rm -f releases/*.tar.gz
+      # Codacy 4.0.0's SARIF formatter tries to decode binary release and Git
+      # object files as UTF-8. Export a source-only tree outside the checkout so
+      # the scan contains neither .git objects nor the deterministic tarball.
+      - name: Prepare source-only scan tree
+        run: |
+          mkdir -p "${RUNNER_TEMP}/codacy-source"
+          git archive HEAD | tar -x -C "${RUNNER_TEMP}/codacy-source"
+          rm -f "${RUNNER_TEMP}"/codacy-source/releases/*.tar.gz
 
       # Execute Codacy Analysis CLI and generate a SARIF output with the security issues identified during the analysis
       - name: Run Codacy Analysis CLI
@@ -52,6 +54,7 @@ jobs:
           # Check https://github.com/codacy/codacy-analysis-cli#project-token to get your project token from your Codacy repository
           # You can also omit the token and run the tools that support default configurations
           project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
+          directory: ${{ runner.temp }}/codacy-source
           verbose: true
           output: results.sarif
           format: sarif
