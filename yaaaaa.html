@@ -1,0 +1,1098 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DeepSeek CLI · Unofficial Agent</title>
+
+    <!-- Open Graph / Social Preview -->
+    <meta property="og:title" content="DeepSeek CLI · Unofficial Agent" />
+    <meta property="og:description" content="Multi‑provider terminal AI agent with controlled tool execution, session persistence, MCP support, document utilities & browser automation." />
+    <meta property="og:image" content="https://imgbs.com/uploads/beautyplus-save-17d140cd.jpg" />
+    <meta property="og:url" content="https://github.com/XbibzOfficial777/deepseek-cli" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="DeepSeek CLI · Unofficial Agent" />
+    <meta name="twitter:description" content="Multi‑provider terminal AI agent with controlled tool execution, session persistence, MCP support, document utilities & browser automation." />
+    <meta name="twitter:image" content="https://imgbs.com/uploads/beautyplus-save-17d140cd.jpg" />
+
+    <!-- Font Awesome 6 (Free) -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" />
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #0f0b09;
+            color: #e4d9cf;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            line-height: 1.6;
+            padding: 0 1.5rem 4rem;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-image: radial-gradient(circle at 20% 30%, #1e1612 0%, #0f0b09 80%);
+        }
+
+        .container {
+            max-width: 1200px;
+            width: 100%;
+        }
+
+        /* ---- Banner ---- */
+        .banner-wrapper {
+            margin: 2rem 0 2.5rem;
+            border-radius: 32px;
+            overflow: hidden;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.8);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            background: #1e1612;
+        }
+
+        .banner-wrapper:hover {
+            transform: scale(1.005);
+            box-shadow: 0 30px 60px -12px rgba(0, 0, 0, 0.9);
+        }
+
+        .banner-wrapper img {
+            display: block;
+            width: 100%;
+            height: auto;
+            aspect-ratio: 1200 / 400;
+            object-fit: cover;
+            background: #1e1612;
+        }
+
+        /* ---- Header ---- */
+        .header {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            align-items: center;
+            gap: 1rem 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .header-left i {
+            font-size: 2.4rem;
+            color: #d4b48c;
+            filter: drop-shadow(0 0 8px rgba(180, 140, 110, 0.2));
+        }
+
+        .header-left h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            background: linear-gradient(135deg, #f0e0cc, #c9ad93);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .header-badge {
+            background: rgba(61, 44, 31, 0.7);
+            backdrop-filter: blur(4px);
+            padding: 0.4rem 1.2rem;
+            border-radius: 40px;
+            font-size: 0.8rem;
+            font-weight: 500;
+            color: #dccbbc;
+            border: 1px solid #5a4230;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.6rem;
+            letter-spacing: 0.3px;
+            box-shadow: inset 0 1px 0 rgba(255, 215, 175, 0.05);
+        }
+
+        .header-badge i {
+            color: #b8946a;
+            font-size: 0.9rem;
+        }
+
+        .lang-selector {
+            background: rgba(42, 32, 26, 0.7);
+            backdrop-filter: blur(4px);
+            border: 1px solid #5a4230;
+            border-radius: 40px;
+            padding: 0.3rem 0.8rem 0.3rem 1rem;
+            color: #dccbbc;
+            font-size: 0.85rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            cursor: pointer;
+            transition: border 0.2s, background 0.2s;
+        }
+
+        .lang-selector:hover {
+            border-color: #b8946a;
+            background: rgba(61, 44, 31, 0.5);
+        }
+
+        .lang-selector i {
+            color: #b8946a;
+        }
+
+        .lang-selector select {
+            background: transparent;
+            border: none;
+            color: #e8ddd0;
+            font-size: 0.85rem;
+            outline: none;
+            cursor: pointer;
+            font-weight: 500;
+        }
+
+        .lang-selector select option {
+            background: #1a1410;
+            color: #e8ddd0;
+        }
+
+        /* ---- Deskripsi ---- */
+        .description {
+            background: rgba(37, 30, 23, 0.7);
+            backdrop-filter: blur(6px);
+            padding: 1.8rem 2rem;
+            border-radius: 24px;
+            border-left: 5px solid #b8946a;
+            margin-bottom: 2.8rem;
+            box-shadow: inset 0 1px 0 rgba(255, 215, 175, 0.06), 0 8px 24px rgba(0, 0, 0, 0.4);
+        }
+
+        .description p {
+            font-size: 1.1rem;
+            color: #dcd0c2;
+            max-width: 900px;
+        }
+
+        .description .tag {
+            display: inline-block;
+            background: #3d2c1f;
+            padding: 0.2rem 0.9rem;
+            border-radius: 30px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #b8946a;
+            margin-right: 0.5rem;
+        }
+
+        /* ---- Repo sync ---- */
+        .repo-sync {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1.2rem 2rem;
+            background: rgba(31, 24, 18, 0.7);
+            backdrop-filter: blur(4px);
+            padding: 0.8rem 1.8rem;
+            border-radius: 40px;
+            border: 1px solid #352a20;
+            margin-bottom: 1.8rem;
+            font-size: 0.85rem;
+            color: #bfae9b;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+        }
+
+        .repo-sync span {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .repo-sync i {
+            color: #b8946a;
+        }
+
+        .repo-sync .highlight {
+            color: #f0e4d6;
+            font-weight: 500;
+        }
+
+        /* ---- Install block with copy ---- */
+        .install-wrapper {
+            position: relative;
+            margin: 2.5rem 0 2.5rem;
+        }
+
+        .code-block {
+            background: #0f0b08;
+            padding: 1.5rem 1.8rem;
+            border-radius: 20px;
+            border: 1px solid #352a20;
+            position: relative;
+            overflow-x: auto;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+        }
+
+        .code-block .label {
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+            color: #b8946a;
+            font-size: 0.8rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 0.75rem;
+        }
+
+        .code-block .label i {
+            font-size: 1rem;
+        }
+
+        .code-block code {
+            font-family: 'JetBrains Mono', 'Fira Code', monospace;
+            font-size: 0.95rem;
+            color: #e4d6c4;
+            white-space: pre-wrap;
+            word-break: break-word;
+            display: block;
+            padding-right: 2.5rem;
+        }
+
+        .copy-btn {
+            position: absolute;
+            top: 1.2rem;
+            right: 1.2rem;
+            background: rgba(61, 44, 31, 0.5);
+            border: 1px solid #5a4230;
+            color: #dccbbc;
+            border-radius: 40px;
+            padding: 0.4rem 1rem;
+            font-size: 0.8rem;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            transition: all 0.2s ease;
+            backdrop-filter: blur(2px);
+        }
+
+        .copy-btn:hover {
+            background: #5a4230;
+            border-color: #b8946a;
+            color: #f0e4d6;
+            box-shadow: 0 0 16px rgba(184, 148, 106, 0.2);
+        }
+
+        .copy-btn i {
+            font-size: 0.9rem;
+        }
+
+        .copy-btn.copied {
+            background: #2d5a3a;
+            border-color: #6a9b7a;
+            color: #d4f0d4;
+        }
+
+        .copy-hint {
+            display: inline-block;
+            margin-top: 0.8rem;
+            font-size: 0.75rem;
+            color: #8a7a6a;
+            letter-spacing: 0.3px;
+        }
+
+        .copy-hint i {
+            margin-right: 0.3rem;
+        }
+
+        /* ---- Info grid ---- */
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 3rem;
+        }
+
+        .info-card {
+            background: rgba(34, 27, 21, 0.7);
+            backdrop-filter: blur(4px);
+            padding: 1.5rem 1.2rem;
+            border-radius: 20px;
+            border: 1px solid #352a20;
+            transition: all 0.25s ease;
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+        }
+
+        .info-card:hover {
+            border-color: #7a5f47;
+            background: rgba(42, 32, 26, 0.8);
+            transform: translateY(-4px);
+            box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+        }
+
+        .info-card i {
+            font-size: 1.8rem;
+            color: #c9ad93;
+            margin-bottom: 0.5rem;
+            display: block;
+        }
+
+        .info-card h3 {
+            font-size: 1rem;
+            font-weight: 600;
+            color: #efe5d8;
+            letter-spacing: 0.3px;
+            margin-bottom: 0.3rem;
+        }
+
+        .info-card p {
+            font-size: 0.9rem;
+            color: #b9aa99;
+            line-height: 1.5;
+        }
+
+        /* ---- Features ---- */
+        .features {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 1.5rem;
+            margin: 2.5rem 0 2rem;
+        }
+
+        .feature-item {
+            background: rgba(31, 24, 18, 0.6);
+            backdrop-filter: blur(4px);
+            padding: 1.2rem 1.2rem 1.5rem;
+            border-radius: 18px;
+            border: 1px solid #2f241b;
+            transition: all 0.25s ease;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+        }
+
+        .feature-item:hover {
+            background: rgba(42, 31, 24, 0.8);
+            border-color: #5a4230;
+            transform: translateY(-2px);
+        }
+
+        .feature-item i {
+            color: #c9ad93;
+            font-size: 1.4rem;
+            margin-bottom: 0.5rem;
+            display: inline-block;
+        }
+
+        .feature-item h4 {
+            font-weight: 600;
+            font-size: 1rem;
+            color: #efe5d8;
+            margin-bottom: 0.2rem;
+        }
+
+        .feature-item p {
+            font-size: 0.9rem;
+            color: #b9aa99;
+        }
+
+        /* ---- Footer ---- */
+        .footer-links {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 1.8rem 2.5rem;
+            margin-top: 3.5rem;
+            padding-top: 2rem;
+            border-top: 1px solid #2f241b;
+        }
+
+        .footer-links a {
+            color: #bfae9b;
+            text-decoration: none;
+            font-size: 1rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.6rem;
+            transition: color 0.2s, transform 0.2s;
+        }
+
+        .footer-links a:hover {
+            color: #f0e4d6;
+            transform: translateY(-2px);
+        }
+
+        .footer-links a i {
+            font-size: 1.1rem;
+            color: #b8946a;
+        }
+
+        .footer-meta {
+            text-align: center;
+            margin-top: 2rem;
+            font-size: 0.8rem;
+            color: #6f6052;
+            letter-spacing: 0.3px;
+        }
+
+        /* ---- Responsif ---- */
+        @media (max-width: 700px) {
+            body {
+                padding: 0 1rem 3rem;
+            }
+
+            .header-left h1 {
+                font-size: 1.5rem;
+            }
+
+            .header-badge {
+                font-size: 0.75rem;
+                padding: 0.3rem 0.8rem;
+            }
+
+            .repo-sync {
+                font-size: 0.75rem;
+                padding: 0.6rem 1rem;
+                border-radius: 30px;
+                gap: 0.8rem;
+            }
+
+            .description {
+                padding: 1.2rem 1.2rem;
+            }
+
+            .description p {
+                font-size: 1rem;
+            }
+
+            .code-block {
+                padding: 1rem 1.2rem;
+            }
+
+            .code-block code {
+                font-size: 0.8rem;
+                padding-right: 0.5rem;
+            }
+
+            .copy-btn {
+                position: static;
+                margin-top: 0.8rem;
+                display: inline-flex;
+                width: auto;
+                justify-content: center;
+            }
+
+            .install-wrapper .code-block .label {
+                margin-bottom: 0.5rem;
+            }
+
+            .info-grid {
+                grid-template-columns: 1fr 1fr;
+            }
+
+            .features {
+                grid-template-columns: 1fr 1fr;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .info-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .features {
+                grid-template-columns: 1fr;
+            }
+
+            .header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .header-right {
+                width: 100%;
+                justify-content: space-between;
+            }
+
+            .banner-wrapper {
+                border-radius: 16px;
+            }
+
+            .repo-sync {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 0.4rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+
+        <!-- BANNER -->
+        <div class="banner-wrapper">
+            <img src="https://imgbs.com/uploads/beautyplus-save-17d140cd.jpg" alt="DeepSeek CLI banner" />
+        </div>
+
+        <!-- HEADER -->
+        <div class="header">
+            <div class="header-left">
+                <i class="fas fa-terminal"></i>
+                <h1>deepseek-cli</h1>
+            </div>
+            <div class="header-right">
+                <div class="header-badge">
+                    <i class="fas fa-code-branch"></i>
+                    <span data-i18n="badge-version">v7.8.0-r6</span>
+                </div>
+                <div class="lang-selector">
+                    <i class="fas fa-globe"></i>
+                    <select id="langSwitcher" aria-label="Language selector">
+                        <option value="id">Bahasa Indonesia</option>
+                        <option value="en">English</option>
+                        <option value="es">Español</option>
+                        <option value="fr">Français</option>
+                        <option value="de">Deutsch</option>
+                        <option value="ja">日本語</option>
+                        <option value="zh">中文</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <!-- REPO SYNC INFO (dynamic) -->
+        <div class="repo-sync" id="repoSync">
+            <span><i class="fas fa-tag"></i> <span data-i18n="sync-tag">Tag:</span> <span class="highlight" id="repoTag">v7.8.0-r6</span></span>
+            <span><i class="fas fa-code-commit"></i> <span data-i18n="sync-commit">Commit:</span> <span class="highlight" id="repoCommit">a1b2c3d</span></span>
+            <span><i class="fas fa-history"></i> <span data-i18n="sync-commits">Commits:</span> <span class="highlight" id="repoCommitCount">81</span></span>
+        </div>
+
+        <!-- DESKRIPSI -->
+        <div class="description">
+            <p>
+                <span class="tag"><i class="fas fa-robot" style="margin-right:6px;"></i><span data-i18n="desc-tag">AI Agent</span></span>
+                <span data-i18n="desc-text">Multi‑provider terminal AI agent with controlled tool execution, session persistence, MCP support, document utilities, browser automation, and optional Telegram / Discord connectors.</span>
+            </p>
+        </div>
+
+        <!-- INSTALL BLOCK WITH COPY -->
+        <div class="install-wrapper">
+            <div class="code-block" id="installBlock">
+                <div class="label">
+                    <i class="fas fa-download"></i> <span data-i18n="install-label">Install (Cloudflare mirror)</span>
+                </div>
+                <code id="installCommand">curl -fsSL https://deepseek-dash.bibzflow.workers.dev/install.sh | bash</code>
+                <button class="copy-btn" id="copyInstallBtn" aria-label="Copy install command">
+                    <i class="fas fa-copy"></i> <span data-i18n="copy-btn-text">Copy</span>
+                </button>
+                <div class="copy-hint">
+                    <i class="far fa-copy"></i> <span data-i18n="install-hint">or</span> <kbd style="background:#1f1812;padding:0.1rem 0.5rem;border-radius:6px;color:#b8946a;">bash install.sh</kbd>
+                </div>
+            </div>
+        </div>
+
+        <!-- INFO GRID -->
+        <div class="info-grid">
+            <div class="info-card">
+                <i class="fas fa-cubes"></i>
+                <h3 data-i18n="grid1-title">115+ tools</h3>
+                <p data-i18n="grid1-desc">86 built‑in + 29 optional Selenium / browser tools, plus dynamic MCP tools.</p>
+            </div>
+            <div class="info-card">
+                <i class="fas fa-cloud-upload-alt"></i>
+                <h3 data-i18n="grid2-title">10+ providers</h3>
+                <p data-i18n="grid2-desc">OpenRouter, Gemini, OpenAI, Anthropic, Groq, Together, Hugging Face, Agnes &amp; more.</p>
+            </div>
+            <div class="info-card">
+                <i class="fas fa-shield-alt"></i>
+                <h3 data-i18n="grid3-title">Security first</h3>
+                <p data-i18n="grid3-desc">Tool validation, local approval, redacted secrets, private network blocking, resource limits.</p>
+            </div>
+            <div class="info-card">
+                <i class="fas fa-comment-dots"></i>
+                <h3 data-i18n="grid4-title">Telegram &amp; Discord</h3>
+                <p data-i18n="grid4-desc">Connectors with isolated memory, file handling, and strict user whitelist.</p>
+            </div>
+        </div>
+
+        <!-- FITUR UTAMA -->
+        <div class="features">
+            <div class="feature-item">
+                <i class="fas fa-brain"></i>
+                <h4 data-i18n="feat1-title">Auto compaction</h4>
+                <p data-i18n="feat1-desc">Summarises long conversations before context limit is reached.</p>
+            </div>
+            <div class="feature-item">
+                <i class="fas fa-file-alt"></i>
+                <h4 data-i18n="feat2-title">Document utils</h4>
+                <p data-i18n="feat2-desc">PDF, DOCX, XLSX, CSV, images, audio, APK &amp; more.</p>
+            </div>
+            <div class="feature-item">
+                <i class="fas fa-server"></i>
+                <h4 data-i18n="feat3-title">MCP support</h4>
+                <p data-i18n="feat3-desc">External MCP servers with pinned npm versions &amp; minimal env.</p>
+            </div>
+            <div class="feature-item">
+                <i class="fas fa-history"></i>
+                <h4 data-i18n="feat4-title">Session persistence</h4>
+                <p data-i18n="feat4-desc">Lossless archives, resume conversations, export chat.</p>
+            </div>
+            <div class="feature-item">
+                <i class="fas fa-globe"></i>
+                <h4 data-i18n="feat5-title">Browser automation</h4>
+                <p data-i18n="feat5-desc">Selenium / browser skills (optional stack).</p>
+            </div>
+            <div class="feature-item">
+                <i class="fas fa-lock"></i>
+                <h4 data-i18n="feat6-title">Firebase auth</h4>
+                <p data-i18n="feat6-desc">Verified Firebase auth + Worker access check.</p>
+            </div>
+        </div>
+
+        <!-- FOOTER -->
+        <div class="footer-links">
+            <a href="https://github.com/XbibzOfficial777/deepseek-cli" target="_blank" rel="noopener">
+                <i class="fab fa-github"></i> <span data-i18n="footer-repo">Repository</span>
+            </a>
+            <a href="https://github.com/XbibzOfficial777/deepseek-cli/blob/main/README.md" target="_blank" rel="noopener">
+                <i class="fas fa-book"></i> <span data-i18n="footer-readme">README</span>
+            </a>
+            <a href="https://github.com/XbibzOfficial777/deepseek-cli/blob/main/LICENSE" target="_blank" rel="noopener">
+                <i class="fas fa-balance-scale"></i> <span data-i18n="footer-license">License</span>
+            </a>
+            <a href="https://github.com/XbibzOfficial777/deepseek-cli/commits/main/" target="_blank" rel="noopener">
+                <i class="fas fa-history"></i> <span data-i18n="footer-commits">81 commits</span>
+            </a>
+        </div>
+
+        <div class="footer-meta">
+            <i class="far fa-calendar-alt" style="margin-right:6px;"></i> <span data-i18n="footer-updated">Updated</span> <span id="updateDate">13 Aug 2026</span> &middot;
+            Built for <i class="fas fa-terminal" style="margin:0 4px;"></i> DeepSeek CLI
+        </div>
+
+    </div>
+
+    <script>
+        (function() {
+            // ---------- i18n translations ----------
+            const translations = {
+                'id': {
+                    'badge-version': 'v7.8.0-r6',
+                    'sync-tag': 'Tag:',
+                    'sync-commit': 'Commit:',
+                    'sync-commits': 'Komit:',
+                    'desc-tag': 'Agen AI',
+                    'desc-text': 'Agen AI terminal multi‑penyedia dengan eksekusi alat terkontrol, persistensi sesi, dukungan MCP, utilitas dokumen, otomatisasi browser, dan konektor opsional Telegram / Discord.',
+                    'grid1-title': '115+ alat',
+                    'grid1-desc': '86 bawaan + 29 opsional Selenium / browser, plus alat MCP dinamis.',
+                    'grid2-title': '10+ penyedia',
+                    'grid2-desc': 'OpenRouter, Gemini, OpenAI, Anthropic, Groq, Together, Hugging Face, Agnes &amp; lainnya.',
+                    'grid3-title': 'Keamanan utama',
+                    'grid3-desc': 'Validasi alat, persetujuan lokal, rahasia yang diedit, pemblokiran jaringan pribadi, batas sumber daya.',
+                    'grid4-title': 'Telegram &amp; Discord',
+                    'grid4-desc': 'Konektor dengan memori terisolasi, penanganan file, dan daftar putih pengguna yang ketat.',
+                    'install-label': 'Instal (cermin Cloudflare)',
+                    'install-hint': 'atau',
+                    'copy-btn-text': 'Salin',
+                    'feat1-title': 'Kompresi otomatis',
+                    'feat1-desc': 'Meringkas percakapan panjang sebelum batas konteks tercapai.',
+                    'feat2-title': 'Utilitas dokumen',
+                    'feat2-desc': 'PDF, DOCX, XLSX, CSV, gambar, audio, APK &amp; lainnya.',
+                    'feat3-title': 'Dukungan MCP',
+                    'feat3-desc': 'Server MCP eksternal dengan versi npm tetap &amp; env minimal.',
+                    'feat4-title': 'Persistensi sesi',
+                    'feat4-desc': 'Arsip lossless, lanjutkan percakapan, ekspor obrolan.',
+                    'feat5-title': 'Otomatisasi browser',
+                    'feat5-desc': 'Keterampilan Selenium / browser (stack opsional).',
+                    'feat6-title': 'Auth Firebase',
+                    'feat6-desc': 'Auth Firebase terverifikasi + pemeriksaan akses Worker.',
+                    'footer-repo': 'Repositori',
+                    'footer-readme': 'README',
+                    'footer-license': 'Lisensi',
+                    'footer-commits': '81 komit',
+                    'footer-updated': 'Diperbarui'
+                },
+                'en': {
+                    'badge-version': 'v7.8.0-r6',
+                    'sync-tag': 'Tag:',
+                    'sync-commit': 'Commit:',
+                    'sync-commits': 'Commits:',
+                    'desc-tag': 'AI Agent',
+                    'desc-text': 'Multi‑provider terminal AI agent with controlled tool execution, session persistence, MCP support, document utilities, browser automation, and optional Telegram / Discord connectors.',
+                    'grid1-title': '115+ tools',
+                    'grid1-desc': '86 built‑in + 29 optional Selenium / browser tools, plus dynamic MCP tools.',
+                    'grid2-title': '10+ providers',
+                    'grid2-desc': 'OpenRouter, Gemini, OpenAI, Anthropic, Groq, Together, Hugging Face, Agnes &amp; more.',
+                    'grid3-title': 'Security first',
+                    'grid3-desc': 'Tool validation, local approval, redacted secrets, private network blocking, resource limits.',
+                    'grid4-title': 'Telegram &amp; Discord',
+                    'grid4-desc': 'Connectors with isolated memory, file handling, and strict user whitelist.',
+                    'install-label': 'Install (Cloudflare mirror)',
+                    'install-hint': 'or',
+                    'copy-btn-text': 'Copy',
+                    'feat1-title': 'Auto compaction',
+                    'feat1-desc': 'Summarises long conversations before context limit is reached.',
+                    'feat2-title': 'Document utils',
+                    'feat2-desc': 'PDF, DOCX, XLSX, CSV, images, audio, APK &amp; more.',
+                    'feat3-title': 'MCP support',
+                    'feat3-desc': 'External MCP servers with pinned npm versions &amp; minimal env.',
+                    'feat4-title': 'Session persistence',
+                    'feat4-desc': 'Lossless archives, resume conversations, export chat.',
+                    'feat5-title': 'Browser automation',
+                    'feat5-desc': 'Selenium / browser skills (optional stack).',
+                    'feat6-title': 'Firebase auth',
+                    'feat6-desc': 'Verified Firebase auth + Worker access check.',
+                    'footer-repo': 'Repository',
+                    'footer-readme': 'README',
+                    'footer-license': 'License',
+                    'footer-commits': '81 commits',
+                    'footer-updated': 'Updated'
+                },
+                'es': {
+                    'badge-version': 'v7.8.0-r6',
+                    'sync-tag': 'Etiqueta:',
+                    'sync-commit': 'Commit:',
+                    'sync-commits': 'Commits:',
+                    'desc-tag': 'Agente IA',
+                    'desc-text': 'Agente IA de terminal multi‑proveedor con ejecución controlada de herramientas, persistencia de sesión, soporte MCP, utilidades de documentos, automatización de navegador y conectores opcionales de Telegram / Discord.',
+                    'grid1-title': '115+ herramientas',
+                    'grid1-desc': '86 integradas + 29 opcionales de Selenium / navegador, más herramientas MCP dinámicas.',
+                    'grid2-title': '10+ proveedores',
+                    'grid2-desc': 'OpenRouter, Gemini, OpenAI, Anthropic, Groq, Together, Hugging Face, Agnes &amp; más.',
+                    'grid3-title': 'Seguridad primero',
+                    'grid3-desc': 'Validación de herramientas, aprobación local, secretos redactados, bloqueo de red privada, límites de recursos.',
+                    'grid4-title': 'Telegram &amp; Discord',
+                    'grid4-desc': 'Conectores con memoria aislada, manejo de archivos y lista blanca estricta.',
+                    'install-label': 'Instalar (espejo Cloudflare)',
+                    'install-hint': 'o',
+                    'copy-btn-text': 'Copiar',
+                    'feat1-title': 'Compacción automática',
+                    'feat1-desc': 'Resume conversaciones largas antes de alcanzar el límite de contexto.',
+                    'feat2-title': 'Utilidades de documentos',
+                    'feat2-desc': 'PDF, DOCX, XLSX, CSV, imágenes, audio, APK &amp; más.',
+                    'feat3-title': 'Soporte MCP',
+                    'feat3-desc': 'Servidores MCP externos con versiones npm fijas y entorno mínimo.',
+                    'feat4-title': 'Persistencia de sesión',
+                    'feat4-desc': 'Archivos sin pérdida, reanudar conversaciones, exportar chat.',
+                    'feat5-title': 'Automatización del navegador',
+                    'feat5-desc': 'Habilidades de Selenium / navegador (pila opcional).',
+                    'feat6-title': 'Autenticación Firebase',
+                    'feat6-desc': 'Autenticación Firebase verificada + comprobación de acceso Worker.',
+                    'footer-repo': 'Repositorio',
+                    'footer-readme': 'README',
+                    'footer-license': 'Licencia',
+                    'footer-commits': '81 commits',
+                    'footer-updated': 'Actualizado'
+                },
+                'fr': {
+                    'badge-version': 'v7.8.0-r6',
+                    'sync-tag': 'Étiquette :',
+                    'sync-commit': 'Commit :',
+                    'sync-commits': 'Commits :',
+                    'desc-tag': 'Agent IA',
+                    'desc-text': 'Agent IA terminal multi‑fournisseur avec exécution contrôlée des outils, persistance des sessions, support MCP, utilitaires de documents, automatisation du navigateur et connecteurs optionnels Telegram / Discord.',
+                    'grid1-title': '115+ outils',
+                    'grid1-desc': '86 intégrés + 29 optionnels Selenium / navigateur, plus des outils MCP dynamiques.',
+                    'grid2-title': '10+ fournisseurs',
+                    'grid2-desc': 'OpenRouter, Gemini, OpenAI, Anthropic, Groq, Together, Hugging Face, Agnes &amp; plus.',
+                    'grid3-title': 'Sécurité d\'abord',
+                    'grid3-desc': 'Validation des outils, approbation locale, secrets caviardés, blocage du réseau privé, limites de ressources.',
+                    'grid4-title': 'Telegram &amp; Discord',
+                    'grid4-desc': 'Connecteurs avec mémoire isolée, gestion des fichiers et liste blanche stricte.',
+                    'install-label': 'Installer (miroir Cloudflare)',
+                    'install-hint': 'ou',
+                    'copy-btn-text': 'Copier',
+                    'feat1-title': 'Compactage automatique',
+                    'feat1-desc': 'Résume les longues conversations avant d\'atteindre la limite de contexte.',
+                    'feat2-title': 'Utilitaires de documents',
+                    'feat2-desc': 'PDF, DOCX, XLSX, CSV, images, audio, APK &amp; plus.',
+                    'feat3-title': 'Support MCP',
+                    'feat3-desc': 'Serveurs MCP externes avec versions npm épinglées et environnement minimal.',
+                    'feat4-title': 'Persistance des sessions',
+                    'feat4-desc': 'Archives sans perte, reprise des conversations, exportation du chat.',
+                    'feat5-title': 'Automatisation du navigateur',
+                    'feat5-desc': 'Compétences Selenium / navigateur (pile optionnelle).',
+                    'feat6-title': 'Authentification Firebase',
+                    'feat6-desc': 'Authentification Firebase vérifiée + vérification d\'accès Worker.',
+                    'footer-repo': 'Dépôt',
+                    'footer-readme': 'README',
+                    'footer-license': 'Licence',
+                    'footer-commits': '81 commits',
+                    'footer-updated': 'Mis à jour'
+                },
+                'de': {
+                    'badge-version': 'v7.8.0-r6',
+                    'sync-tag': 'Tag:',
+                    'sync-commit': 'Commit:',
+                    'sync-commits': 'Commits:',
+                    'desc-tag': 'KI-Agent',
+                    'desc-text': 'Multi‑Anbieter Terminal-KI-Agent mit kontrollierter Werkzeugausführung, Sitzungspersistenz, MCP-Unterstützung, Dokumenten-Dienstprogrammen, Browser-Automatisierung und optionalen Telegram / Discord-Konnektoren.',
+                    'grid1-title': '115+ Werkzeuge',
+                    'grid1-desc': '86 integriert + 29 optionale Selenium / Browser-Tools, plus dynamische MCP-Tools.',
+                    'grid2-title': '10+ Anbieter',
+                    'grid2-desc': 'OpenRouter, Gemini, OpenAI, Anthropic, Groq, Together, Hugging Face, Agnes &amp; mehr.',
+                    'grid3-title': 'Sicherheit zuerst',
+                    'grid3-desc': 'Werkzeugvalidierung, lokale Genehmigung, geschwärzte Geheimnisse, Blockierung privater Netzwerke, Ressourcenlimits.',
+                    'grid4-title': 'Telegram &amp; Discord',
+                    'grid4-desc': 'Konnektoren mit isoliertem Speicher, Dateiverwaltung und strenger Whitelist.',
+                    'install-label': 'Installieren (Cloudflare-Spiegel)',
+                    'install-hint': 'oder',
+                    'copy-btn-text': 'Kopieren',
+                    'feat1-title': 'Automatische Komprimierung',
+                    'feat1-desc': 'Fasst lange Gespräche zusammen, bevor das Kontextlimit erreicht wird.',
+                    'feat2-title': 'Dokumenten-Dienstprogramme',
+                    'feat2-desc': 'PDF, DOCX, XLSX, CSV, Bilder, Audio, APK &amp; mehr.',
+                    'feat3-title': 'MCP-Unterstützung',
+                    'feat3-desc': 'Externe MCP-Server mit festgelegten npm-Versionen und minimaler Umgebung.',
+                    'feat4-title': 'Sitzungspersistenz',
+                    'feat4-desc': 'Verlustfreie Archive, Gespräche fortsetzen, Chat exportieren.',
+                    'feat5-title': 'Browser-Automatisierung',
+                    'feat5-desc': 'Selenium / Browser-Fähigkeiten (optionaler Stack).',
+                    'feat6-title': 'Firebase-Authentifizierung',
+                    'feat6-desc': 'Verifizierte Firebase-Auth + Worker-Zugriffsprüfung.',
+                    'footer-repo': 'Repository',
+                    'footer-readme': 'README',
+                    'footer-license': 'Lizenz',
+                    'footer-commits': '81 Commits',
+                    'footer-updated': 'Aktualisiert'
+                },
+                'ja': {
+                    'badge-version': 'v7.8.0-r6',
+                    'sync-tag': 'タグ:',
+                    'sync-commit': 'コミット:',
+                    'sync-commits': 'コミット数:',
+                    'desc-tag': 'AIエージェント',
+                    'desc-text': 'マルチプロバイダーターミナルAIエージェント。制御されたツール実行、セッション永続化、MCPサポート、ドキュメントユーティリティ、ブラウザ自動化、オプションのTelegram / Discordコネクタを備えています。',
+                    'grid1-title': '115以上のツール',
+                    'grid1-desc': '86の組み込み + 29のオプションSelenium / ブラウザツール、さらに動的MCPツール。',
+                    'grid2-title': '10以上のプロバイダー',
+                    'grid2-desc': 'OpenRouter、Gemini、OpenAI、Anthropic、Groq、Together、Hugging Face、Agnes など。',
+                    'grid3-title': 'セキュリティ最優先',
+                    'grid3-desc': 'ツール検証、ローカル承認、秘匿情報の編集、プライベートネットワークブロック、リソース制限。',
+                    'grid4-title': 'Telegram と Discord',
+                    'grid4-desc': '分離メモリ、ファイル処理、厳格なユーザーホワイトリストを備えたコネクタ。',
+                    'install-label': 'インストール（Cloudflareミラー）',
+                    'install-hint': 'または',
+                    'copy-btn-text': 'コピー',
+                    'feat1-title': '自動圧縮',
+                    'feat1-desc': 'コンテキスト制限に達する前に長い会話を要約します。',
+                    'feat2-title': 'ドキュメントユーティリティ',
+                    'feat2-desc': 'PDF、DOCX、XLSX、CSV、画像、音声、APK など。',
+                    'feat3-title': 'MCPサポート',
+                    'feat3-desc': '固定npmバージョンと最小限の環境を持つ外部MCPサーバー。',
+                    'feat4-title': 'セッション永続化',
+                    'feat4-desc': 'ロスレスアーカイブ、会話の再開、チャットのエクスポート。',
+                    'feat5-title': 'ブラウザ自動化',
+                    'feat5-desc': 'Selenium / ブラウザスキル（オプションスタック）。',
+                    'feat6-title': 'Firebase認証',
+                    'feat6-desc': '検証済みFirebase認証 + Workerアクセスチェック。',
+                    'footer-repo': 'リポジトリ',
+                    'footer-readme': 'README',
+                    'footer-license': 'ライセンス',
+                    'footer-commits': '81 コミット',
+                    'footer-updated': '更新日'
+                },
+                'zh': {
+                    'badge-version': 'v7.8.0-r6',
+                    'sync-tag': '标签:',
+                    'sync-commit': '提交:',
+                    'sync-commits': '提交数:',
+                    'desc-tag': 'AI代理',
+                    'desc-text': '多提供商终端AI代理，具有受控工具执行、会话持久性、MCP支持、文档实用程序、浏览器自动化以及可选的Telegram / Discord连接器。',
+                    'grid1-title': '115+ 工具',
+                    'grid1-desc': '86个内置 + 29个可选Selenium / 浏览器工具，外加动态MCP工具。',
+                    'grid2-title': '10+ 提供商',
+                    'grid2-desc': 'OpenRouter、Gemini、OpenAI、Anthropic、Groq、Together、Hugging Face、Agnes 等。',
+                    'grid3-title': '安全第一',
+                    'grid3-desc': '工具验证、本地批准、修订机密、私有网络阻止、资源限制。',
+                    'grid4-title': 'Telegram 和 Discord',
+                    'grid4-desc': '具有隔离内存、文件处理和严格用户白名单的连接器。',
+                    'install-label': '安装（Cloudflare镜像）',
+                    'install-hint': '或',
+                    'copy-btn-text': '复制',
+                    'feat1-title': '自动压缩',
+                    'feat1-desc': '在达到上下文限制之前总结长对话。',
+                    'feat2-title': '文档实用程序',
+                    'feat2-desc': 'PDF、DOCX、XLSX、CSV、图像、音频、APK 等。',
+                    'feat3-title': 'MCP支持',
+                    'feat3-desc': '具有固定npm版本和最小环境的外部MCP服务器。',
+                    'feat4-title': '会话持久性',
+                    'feat4-desc': '无损存档、恢复对话、导出聊天。',
+                    'feat5-title': '浏览器自动化',
+                    'feat5-desc': 'Selenium / 浏览器技能（可选堆栈）。',
+                    'feat6-title': 'Firebase认证',
+                    'feat6-desc': '已验证的Firebase认证 + Worker访问检查。',
+                    'footer-repo': '仓库',
+                    'footer-readme': '自述文件',
+                    'footer-license': '许可证',
+                    'footer-commits': '81 次提交',
+                    'footer-updated': '更新于'
+                }
+            };
+
+            // ---------- DOM refs ----------
+            const langSelect = document.getElementById('langSwitcher');
+            const elements = document.querySelectorAll('[data-i18n]');
+            const copyBtn = document.getElementById('copyInstallBtn');
+            const installCmd = document.getElementById('installCommand');
+
+            // ---------- apply language ----------
+            function applyLanguage(lang) {
+                if (!translations[lang]) lang = 'en';
+                elements.forEach(el => {
+                    const key = el.getAttribute('data-i18n');
+                    if (translations[lang] && translations[lang][key] !== undefined) {
+                        el.textContent = translations[lang][key];
+                    }
+                });
+                // Update select value
+                langSelect.value = lang;
+                localStorage.setItem('preferred-lang', lang);
+            }
+
+            // ---------- language switch ----------
+            langSelect.addEventListener('change', function() {
+                applyLanguage(this.value);
+            });
+
+            // ---------- detect initial language ----------
+            function getInitialLang() {
+                const stored = localStorage.getItem('preferred-lang');
+                if (stored && translations[stored]) return stored;
+                const browserLang = navigator.language.split('-')[0];
+                if (translations[browserLang]) return browserLang;
+                return 'en';
+            }
+
+            // ---------- copy functionality ----------
+            copyBtn.addEventListener('click', function() {
+                const text = installCmd.textContent.trim();
+                navigator.clipboard.writeText(text).then(() => {
+                    const originalHtml = this.innerHTML;
+                    this.innerHTML = '<i class="fas fa-check"></i> <span data-i18n="copied-text">Copied!</span>';
+                    this.classList.add('copied');
+                    // Re-apply translation for the copied text (if needed)
+                    const currentLang = langSelect.value;
+                    const copiedSpan = this.querySelector('span');
+                    if (copiedSpan) {
+                        const key = 'copied-text';
+                        if (translations[currentLang] && translations[currentLang][key]) {
+                            copiedSpan.textContent = translations[currentLang][key];
+                        }
+                    }
+                    setTimeout(() => {
+                        this.innerHTML = originalHtml;
+                        this.classList.remove('copied');
+                        // Re-apply translation for copy button text
+                        const currentLang2 = langSelect.value;
+                        const btnSpan = this.querySelector('span');
+                        if (btnSpan) {
+                            const key = 'copy-btn-text';
+                            if (translations[currentLang2] && translations[currentLang2][key]) {
+                                btnSpan.textContent = translations[currentLang2][key];
+                            }
+                        }
+                    }, 2500);
+                }).catch(() => {
+                    alert('Could not copy. Please select and copy manually.');
+                });
+            });
+
+            // ---------- fetch repo info from GitHub API ----------
+            async function fetchRepoInfo() {
+                const repoOwner = 'XbibzOfficial777';
+                const repoName = 'deepseek-cli';
+                const apiBase = `https://api.github.com/repos/${repoOwner}/${repoName}`;
+
+                try {
+                    // Get tags
+                    const tagsRes = await fetch(`${apiBase}/tags?per_page=1`);
+                    let latestTag = 'v7.8.0-r6';
+                    if (tagsRes.ok) {
+                        const tagsData = await tagsRes.json();
+                        if (tagsData.length > 0 && tagsData[0].name) {
+                            latestTag = tagsData[0].name;
+                        }
+                    }
+
+                    // Get latest commit SHA (short)
+                    const commitsRes = await fetch(`${apiBase}/commits?sha=main&per_page=1`);
+                    let commitSha = 'a1b2c3d';
+                    let commitCount = 81;
+                    if (commitsRes.ok) {
+                        const commitsData = await commitsRes.json();
+                        if (commitsData.length > 0 && commitsData[0].sha) {
+                            commitSha = commitsData[0].sha.substring(0, 7);
+                        }
+                        const linkHeader = commitsRes.headers.get('Link');
+                        if (linkHeader) {
+                            const match = linkHeader.match(/&page=(\d+)>; rel="last"/);
+                            if (match) {
+                                commitCount = parseInt(match[1], 10);
+                            }
+                        }
+                    }
+
+                    document.getElementById('repoTag').textContent = latestTag;
+                    document.getElementById('repoCommit').textContent = commitSha;
+                    document.getElementById('repoCommitCount').textContent = commitCount;
+
+                    // Update badge version
+                    const badgeEl = document.querySelector('[data-i18n="badge-version"]');
+                    if (badgeEl) {
+                        badgeEl.textContent = latestTag;
+                    }
+
+                    // Update footer commit link text
+                    const footerCommitLink = document.querySelector('.footer-links a:last-child span[data-i18n="footer-commits"]');
+                    if (footerCommitLink) {
+                        footerCommitLink.textContent = `${commitCount} commits`;
+                    }
+
+                    // Update translation object for current language
+                    const currentLang = langSelect.value;
+                    if (translations[currentLang]) {
+                        translations[currentLang]['badge-version'] = latestTag;
+                    }
+
+                    // Re-apply current language to refresh other strings
+                    applyLanguage(currentLang);
+
+                } catch (e) {
+                    console.warn('Could not fetch repo info, using fallback.', e);
+                }
+            }
+
+            // ---------- init ----------
+            const initialLang = getInitialLang();
+            applyLanguage(initialLang);
+            fetchRepoInfo();
+
+            // Update date
+            const now = new Date();
+            const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            const dateStr = `${now.getDate()} ${months[now.getMonth()]} ${now.getFullYear()}`;
+            document.getElementById('updateDate').textContent = dateStr;
+
+            // Add missing "copied-text" translation for all languages
+            // (already included in each translation object, but we ensure it)
+            for (let lang in translations) {
+                if (!translations[lang]['copied-text']) {
+                    translations[lang]['copied-text'] = 'Copied!';
+                }
+            }
+        })();
+    </script>
+</body>
+</html>
