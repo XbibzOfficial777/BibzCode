@@ -561,7 +561,8 @@ def handle_command(cmd: str, agent: Agent, memory: Memory, tools: ToolRegistry) 
             })
             t = threading.Thread(target=_reminder_worker, args=(seconds, message), daemon=True)
             t.start()
-            console.print(f'  [green]Reminder set for {seconds}s:[/green] [bold yellow]{message or "Time\'s up!"}[/bold yellow]')
+            reminder_text = message or "Time's up!"
+            console.print(f'  [green]Reminder set for {seconds}s:[/green] [bold yellow]{reminder_text}[/bold yellow]')
             console.print()
 
     # ── /connectors ─────────────────────

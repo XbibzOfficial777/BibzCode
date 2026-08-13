@@ -1302,7 +1302,8 @@ class StreamRenderer:
             if len(msg['content']) > 80:
                 preview += '...'
             
-            console.print(f'    [{role_color}]•[/ {role_color}] [{msg['role'].upper()}] {preview}')
+            role_label = str(msg.get('role', 'unknown')).upper()
+            console.print(f'    [{role_color}]•[/{role_color}] [{role_label}] {preview}')
         
         console.print()
         console.print('  [dim]Use Ctrl+Up/Ctrl+Down to navigate history[/dim]')
