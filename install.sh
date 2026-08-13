@@ -128,7 +128,10 @@ with tarfile.open(archive, 'r:gz') as tf:
         target = (root / member.name).resolve()
         if os.path.commonpath([str(root), str(target)]) != str(root):
             raise SystemExit(f'archive escapes destination: {member.name}')
-    tf.extractall(root, members=members)
+    try:
+        tf.extractall(root, members=members, filter='data')
+    except TypeError:  # Python 3.10/3.11 do not expose the filter argument
+        tf.extractall(root, members=members)
 PY
 }
 
