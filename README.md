@@ -2,7 +2,7 @@
 
 # 🧠 DeepSeek CLI Agent v7.8.0
 ### *The Ultimate Multi-Provider AI Agent for Developers*
-[![deepseek-cli](https://imgbs.com/uploads/670312-c65bfd00.png)](https://deepseek-cli.pages.dev)
+[![deepseek-cli](https://imgbs.com/uploads/beautyplus-save-17d140cd.jpg)](https://deepseek-cli.pages.dev)
 
 [![Version](https://img.shields.io/badge/Version-7.8.0-00FFA3.svg?style=for-the-badge)](https://github.com/XbibzOfficial777/deepseek-cli)
 [![License](https://img.shields.io/badge/License-MIT-white.svg?style=for-the-badge)](https://github.com/XbibzOfficial777/deepseek-cli/blob/main/LICENSE)
