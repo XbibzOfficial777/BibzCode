@@ -38,6 +38,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # Codacy 4.0.0's SARIF formatter tries to decode binary release artifacts
+      # as UTF-8 and crashes with MalformedInputException. The archive is
+      # deterministically verified elsewhere; remove only the runner copy so
+      # this remains a source-code security scan.
+      - name: Exclude binary release artifact from source scan
+        run: rm -f releases/*.tar.gz
+
       # Execute Codacy Analysis CLI and generate a SARIF output with the security issues identified during the analysis
       - name: Run Codacy Analysis CLI
         uses: codacy/codacy-analysis-cli-action@d840f886c4bd4edc059706d09c6a1586111c540b
