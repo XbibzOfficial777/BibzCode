@@ -38,12 +38,13 @@ def release_file_bytes(path: Path) -> bytes:
     """Return archive bytes, omitting GitHub-only README presentation blocks."""
     data = path.read_bytes()
     if path == ROOT / "README.md":
-        start_marker = b"<!-- github-only-logo:start -->\n"
-        end_marker = b"<!-- github-only-logo:end -->\n\n"
-        if start_marker in data:
-            start = data.index(start_marker)
-            end = data.index(end_marker, start) + len(end_marker)
-            data = data[:start] + data[end:]
+        for block_name in (b"logo", b"installer"):
+            start_marker = b"<!-- github-only-" + block_name + b":start -->\n"
+            end_marker = b"<!-- github-only-" + block_name + b":end -->\n\n"
+            if start_marker in data:
+                start = data.index(start_marker)
+                end = data.index(end_marker, start) + len(end_marker)
+                data = data[:start] + data[end:]
     return data
 
 

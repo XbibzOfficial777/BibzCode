@@ -15,6 +15,9 @@ BIN_DIR="${DEEPSEEK_BIN_DIR:-$HOME/.local/bin}"
 FULL=false
 ACTION=install
 YES=false
+NON_INTERACTIVE=false
+INSTALL_MODE=""
+MODE_EXPLICIT=false
 
 bold='\033[1m'; green='\033[32m'; yellow='\033[33m'; red='\033[31m'; reset='\033[0m'
 info(){ printf '› %s\n' "$*"; }
@@ -22,22 +25,55 @@ ok(){ printf "%b✓%b %s\n" "$green$bold" "$reset" "$*"; }
 warn(){ printf "%b!%b %s\n" "$yellow$bold" "$reset" "$*"; }
 die(){ printf "%b✗ %s%b\n" "$red$bold" "$*" "$reset" >&2; exit 1; }
 
+set_install_mode(){
+  local requested="$1" normalized
+  case "$requested" in
+    managed|managed-venv|venv) normalized=managed ;;
+    active|active-venv) normalized=active ;;
+    user|user-python|default|default-python) normalized=user ;;
+    *) die "Unknown install mode: $requested (expected managed, active, or user)" ;;
+  esac
+  if [[ "$MODE_EXPLICIT" == true && -n "$INSTALL_MODE" && "$INSTALL_MODE" != "$normalized" ]]; then
+    die "Conflicting install modes: $INSTALL_MODE and $normalized"
+  fi
+  INSTALL_MODE="$normalized"
+  MODE_EXPLICIT=true
+}
+
 usage(){ cat <<EOF
 DeepSeek CLI $VERSION installer
-Usage: bash install.sh [--full] [--uninstall|--purge] [--yes]
-  --full       install optional browser/document dependencies
-  --uninstall  remove application and launcher; preserve ~/.deepseek-cli
-  --purge      remove application plus all local auth/config/sessions (destructive)
-  --yes        confirm --purge non-interactively
+Usage: bash install.sh [--full] [install mode] [--uninstall|--purge] [--yes]
+
+Install modes (interactive when a terminal is available):
+  --managed-venv  create/reuse the dedicated managed venv (recommended/default)
+  --active-venv   install dependencies into the currently active VIRTUAL_ENV
+  --user-python   use the default Python without a venv (pip --user)
+
+Other options:
+  --full            install optional browser/document dependencies
+  --non-interactive do not prompt; choose managed venv unless a mode is explicit
+  --uninstall       remove application and launcher; preserve data/Python environment
+  --purge           remove application plus all local auth/config/sessions (destructive)
+  --yes             confirm --purge non-interactively
+
 Environment: DEEPSEEK_CF_BASE_URL, DEEPSEEK_INSTALL_DIR,
-             DEEPSEEK_VENV_DIR, DEEPSEEK_BIN_DIR,
+             DEEPSEEK_VENV_DIR, DEEPSEEK_BIN_DIR, DEEPSEEK_PYTHON,
+             DEEPSEEK_INSTALL_MODE=managed|active|user,
              DEEPSEEK_SOURCE_ORDER=cf,github
 EOF
 }
 
+if [[ -n "${DEEPSEEK_INSTALL_MODE:-}" ]]; then
+  set_install_mode "$DEEPSEEK_INSTALL_MODE"
+fi
+
 for arg in "$@"; do
   case "$arg" in
     --full) FULL=true ;;
+    --managed-venv|--venv) set_install_mode managed ;;
+    --active-venv) set_install_mode active ;;
+    --user-python|--default-python) set_install_mode user ;;
+    --non-interactive) NON_INTERACTIVE=true ;;
     --uninstall) ACTION=uninstall ;;
     --purge) ACTION=purge ;;
     --yes|-y) YES=true ;;
@@ -53,13 +89,15 @@ remove_application(){
 
 if [[ "$ACTION" == uninstall ]]; then
   remove_application
-  ok "Application removed; config, auth, sessions, uploads, logs, and venv preserved in ~/.deepseek-cli"
+  ok "Application removed; config, auth, sessions, uploads, logs, and Python environment preserved"
   exit 0
 fi
 
 if [[ "$ACTION" == purge ]]; then
+  previous_mode="$(head -n 1 "$HOME/.deepseek-cli/install-mode" 2>/dev/null || true)"
   if [[ "$YES" != true ]]; then
-    [[ -e /dev/tty ]] || die "--purge requires --yes without an interactive terminal"
+    [[ -r /dev/tty && -w /dev/tty ]] && (: </dev/tty) 2>/dev/null \
+      || die "--purge requires --yes without an interactive terminal"
     printf 'Delete ALL DeepSeek CLI local data under %s? Type PURGE: ' "$HOME/.deepseek-cli" >/dev/tty
     read -r answer </dev/tty
     [[ "$answer" == PURGE ]] || die "Purge cancelled"
@@ -68,16 +106,76 @@ if [[ "$ACTION" == purge ]]; then
   rm -rf -- "$HOME/.deepseek-cli"
   rm -f -- "$HOME/.deepseek_api_key"
   ok "Application and all DeepSeek CLI local data removed"
+  if [[ "$previous_mode" == active || "$previous_mode" == user ]]; then
+    warn "Dependencies installed in the external Python environment were preserved."
+  fi
   exit 0
 fi
 
-command -v python3 >/dev/null 2>&1 || die "Python 3.10+ is required"
-PYTHON=python3
-"$PYTHON" - <<'PY' || die "Python 3.10+ is required"
+has_controlling_tty(){
+  [[ -r /dev/tty && -w /dev/tty ]] && (: </dev/tty) 2>/dev/null
+}
+
+choose_install_mode(){
+  if [[ "$MODE_EXPLICIT" == true ]]; then return; fi
+  if [[ "$NON_INTERACTIVE" == true ]] || ! has_controlling_tty; then
+    INSTALL_MODE=managed
+    return
+  fi
+
+  cat >/dev/tty <<'EOF'
+
+Choose the Python environment for DeepSeek CLI:
+  1) Managed venv (recommended, isolated, default)
+  2) Currently active venv (requires VIRTUAL_ENV)
+  3) User/default Python (no venv, installs with pip --user)
+EOF
+  printf 'Selection [1]: ' >/dev/tty
+  read -r selection </dev/tty
+  case "${selection:-1}" in
+    1) INSTALL_MODE=managed ;;
+    2) INSTALL_MODE=active ;;
+    3) INSTALL_MODE=user ;;
+    *) die "Invalid install-mode selection: $selection" ;;
+  esac
+}
+
+choose_install_mode
+
+PYTHON_REQUESTED="${DEEPSEEK_PYTHON:-python3}"
+PYTHON="$(command -v -- "$PYTHON_REQUESTED" 2>/dev/null || true)"
+[[ -n "$PYTHON" && -x "$PYTHON" ]] || die "Python 3.10+ is required (not found: $PYTHON_REQUESTED)"
+check_python(){
+  "$1" - <<'PY' || return 1
 import sys
 if sys.version_info < (3, 10):
     raise SystemExit(f"found Python {sys.version.split()[0]}")
 PY
+}
+check_python "$PYTHON" || die "Python 3.10+ is required"
+
+RUNTIME_PYTHON=""
+case "$INSTALL_MODE" in
+  managed)
+    info "Install mode: managed venv at $VENV_DIR"
+    ;;
+  active)
+    [[ -n "${VIRTUAL_ENV:-}" ]] || die "--active-venv requires an active VIRTUAL_ENV"
+    RUNTIME_PYTHON="$VIRTUAL_ENV/bin/python"
+    [[ -x "$RUNTIME_PYTHON" ]] || die "Active venv has no executable Python: $RUNTIME_PYTHON"
+    check_python "$RUNTIME_PYTHON" || die "The active venv requires Python 3.10+"
+    info "Install mode: active venv at $VIRTUAL_ENV"
+    ;;
+  user)
+    if [[ -n "${VIRTUAL_ENV:-}" && "$PYTHON" == "$VIRTUAL_ENV"/bin/* ]]; then
+      die "--user-python cannot use the active venv interpreter; deactivate it or set DEEPSEEK_PYTHON"
+    fi
+    RUNTIME_PYTHON="$PYTHON"
+    info "Install mode: user/default Python at $RUNTIME_PYTHON (pip --user)"
+    warn "This mode is not isolated and may share dependencies with other user applications."
+    ;;
+  *) die "Internal error: unresolved install mode" ;;
+esac
 
 fetch(){
   local url="$1" output="$2"
@@ -174,22 +272,41 @@ fi
 
 mkdir -p "$HOME/.deepseek-cli" "$BIN_DIR" "$(dirname "$INSTALL_DIR")"
 chmod 0700 "$HOME/.deepseek-cli"
-if [[ ! -x "$VENV_DIR/bin/python" ]]; then
-  info "Creating virtual environment"
-  "$PYTHON" -m venv "$VENV_DIR"
+
+PIP_SCOPE=()
+case "$INSTALL_MODE" in
+  managed)
+    if [[ ! -x "$VENV_DIR/bin/python" ]]; then
+      info "Creating managed virtual environment"
+      "$PYTHON" -m venv "$VENV_DIR"
+    fi
+    RUNTIME_PYTHON="$VENV_DIR/bin/python"
+    check_python "$RUNTIME_PYTHON" || die "The managed venv requires Python 3.10+"
+    "$RUNTIME_PYTHON" -m ensurepip --upgrade >/dev/null 2>&1 || true
+    ;;
+  active)
+    "$RUNTIME_PYTHON" -m ensurepip --upgrade >/dev/null 2>&1 || true
+    ;;
+  user)
+    PIP_SCOPE=(--user --no-warn-script-location)
+    # PEP 668 can block even user-site installs. This override remains scoped
+    # to --user, so the externally managed system environment is not modified.
+    if "$RUNTIME_PYTHON" -m pip install --help 2>/dev/null | grep -q -- '--break-system-packages'; then
+      PIP_SCOPE+=(--break-system-packages)
+    fi
+    ;;
+esac
+
+"$RUNTIME_PYTHON" -m pip --version >/dev/null 2>&1 || die "pip is unavailable for the selected Python environment"
+if [[ "$INSTALL_MODE" == managed ]]; then
+  "$RUNTIME_PYTHON" -m pip install --disable-pip-version-check --upgrade 'pip<27'
 fi
-VENV_PYTHON="$VENV_DIR/bin/python"
-"$VENV_PYTHON" -m ensurepip --upgrade >/dev/null 2>&1 || true
-"$VENV_PYTHON" -m pip --version >/dev/null 2>&1 || die "pip is unavailable; install the Python venv/ensurepip package"
-"$VENV_PYTHON" -m pip install --disable-pip-version-check --upgrade 'pip<27'
-if [[ -f "$SOURCE_DIR/requirements-lock.txt" ]]; then
-  "$VENV_PYTHON" -m pip install --disable-pip-version-check --require-hashes -r "$SOURCE_DIR/requirements-lock.txt"
-else
-  die "Hashed core dependency lock is missing"
-fi
+"$RUNTIME_PYTHON" -m pip install --disable-pip-version-check "${PIP_SCOPE[@]}" \
+  --require-hashes -r "$SOURCE_DIR/requirements-lock.txt"
 if [[ "$FULL" == true ]]; then
   [[ -f "$SOURCE_DIR/requirements-optional-lock.txt" ]] || die "Hashed optional dependency lock is missing"
-  "$VENV_PYTHON" -m pip install --disable-pip-version-check --require-hashes -r "$SOURCE_DIR/requirements-optional-lock.txt"
+  "$RUNTIME_PYTHON" -m pip install --disable-pip-version-check "${PIP_SCOPE[@]}" \
+    --require-hashes -r "$SOURCE_DIR/requirements-optional-lock.txt"
 fi
 
 stage="$(dirname "$INSTALL_DIR")/.deepseek-cli-stage.$$"
@@ -204,7 +321,7 @@ cp "$SOURCE_DIR/requirements-lock.txt" "$stage/requirements-lock.txt"
 [[ -f "$SOURCE_DIR/pyproject.toml" ]] && cp "$SOURCE_DIR/pyproject.toml" "$stage/"
 find "$stage" -type d -name __pycache__ -prune -exec rm -rf {} +
 
-"$VENV_PYTHON" - "$stage" "$VERSION" <<'PY'
+"$RUNTIME_PYTHON" - "$stage" "$VERSION" <<'PY'
 import sys
 sys.path.insert(0, sys.argv[1])
 from deepseek.version import __version__
@@ -222,16 +339,22 @@ if ! mv "$stage" "$INSTALL_DIR"; then
 fi
 rm -rf -- "$backup"
 
-cat > "$BIN_DIR/dscli" <<EOF
-#!/usr/bin/env bash
-set -Eeuo pipefail
-export DEEPSEEK_ORIGINAL_CWD="\$PWD"
-export PYTHONPATH="$INSTALL_DIR\${PYTHONPATH:+:\$PYTHONPATH}"
-exec "$VENV_PYTHON" -m deepseek "\$@"
+printf '%s\n' "$INSTALL_MODE" > "$HOME/.deepseek-cli/install-mode"
+chmod 0600 "$HOME/.deepseek-cli/install-mode"
+
+{
+  printf '%s\n' '#!/usr/bin/env bash' 'set -Eeuo pipefail'
+  printf 'DEEPSEEK_APP_DIR=%q\n' "$INSTALL_DIR"
+  printf 'DEEPSEEK_PYTHON_BIN=%q\n' "$RUNTIME_PYTHON"
+  cat <<'EOF'
+export DEEPSEEK_ORIGINAL_CWD="$PWD"
+export PYTHONPATH="$DEEPSEEK_APP_DIR${PYTHONPATH:+:$PYTHONPATH}"
+exec "$DEEPSEEK_PYTHON_BIN" -m deepseek "$@"
 EOF
+} > "$BIN_DIR/dscli"
 chmod 0755 "$BIN_DIR/dscli"
 
-ok "Installed DeepSeek CLI $VERSION"
+ok "Installed DeepSeek CLI $VERSION using install mode: $INSTALL_MODE"
 printf 'Launcher: %s\n' "$BIN_DIR/dscli"
 if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
   warn "$BIN_DIR is not in PATH. Add it manually to your shell profile."

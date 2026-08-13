@@ -25,6 +25,28 @@ The Cloudflare mirror works when GitHub is unavailable or blocked:
 curl -fsSL https://deepseek-dash.bibzflow.workers.dev/install.sh | bash
 ```
 
+<!-- github-only-installer:start -->
+### Python environment choice
+
+When a terminal is available, the installer asks how dependencies should be installed:
+
+1. **Managed venv** — creates or reuses `~/.deepseek-cli/venv` (recommended/default).
+2. **Active venv** — uses the currently active `VIRTUAL_ENV`.
+3. **User/default Python** — no venv; installs dependencies with `pip --user`.
+
+The same choices are available non-interactively:
+
+```bash
+bash install.sh --managed-venv   # recommended/default
+bash install.sh --active-venv    # requires an active VIRTUAL_ENV
+bash install.sh --user-python    # no venv; uses pip --user
+```
+
+Piped or automated installation without a controlling terminal safely defaults to the
+managed venv. Use `--non-interactive` or `DEEPSEEK_INSTALL_MODE=managed|active|user`
+for explicit automation.
+<!-- github-only-installer:end -->
+
 Install optional browser/document/OCR dependencies:
 
 ```bash
