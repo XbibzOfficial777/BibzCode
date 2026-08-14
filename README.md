@@ -10,6 +10,31 @@
   <a href="SUPPORT.md">Support</a> ·
   <a href="CODE_OF_CONDUCT.md">Code of Conduct</a>
 </p>
+<p align="center">
+  <strong>English (default)</strong> ·
+  <a href="docs/i18n/README.id.md"><strong>Bahasa Indonesia</strong></a> ·
+  <a href="docs/i18n/README.md">48 languages</a>
+</p>
+
+<details>
+<summary><strong>Choose another language / Pilih bahasa lain</strong></summary>
+
+| | | | |
+| --- | --- | --- | --- |
+| [العربية](docs/i18n/README.ar.md) | [বাংলা](docs/i18n/README.bn.md) | [Български](docs/i18n/README.bg.md) | [Català](docs/i18n/README.ca.md) |
+| [简体中文](docs/i18n/README.zh-CN.md) | [繁體中文](docs/i18n/README.zh-TW.md) | [Hrvatski](docs/i18n/README.hr.md) | [Čeština](docs/i18n/README.cs.md) |
+| [Dansk](docs/i18n/README.da.md) | [Nederlands](docs/i18n/README.nl.md) | [Eesti](docs/i18n/README.et.md) | [Filipino](docs/i18n/README.fil.md) |
+| [Suomi](docs/i18n/README.fi.md) | [Français](docs/i18n/README.fr.md) | [Deutsch](docs/i18n/README.de.md) | [Ελληνικά](docs/i18n/README.el.md) |
+| [ગુજરાતી](docs/i18n/README.gu.md) | [עברית](docs/i18n/README.he.md) | [हिन्दी](docs/i18n/README.hi.md) | [Magyar](docs/i18n/README.hu.md) |
+| [Italiano](docs/i18n/README.it.md) | [日本語](docs/i18n/README.ja.md) | [한국어](docs/i18n/README.ko.md) | [Latviešu](docs/i18n/README.lv.md) |
+| [Lietuvių](docs/i18n/README.lt.md) | [Bahasa Melayu](docs/i18n/README.ms.md) | [मराठी](docs/i18n/README.mr.md) | [Norsk](docs/i18n/README.no.md) |
+| [فارسی](docs/i18n/README.fa.md) | [Polski](docs/i18n/README.pl.md) | [Português do Brasil](docs/i18n/README.pt-BR.md) | [Română](docs/i18n/README.ro.md) |
+| [Русский](docs/i18n/README.ru.md) | [Српски](docs/i18n/README.sr.md) | [Slovenčina](docs/i18n/README.sk.md) | [Slovenščina](docs/i18n/README.sl.md) |
+| [Español](docs/i18n/README.es.md) | [Kiswahili](docs/i18n/README.sw.md) | [Svenska](docs/i18n/README.sv.md) | [தமிழ்](docs/i18n/README.ta.md) |
+| [తెలుగు](docs/i18n/README.te.md) | [ไทย](docs/i18n/README.th.md) | [Türkçe](docs/i18n/README.tr.md) | [Українська](docs/i18n/README.uk.md) |
+| [اردو](docs/i18n/README.ur.md) | [Tiếng Việt](docs/i18n/README.vi.md) | [All languages](docs/i18n/README.md) | |
+
+</details>
 <!-- github-only-logo:end -->
 
 Multi-provider terminal AI agent with controlled tool execution, session persistence,

@@ -10,7 +10,7 @@
 
 - [ ] Bug fix
 - [ ] Feature
-- [ ] Documentation or tests only
+- [ ] Documentation, translation, or tests only
 - [ ] Refactor with no intended behavior change
 - [ ] Security hardening (no undisclosed vulnerability details)
 - [ ] Approved compatibility or release change

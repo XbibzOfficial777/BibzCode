@@ -8,6 +8,9 @@ Keep a Changelog, and the project uses release identifiers documented in
 
 ### Added
 
+- Multilingual README navigation for 48 languages, with English as the canonical
+  default and extended Bahasa Indonesia documentation.
+- Translation maintenance policy and automated minimum-coverage validation.
 - Contributor guide, development guide, governance, support, security policy, and
   Code of Conduct.
 - Structured issue forms, pull request checklist, CODEOWNERS, and automated

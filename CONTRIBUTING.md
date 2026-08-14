@@ -37,6 +37,15 @@ must **not** be added under `dashboard-react/` or otherwise committed to this pu
 repository. Do not submit generated dashboard assets, deployment state, database
 exports, service-account files, or production configuration.
 
+### Documentation translations
+
+English `README.md` is the canonical/default document. Bahasa Indonesia has extended
+coverage, while other languages may provide clearly labeled essential quick starts.
+Translation pull requests are welcome and must follow
+[`docs/i18n/TRANSLATING.md`](docs/i18n/TRANSLATING.md). Preserve commands, URLs,
+identifiers, security requirements, and compatibility names exactly; ideally request
+review from a fluent speaker.
+
 ## 3. Development workflow
 
 1. Fork the repository.

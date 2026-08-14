@@ -20,6 +20,9 @@ REQUIRED = {
     "GOVERNANCE.md",
     "CHANGELOG.md",
     "docs/DEVELOPMENT.md",
+    "docs/i18n/README.md",
+    "docs/i18n/README.id.md",
+    "docs/i18n/TRANSLATING.md",
     ".github/CODEOWNERS",
     ".github/PULL_REQUEST_TEMPLATE.md",
     ".github/ISSUE_TEMPLATE/config.yml",
@@ -130,6 +133,44 @@ def validate_release_integrity(errors: list[str]) -> None:
             errors.append(f"release checksum mismatch: {archive.relative_to(ROOT)}")
 
 
+def validate_translations(errors: list[str]) -> int:
+    translation_dir = ROOT / "docs" / "i18n"
+    translations = sorted(translation_dir.glob("README.*.md"))
+    if len(translations) < 40:
+        errors.append(f"at least 40 README translations are required; found {len(translations)}")
+
+    root_readme = (ROOT / "README.md").read_text("utf-8")
+    index = (translation_dir / "README.md").read_text("utf-8")
+    total_languages = len(translations) + 1  # Root README is canonical English.
+    if "English (default)" not in root_readme:
+        errors.append("root README must identify English as the default language")
+    if f"{total_languages} languages" not in root_readme:
+        errors.append("root README language count does not match translation files")
+    if f"{total_languages} languages" not in index:
+        errors.append("translation index language count does not match translation files")
+    if (translation_dir / "README.en.md").exists():
+        errors.append("English must remain the root default README, not a duplicate translation")
+
+    for path in translations:
+        relative_name = path.name
+        text = path.read_text("utf-8")
+        if not text.startswith("# BibzCode"):
+            errors.append(f"translation must start with the BibzCode heading: {relative_name}")
+        if "../../README.md" not in text:
+            errors.append(f"translation must link to canonical English README: {relative_name}")
+        if "bzcli" not in text:
+            errors.append(f"translation must preserve the canonical command: {relative_name}")
+        if f"]({relative_name})" not in index:
+            errors.append(f"translation is missing from language index: {relative_name}")
+        if f"docs/i18n/{relative_name}" not in root_readme:
+            errors.append(f"translation is missing from root language selector: {relative_name}")
+
+    indonesian = translation_dir / "README.id.md"
+    if indonesian.is_file() and len(indonesian.read_text("utf-8")) < 5000:
+        errors.append("Bahasa Indonesia README must retain extended documentation coverage")
+    return total_languages
+
+
 def validate_canonical_identity(errors: list[str]) -> None:
     pyproject = (ROOT / "pyproject.toml").read_text("utf-8")
     if 'name = "bibzcode-cli-agent"' not in pyproject:
@@ -153,6 +194,7 @@ def main() -> int:
     validate_tracked_paths(files, errors)
     validate_relative_links(files, errors)
     validate_release_integrity(errors)
+    total_languages = validate_translations(errors)
     validate_canonical_identity(errors)
     if errors:
         print("Contribution policy validation failed:", file=sys.stderr)
@@ -161,7 +203,7 @@ def main() -> int:
         return 1
     print(
         f"Contribution policy validation passed: {len(files)} tracked files, "
-        f"{len(REQUIRED)} required community files."
+        f"{len(REQUIRED)} required community files, {total_languages} languages."
     )
     return 0
 
