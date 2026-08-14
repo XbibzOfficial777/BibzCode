@@ -31,6 +31,6 @@ describe('workspace path boundary', () => {
     await expect(assertNoSymlinkEscape(root, path.join(root, 'escape', 'secret.txt'))).rejects.toThrow('Symlink escapes');
     await mkdir(path.join(root, 'safe'));
     await expect(assertNoSymlinkEscape(root, path.join(root, 'safe', 'new.txt'), true)).resolves.toBeUndefined();
-    expect(await realpath(root)).toBe(root);
+    expect(isWithin(await realpath(root), await realpath(path.join(root, 'safe')))).toBe(true);
   });
 });
