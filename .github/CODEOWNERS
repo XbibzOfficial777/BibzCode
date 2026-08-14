@@ -1,0 +1,11 @@
+# Maintainer review is required for protected branches and sensitive project policy.
+* @XbibzOfficial777
+
+/.github/ @XbibzOfficial777
+/SECURITY.md @XbibzOfficial777
+/GOVERNANCE.md @XbibzOfficial777
+/install.sh @XbibzOfficial777
+/releases/ @XbibzOfficial777
+/bibzcode/auth.py @XbibzOfficial777
+/bibzcode/net_policy.py @XbibzOfficial777
+/bibzcode/tool_runner.py @XbibzOfficial777

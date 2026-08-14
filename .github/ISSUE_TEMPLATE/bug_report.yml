@@ -1,0 +1,76 @@
+name: Bug report
+description: Report a reproducible BibzCode CLI defect
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Search existing issues first. Never include API keys, passwords, tokens, personal data, or unsanitized configuration. Report vulnerabilities through the Security tab instead.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-flight checks
+      options:
+        - label: I searched existing issues and pull requests.
+          required: true
+        - label: This is not a security vulnerability or credential exposure.
+          required: true
+        - label: I removed credentials and personal data from all output.
+          required: true
+  - type: input
+    id: version
+    attributes:
+      label: BibzCode version
+      description: Output of the version command or installed release identifier.
+      placeholder: 7.8.0-r6
+    validations:
+      required: true
+  - type: dropdown
+    id: install-mode
+    attributes:
+      label: Installation mode
+      options:
+        - Managed virtual environment
+        - Active virtual environment
+        - User/default Python
+        - Editable development install
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Python version, terminal, and provider if relevant.
+      placeholder: Ubuntu 24.04, Python 3.12, bash, OpenRouter
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Minimal reproduction
+      description: Provide exact, minimal steps using synthetic values.
+      placeholder: |
+        1. Run ...
+        2. Enter ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior and sanitized output
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Include only sanitized details needed to reproduce the issue.

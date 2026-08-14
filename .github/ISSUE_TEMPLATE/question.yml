@@ -1,0 +1,35 @@
+name: Usage question
+description: Ask for help after checking the documentation
+title: "[Question]: "
+body:
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before asking
+      options:
+        - label: I read README.md and SUPPORT.md and searched existing issues.
+          required: true
+        - label: I removed all credentials, personal data, and private conversations.
+          required: true
+        - label: This is not a vulnerability, compromised account, or credential exposure.
+          required: true
+  - type: input
+    id: version
+    attributes:
+      label: BibzCode and Python versions
+      placeholder: BibzCode 7.8.0-r6, Python 3.12
+    validations:
+      required: true
+  - type: textarea
+    id: goal
+    attributes:
+      label: What are you trying to accomplish?
+    validations:
+      required: true
+  - type: textarea
+    id: attempted
+    attributes:
+      label: What have you tried?
+      description: Include minimal commands and sanitized output.
+    validations:
+      required: true

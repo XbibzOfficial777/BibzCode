@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability privately
+    url: https://github.com/XbibzOfficial777/BibzCode/security/advisories/new
+    about: Never disclose vulnerabilities or credentials in a public issue.
+  - name: Read the support guide
+    url: https://github.com/XbibzOfficial777/BibzCode/blob/main/SUPPORT.md
+    about: Check required diagnostic information and safe log handling first.

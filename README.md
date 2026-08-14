@@ -4,6 +4,12 @@
 <p align="center">
   <img src="https://imgbs.com/uploads/bibzcode-313710f2.jpg" alt="BibzCode" width="780">
 </p>
+<p align="center">
+  <a href="CONTRIBUTING.md">Contributing</a> ·
+  <a href="SECURITY.md">Security</a> ·
+  <a href="SUPPORT.md">Support</a> ·
+  <a href="CODE_OF_CONDUCT.md">Code of Conduct</a>
+</p>
 <!-- github-only-logo:end -->
 
 Multi-provider terminal AI agent with controlled tool execution, session persistence,

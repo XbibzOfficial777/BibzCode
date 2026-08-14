@@ -1,0 +1,51 @@
+name: Feature request
+description: Propose a focused, secure improvement
+title: "[Feature]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Explain the user problem before proposing an implementation. Major changes should be agreed on before code is written.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-flight checks
+      options:
+        - label: I searched for an existing request or implementation.
+          required: true
+        - label: This request fits the public CLI repository scope.
+          required: true
+        - label: The request does not depend on publishing dashboard deployment code or credentials.
+          required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Who is affected, and what cannot be done safely today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe user-visible behavior, not just implementation details.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: true
+  - type: textarea
+    id: security
+    attributes:
+      label: Security and compatibility impact
+      description: Consider permissions, files, processes, network access, authentication, remote connectors, and legacy migration.
+    validations:
+      required: true
+  - type: textarea
+    id: tests
+    attributes:
+      label: Suggested validation
+      description: What positive and negative tests would prove this is safe?
