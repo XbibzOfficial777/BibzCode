@@ -2,7 +2,7 @@
 
 <!-- github-only-logo:start -->
 <p align="center">
-  <img src="https://imgbs.com/uploads/beautyplus-save-17d140cd.jpg" alt="BibzCode" width="780">
+  <img src="https://imgbs.com/uploads/bibzcode-313710f2.jpg" alt="BibzCode" width="780">
 </p>
 <!-- github-only-logo:end -->
 
