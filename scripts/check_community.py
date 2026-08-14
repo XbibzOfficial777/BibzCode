@@ -37,12 +37,33 @@ FORBIDDEN_SUFFIXES = (".pem", ".key", ".pyc")
 
 
 def tracked_files() -> list[str]:
-    result = subprocess.run(
-        ["git", "ls-files", "-z"],
-        cwd=ROOT,
-        check=True,
-        capture_output=True,
-    )
+    """Return Git-tracked paths, with a source-archive fallback.
+
+    GitHub and release ZIPs intentionally omit ``.git``. The fallback keeps the
+    validator useful in those snapshots while excluding common local/build output.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "-z"],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        excluded_parts = {
+            ".git",
+            ".pytest_cache",
+            ".venv",
+            "__pycache__",
+            "build",
+            "dist",
+            "node_modules",
+        }
+        return sorted(
+            path.relative_to(ROOT).as_posix()
+            for path in ROOT.rglob("*")
+            if path.is_file() and not excluded_parts.intersection(path.relative_to(ROOT).parts)
+        )
     return [item.decode("utf-8") for item in result.stdout.split(b"\0") if item]
 
 
