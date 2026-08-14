@@ -6,6 +6,14 @@ const releaseDir = path.resolve('release');
 const allowed = /\.(deb|rpm|exe|dmg|zip|yml|blockmap)$/i;
 const names = (await readdir(releaseDir)).filter((name) => allowed.test(name) && name !== 'builder-debug.yml').sort();
 if (!names.length) throw new Error('No release artifacts found');
+const required = process.platform === 'win32'
+  ? [/-setup\.exe$/i, /-portable\.exe$/i]
+  : process.platform === 'darwin'
+    ? [/\.dmg$/i, /-mac-universal\.zip$/i]
+    : [/\.deb$/i, /\.rpm$/i];
+for (const pattern of required) {
+  if (!names.some((name) => pattern.test(name))) throw new Error(`Required release artifact is missing: ${pattern}`);
+}
 const lines = [];
 for (const name of names) {
   const file = path.join(releaseDir, name);

@@ -196,6 +196,7 @@
       "requestedExecutionLevel": "asInvoker"
     },
     "nsis": {
+      "artifactName": "BibzCode-IDE-${version}-win-${arch}-setup.${ext}",
       "oneClick": false,
       "perMachine": false,
       "allowElevation": true,
@@ -207,6 +208,9 @@
       "uninstallerIcon": "build/icon.ico",
       "runAfterFinish": true,
       "deleteAppDataOnUninstall": false
+    },
+    "portable": {
+      "artifactName": "BibzCode-IDE-${version}-win-${arch}-portable.${ext}"
     },
     "mac": {
       "target": [

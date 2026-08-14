@@ -77,7 +77,7 @@ or generic IPC access. Main-process handlers validate payloads and enforce:
 
 ## Development
 
-Node.js **22.12+** and Python **3.10+** are required.
+Node.js **22.22.2+** and Python **3.10+** are required.
 
 ```bash
 cd ide
