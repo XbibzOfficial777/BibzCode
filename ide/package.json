@@ -16,6 +16,9 @@
   },
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22.22.2"
+  },
   "main": "dist-electron/main.js",
   "scripts": {
     "clean": "node scripts/clean.mjs",

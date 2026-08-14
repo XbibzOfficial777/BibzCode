@@ -40,7 +40,7 @@ exports, service-account files, or production configuration.
 
 ### IDE contributions
 
-IDE changes belong under `ide/` and require Node.js 22.12+. Preserve the Electron
+IDE changes belong under `ide/` and require Node.js 22.22.2+. Preserve the Electron
 security boundary: no renderer Node integration, generic IPC bridge, disabled sandbox,
 unrestricted navigation, permanent renderer deletion, or secret storage. Feature
 changes must continue to invoke the canonical bundled `bibzcode` runtime rather than

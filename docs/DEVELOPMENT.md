@@ -107,7 +107,7 @@ the bypass is rejected.
 
 ## IDE development
 
-The Electron IDE requires Node.js 22.12+ and uses the same Python source from the
+The Electron IDE requires Node.js 22.22.2+ and uses the same Python source from the
 repository root as a packaged runtime resource.
 
 ```bash
