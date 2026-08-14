@@ -71,9 +71,11 @@ try {
   await access(screenshot);
   console.log(`Electron production smoke passed. Screenshot: ${screenshot}`);
 } finally {
-  if (child.pid) {
+  if (child.pid && child.exitCode === null) {
+    const exited = new Promise((resolve) => child.once('exit', resolve));
     if (process.platform === 'win32') spawn('taskkill', ['/pid', String(child.pid), '/t', '/f']);
     else { try { process.kill(-child.pid, 'SIGTERM'); } catch { child.kill('SIGTERM'); } }
+    await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 5_000))]);
   }
-  await rm(temporary, { recursive: true, force: true });
+  await rm(temporary, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }
