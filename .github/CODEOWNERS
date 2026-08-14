@@ -6,6 +6,8 @@
 /GOVERNANCE.md @XbibzOfficial777
 /install.sh @XbibzOfficial777
 /releases/ @XbibzOfficial777
+/ide/ @XbibzOfficial777
+/.github/workflows/ide-release.yml @XbibzOfficial777
 /bibzcode/auth.py @XbibzOfficial777
 /bibzcode/net_policy.py @XbibzOfficial777
 /bibzcode/tool_runner.py @XbibzOfficial777

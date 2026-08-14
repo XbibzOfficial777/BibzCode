@@ -1,0 +1,9 @@
+node_modules/
+dist-electron/
+dist-renderer/
+release/
+test-results/
+coverage/
+.tmp-package/
+*.tsbuildinfo
+.DS_Store

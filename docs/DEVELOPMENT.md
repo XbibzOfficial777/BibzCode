@@ -105,6 +105,26 @@ When changing compatibility behavior, test both the canonical path and migration
 the legacy path. When changing a trust boundary, include a negative test that proves
 the bypass is rejected.
 
+## IDE development
+
+The Electron IDE requires Node.js 22.12+ and uses the same Python source from the
+repository root as a packaged runtime resource.
+
+```bash
+cd ide
+npm ci
+npm audit
+npm run typecheck
+npm run lint
+npm test
+npm run build
+xvfb-run -a npm run test:e2e  # Linux
+```
+
+Do not weaken `contextIsolation`, renderer sandboxing, CSP, IPC schemas, path
+containment, symlink checks, or CLI approval policy. Build `.deb`, `.rpm`, Windows, and
+macOS artifacts through the native release workflow described in `ide/README.md`.
+
 ## Pull request preparation
 
 ```bash

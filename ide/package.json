@@ -1,0 +1,229 @@
+{
+  "name": "bibzcode-ide",
+  "productName": "BibzCode IDE",
+  "desktopName": "bibzcode-ide",
+  "version": "7.8.0-r6",
+  "description": "Production desktop IDE for the BibzCode multi-provider AI agent",
+  "author": "XbibzOfficial777",
+  "license": "MIT",
+  "homepage": "https://github.com/XbibzOfficial777/BibzCode",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/XbibzOfficial777/BibzCode.git"
+  },
+  "bugs": {
+    "url": "https://github.com/XbibzOfficial777/BibzCode/issues"
+  },
+  "private": true,
+  "type": "module",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "clean": "node scripts/clean.mjs",
+    "build:main": "node scripts/build-main.mjs",
+    "build:renderer": "vite build",
+    "build": "npm run clean && npm run build:main && npm run build:renderer",
+    "dev": "npm run build:main && concurrently -k -s first \"vite --host 127.0.0.1 --port 5173\" \"wait-on tcp:127.0.0.1:5173 && cross-env BIBZCODE_IDE_DEV_URL=http://127.0.0.1:5173 electron .\"",
+    "start": "electron .",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "node scripts/e2e-smoke.mjs",
+    "verify": "npm run typecheck && npm run lint && npm run test && npm run build",
+    "dist:linux": "npm run verify && node scripts/build-linux.mjs && node scripts/verify-package.mjs",
+    "dist:windows": "npm run verify && electron-builder --win nsis portable --x64 --publish never && node scripts/verify-package.mjs",
+    "dist:mac": "npm run verify && electron-builder --mac dmg zip --universal --publish never && node scripts/verify-package.mjs"
+  },
+  "dependencies": {
+    "electron-log": "5.4.4",
+    "electron-updater": "6.8.9"
+  },
+  "devDependencies": {
+    "@electron/fuses": "2.1.3",
+    "@electron/notarize": "3.1.1",
+    "@eslint/js": "10.0.1",
+    "@monaco-editor/react": "4.7.0",
+    "@testing-library/jest-dom": "7.0.1",
+    "@testing-library/react": "16.3.2",
+    "@types/node": "26.2.0",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
+    "@vitejs/plugin-react": "6.0.5",
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/addon-search": "0.16.0",
+    "@xterm/addon-web-links": "0.12.0",
+    "@xterm/xterm": "6.0.0",
+    "clsx": "2.1.1",
+    "concurrently": "10.0.4",
+    "cross-env": "10.1.0",
+    "electron": "43.4.0",
+    "electron-builder": "26.15.3",
+    "esbuild": "0.28.2",
+    "eslint": "10.8.1",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "eslint-plugin-react-refresh": "0.5.2",
+    "globals": "17.6.0",
+    "jsdom": "30.0.1",
+    "lucide-react": "1.31.0",
+    "monaco-editor": "0.56.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.67.0",
+    "vite": "8.2.1",
+    "vitest": "4.1.10",
+    "wait-on": "9.1.0",
+    "zod": "4.4.3"
+  },
+  "overrides": {
+    "dompurify": "3.4.13"
+  },
+  "build": {
+    "appId": "com.bibzcode.ide",
+    "productName": "BibzCode IDE",
+    "artifactName": "BibzCode-IDE-${version}-${os}-${arch}.${ext}",
+    "asar": true,
+    "npmRebuild": false,
+    "electronLanguages": [
+      "en",
+      "id"
+    ],
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist-electron/**/*",
+      "dist-renderer/**/*",
+      "package.json",
+      "!**/*.map",
+      "!**/test{,s}/**"
+    ],
+    "extraResources": [
+      {
+        "from": "../bibzcode",
+        "to": "cli/bibzcode",
+        "filter": [
+          "**/*.py"
+        ]
+      },
+      {
+        "from": "../deepseek",
+        "to": "cli/deepseek",
+        "filter": [
+          "**/*.py"
+        ]
+      },
+      {
+        "from": "../requirements.txt",
+        "to": "cli/requirements.txt"
+      },
+      {
+        "from": "../requirements-lock.txt",
+        "to": "cli/requirements-lock.txt"
+      },
+      {
+        "from": "../requirements-optional.txt",
+        "to": "cli/requirements-optional.txt"
+      },
+      {
+        "from": "../requirements-optional-lock.txt",
+        "to": "cli/requirements-optional-lock.txt"
+      },
+      {
+        "from": "../pyproject.toml",
+        "to": "cli/pyproject.toml"
+      },
+      {
+        "from": "../LICENSE",
+        "to": "cli/LICENSE"
+      },
+      {
+        "from": "build/icon.png",
+        "to": "app-icon.png"
+      }
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "XbibzOfficial777",
+        "repo": "BibzCode",
+        "releaseType": "release"
+      }
+    ],
+    "linux": {
+      "target": [
+        "deb",
+        "rpm"
+      ],
+      "icon": "build/icons",
+      "category": "Development",
+      "syncDesktopName": true,
+      "maintainer": "XbibzOfficial777",
+      "vendor": "BibzCode",
+      "synopsis": "BibzCode AI-powered development environment",
+      "description": "Secure cross-platform IDE with Monaco editor, workspace tools, Git integration, terminal, and complete BibzCode CLI feature access."
+    },
+    "deb": {
+      "depends": [
+        "python3 (>= 3.10)",
+        "libgtk-3-0",
+        "libnss3"
+      ],
+      "compression": "gz"
+    },
+    "rpm": {
+      "depends": [
+        "python3 >= 3.10",
+        "gtk3",
+        "nss"
+      ],
+      "compression": "gzip"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "build/icon.ico",
+      "signtoolOptions": {
+        "publisherName": "BibzCode"
+      },
+      "verifyUpdateCodeSignature": true,
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "BibzCode IDE",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "icon": "build/icon.icns",
+      "category": "public.app-category.developer-tools",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "notarize": false
+    },
+    "dmg": {
+      "title": "BibzCode IDE ${version}",
+      "icon": "build/icon.icns",
+      "sign": false
+    },
+    "afterPack": "scripts/fuses.mjs",
+    "afterSign": "scripts/notarize.mjs"
+  }
+}

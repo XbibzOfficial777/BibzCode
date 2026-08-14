@@ -29,6 +29,7 @@ Accepted contributions include:
 - the `bibzcode` Python package;
 - tests, CLI documentation, and examples;
 - installer and deterministic release tooling;
+- the cross-platform Electron IDE under `ide/`;
 - the narrow `deepseek`/`dscli` migration shims;
 - GitHub Actions and repository community files.
 
@@ -36,6 +37,19 @@ The deployed React dashboard and its Cloudflare Worker are maintained separately
 must **not** be added under `dashboard-react/` or otherwise committed to this public
 repository. Do not submit generated dashboard assets, deployment state, database
 exports, service-account files, or production configuration.
+
+### IDE contributions
+
+IDE changes belong under `ide/` and require Node.js 22.12+. Preserve the Electron
+security boundary: no renderer Node integration, generic IPC bridge, disabled sandbox,
+unrestricted navigation, permanent renderer deletion, or secret storage. Feature
+changes must continue to invoke the canonical bundled `bibzcode` runtime rather than
+forking its provider/tool/security logic. Run `npm run verify` and the production-window
+smoke test documented in `ide/README.md`.
+
+Generated installers, unpacked applications, `node_modules`, signing certificates, and
+notarization credentials must never be committed. Native packages are produced only by
+the reviewed release workflow on their target operating systems.
 
 ### Documentation translations
 

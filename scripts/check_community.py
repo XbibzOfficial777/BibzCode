@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import subprocess
 import sys
@@ -23,6 +24,12 @@ REQUIRED = {
     "docs/i18n/README.md",
     "docs/i18n/README.id.md",
     "docs/i18n/TRANSLATING.md",
+    "ide/README.md",
+    "ide/package.json",
+    "ide/package-lock.json",
+    "ide/tests/security.test.ts",
+    ".github/workflows/ide-ci.yml",
+    ".github/workflows/ide-release.yml",
     ".github/CODEOWNERS",
     ".github/PULL_REQUEST_TEMPLATE.md",
     ".github/ISSUE_TEMPLATE/config.yml",
@@ -210,6 +217,60 @@ def validate_translations(errors: list[str]) -> int:
     return total_languages
 
 
+def validate_ide(files: list[str], errors: list[str]) -> None:
+    package_path = ROOT / "ide" / "package.json"
+    try:
+        package = json.loads(package_path.read_text("utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        errors.append(f"IDE package metadata is invalid: {error}")
+        return
+
+    if package.get("name") != "bibzcode-ide" or package.get("build", {}).get("appId") != "com.bibzcode.ide":
+        errors.append("IDE canonical package or application identity is invalid")
+    scripts = package.get("scripts", {})
+    for name in ("typecheck", "lint", "test", "test:e2e", "dist:linux", "dist:windows", "dist:mac"):
+        if name not in scripts:
+            errors.append(f"IDE package is missing required script: {name}")
+    build = package.get("build", {})
+    serialized_build = json.dumps(build, sort_keys=True)
+    for marker in ("deb", "rpm", "nsis", "portable", "dmg", "zip", "universal"):
+        if marker not in serialized_build and marker not in " ".join(map(str, scripts.values())):
+            errors.append(f"IDE packaging configuration is missing target: {marker}")
+
+    main_source = (ROOT / "ide" / "electron" / "main.ts").read_text("utf-8")
+    for marker in ("nodeIntegration: false", "contextIsolation: true", "sandbox: true", "webSecurity: true"):
+        if marker not in main_source:
+            errors.append(f"IDE secure BrowserWindow setting is missing: {marker}")
+    if "nodeIntegration: true" in main_source or "contextIsolation: false" in main_source:
+        errors.append("IDE renderer security boundary is explicitly disabled")
+    if "bibzcode://app/index.html" not in main_source or "protocol.handle('bibzcode'" not in main_source:
+        errors.append("IDE must serve renderer assets through the secure custom protocol")
+
+    fuses = (ROOT / "ide" / "scripts" / "fuses.mjs").read_text("utf-8")
+    for marker in ("RunAsNode]: false", "EnableNodeOptionsEnvironmentVariable]: false", "OnlyLoadAppFromAsar]: true", "GrantFileProtocolExtraPrivileges]: false"):
+        if marker not in fuses:
+            errors.append(f"IDE hardened Electron fuse is missing: {marker}")
+
+    preload = (ROOT / "ide" / "electron" / "preload.ts").read_text("utf-8")
+    if "contextBridge.exposeInMainWorld" not in preload or "ipcRenderer.send(" in preload:
+        errors.append("IDE preload must expose a narrow invoke-only context bridge")
+
+    for icon in ("icon.png", "icon.ico", "icon.icns", "logo-original.png"):
+        path = ROOT / "ide" / "build" / icon
+        if not path.is_file() or path.stat().st_size < 1024:
+            errors.append(f"IDE production icon is missing or invalid: ide/build/{icon}")
+
+    forbidden_prefixes = ("ide/release/", "ide/dist-electron/", "ide/dist-renderer/", "ide/node_modules/")
+    for relative in files:
+        if relative.startswith(forbidden_prefixes):
+            errors.append(f"generated IDE output must not be tracked: {relative}")
+
+    workflow = (ROOT / ".github" / "workflows" / "ide-release.yml").read_text("utf-8")
+    for marker in ("ubuntu-24.04-arm", "windows-2025", "macos-14", "WIN_CSC_LINK", "APPLE_TEAM_ID"):
+        if marker not in workflow:
+            errors.append(f"IDE native release workflow is missing: {marker}")
+
+
 def validate_canonical_identity(errors: list[str]) -> None:
     pyproject = (ROOT / "pyproject.toml").read_text("utf-8")
     if 'name = "bibzcode-cli-agent"' not in pyproject:
@@ -235,6 +296,7 @@ def main() -> int:
     validate_release_integrity(errors)
     validate_readme_status(errors)
     total_languages = validate_translations(errors)
+    validate_ide(files, errors)
     validate_canonical_identity(errors)
     if errors:
         print("Contribution policy validation failed:", file=sys.stderr)

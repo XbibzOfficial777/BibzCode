@@ -1,0 +1,171 @@
+name: IDE native release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag (example: ide-v7.8.0-r6)'
+        required: true
+        default: 'ide-v7.8.0-r6'
+      draft:
+        description: 'Create a draft GitHub release'
+        required: true
+        type: boolean
+        default: true
+  push:
+    tags:
+      - 'ide-v*'
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  linux:
+    name: Linux ${{ matrix.arch }} (.deb + .rpm)
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        working-directory: ide
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.12.0'
+          cache: npm
+          cache-dependency-path: ide/package-lock.json
+      - name: Install native package tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm
+          mkdir -p "$HOME/.rpmdb"
+          printf '%%_dbpath %s/.rpmdb\n' "$HOME" > "$HOME/.rpmmacros"
+          rpm --initdb
+      - run: npm ci
+      - run: npm audit
+      - run: npm run dist:linux
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            ide/release/*.deb
+            ide/release/*.rpm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ide-linux-${{ matrix.arch }}
+          path: |
+            ide/release/*.deb
+            ide/release/*.rpm
+            ide/release/SHA256SUMS
+          if-no-files-found: error
+
+  windows:
+    name: Windows x64 (NSIS + portable)
+    runs-on: windows-2025
+    defaults:
+      run:
+        working-directory: ide
+    env:
+      CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.12.0'
+          cache: npm
+          cache-dependency-path: ide/package-lock.json
+      - run: npm ci
+      - run: npm audit
+      - run: npm run dist:windows
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: ide/release/*.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ide-windows-x64
+          path: |
+            ide/release/*.exe
+            ide/release/*.blockmap
+            ide/release/latest*.yml
+            ide/release/SHA256SUMS
+          if-no-files-found: error
+
+  macos:
+    name: macOS universal (DMG + ZIP)
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: ide
+    env:
+      CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.12.0'
+          cache: npm
+          cache-dependency-path: ide/package-lock.json
+      - run: npm ci
+      - run: npm audit
+      - run: npm run dist:mac
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            ide/release/*.dmg
+            ide/release/*.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ide-macos-universal
+          path: |
+            ide/release/*.dmg
+            ide/release/*.zip
+            ide/release/*.blockmap
+            ide/release/latest*.yml
+            ide/release/SHA256SUMS
+          if-no-files-found: error
+
+  release:
+    name: Publish checksummed native artifacts
+    needs: [linux, windows, macos]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ide-*
+          path: artifacts
+          merge-multiple: true
+      - name: Create canonical checksums
+        run: |
+          cd artifacts
+          rm -f SHA256SUMS
+          find . -maxdepth 1 -type f ! -name 'SHA256SUMS*' -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+      - name: Optionally sign checksum manifest
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.LINUX_GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.LINUX_GPG_PASSPHRASE }}
+        run: |
+          if [ -n "$GPG_PRIVATE_KEY" ]; then
+            printf '%s' "$GPG_PRIVATE_KEY" | gpg --batch --import
+            gpg --batch --yes --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" --armor --detach-sign artifacts/SHA256SUMS
+          fi
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag || github.ref_name }}
+          name: BibzCode IDE ${{ inputs.release_tag || github.ref_name }}
+          draft: ${{ inputs.draft == true }}
+          generate_release_notes: true
+          files: artifacts/*
+          fail_on_unmatched_files: true

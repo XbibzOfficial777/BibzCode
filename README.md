@@ -9,6 +9,7 @@
   <a href="https://github.com/XbibzOfficial777/BibzCode/actions/workflows/cli-security.yml"><img alt="CLI security checks" src="https://img.shields.io/github/actions/workflow/status/XbibzOfficial777/BibzCode/cli-security.yml?branch=main&style=flat-square&label=CLI%20security"></a>
   <a href="https://github.com/XbibzOfficial777/BibzCode/actions/workflows/contribution-policy.yml"><img alt="Contribution policy" src="https://img.shields.io/github/actions/workflow/status/XbibzOfficial777/BibzCode/contribution-policy.yml?branch=main&style=flat-square&label=Contribution%20policy"></a>
   <a href="https://github.com/XbibzOfficial777/BibzCode/actions/workflows/codacy.yml"><img alt="Codacy security scan" src="https://img.shields.io/github/actions/workflow/status/XbibzOfficial777/BibzCode/codacy.yml?branch=main&style=flat-square&label=Codacy%20security"></a>
+  <a href="https://github.com/XbibzOfficial777/BibzCode/actions/workflows/ide-ci.yml"><img alt="IDE production checks" src="https://img.shields.io/github/actions/workflow/status/XbibzOfficial777/BibzCode/ide-ci.yml?branch=main&style=flat-square&label=IDE%20production"></a>
   <a href="pyproject.toml"><img alt="Python 3.10 or newer" src="https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white"></a>
   <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/github/license/XbibzOfficial777/BibzCode?style=flat-square&label=License"></a>
 </p>
@@ -62,6 +63,7 @@
 </table>
 
 <p align="center">
+  <a href="ide/README.md"><strong>BibzCode IDE</strong></a> ·
   <a href="CONTRIBUTING.md">Contributing</a> ·
   <a href="SECURITY.md">Security</a> ·
   <a href="SUPPORT.md">Support</a> ·
