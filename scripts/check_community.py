@@ -133,6 +133,45 @@ def validate_release_integrity(errors: list[str]) -> None:
             errors.append(f"release checksum mismatch: {archive.relative_to(ROOT)}")
 
 
+def validate_readme_status(errors: list[str]) -> None:
+    root_readme = (ROOT / "README.md").read_text("utf-8")
+    required_badges = {
+        "CLI security workflow": "actions/workflow/status/XbibzOfficial777/BibzCode/cli-security.yml",
+        "contribution policy workflow": "actions/workflow/status/XbibzOfficial777/BibzCode/contribution-policy.yml",
+        "Codacy security workflow": "actions/workflow/status/XbibzOfficial777/BibzCode/codacy.yml",
+        "Python support": "Python-3.10%2B",
+        "license": "github/license/XbibzOfficial777/BibzCode",
+        "stars": "github/stars/XbibzOfficial777/BibzCode",
+        "forks": "github/forks/XbibzOfficial777/BibzCode",
+        "issues": "github/issues/XbibzOfficial777/BibzCode",
+        "contributors": "github/contributors/XbibzOfficial777/BibzCode",
+        "last commit": "github/last-commit/XbibzOfficial777/BibzCode",
+        "repository size": "github/repo-size/XbibzOfficial777/BibzCode",
+    }
+    for label, marker in required_badges.items():
+        if marker not in root_readme:
+            errors.append(f"root README is missing the {label} badge")
+
+    required_statistics = {
+        "8 LLM providers": "<td><strong>8</strong></td>",
+        "86 core tools": "<td><strong>86</strong></td>",
+        "29 optional tools": "<td><strong>29</strong></td>",
+        "115 maximum tools": "<td><strong>115</strong></td>",
+        "56 regression tests": "<td><strong>56</strong></td>",
+        "48 documentation languages": "<td><strong>48 languages</strong></td>",
+        "Python support summary": "<td><code>Python 3.10+</code></td>",
+        "CI matrix summary": "<td><code>3.10 · 3.13</code></td>",
+    }
+    for label, marker in required_statistics.items():
+        if marker not in root_readme:
+            errors.append(f"root README is missing the {label} statistic")
+
+    image_tags = re.findall(r"<img\s+[^>]*>", root_readme, flags=re.IGNORECASE)
+    for tag in image_tags:
+        if not re.search(r'\balt="[^"]+"', tag, flags=re.IGNORECASE):
+            errors.append("every root README image/badge must have descriptive alt text")
+
+
 def validate_translations(errors: list[str]) -> int:
     translation_dir = ROOT / "docs" / "i18n"
     translations = sorted(translation_dir.glob("README.*.md"))
@@ -194,6 +233,7 @@ def main() -> int:
     validate_tracked_paths(files, errors)
     validate_relative_links(files, errors)
     validate_release_integrity(errors)
+    validate_readme_status(errors)
     total_languages = validate_translations(errors)
     validate_canonical_identity(errors)
     if errors:

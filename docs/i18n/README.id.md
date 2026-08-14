@@ -2,6 +2,14 @@
 
 [← English (default)](../../README.md) · [Semua bahasa](README.md)
 
+<p align="center">
+  <a href="https://github.com/XbibzOfficial777/BibzCode/actions/workflows/cli-security.yml"><img alt="Pemeriksaan keamanan CLI" src="https://img.shields.io/github/actions/workflow/status/XbibzOfficial777/BibzCode/cli-security.yml?branch=main&style=flat-square&label=CLI%20security"></a>
+  <a href="https://github.com/XbibzOfficial777/BibzCode/actions/workflows/contribution-policy.yml"><img alt="Kebijakan kontribusi" src="https://img.shields.io/github/actions/workflow/status/XbibzOfficial777/BibzCode/contribution-policy.yml?branch=main&style=flat-square&label=Contribution%20policy"></a>
+  <a href="../../pyproject.toml"><img alt="Python 3.10 atau lebih baru" src="https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white"></a>
+  <a href="../../RELEASE_NOTES_7.8.0.md"><img alt="Rilis 7.8.0-r6" src="https://img.shields.io/badge/Release-7.8.0--r6-6f42c1?style=flat-square"></a>
+  <a href="../../LICENSE"><img alt="Lisensi MIT" src="https://img.shields.io/github/license/XbibzOfficial777/BibzCode?style=flat-square&label=License"></a>
+</p>
+
 > Ini adalah dokumentasi Bahasa Indonesia yang dipelihara secara khusus. Jika terdapat
 > perbedaan makna atau versi, [`README.md`](../../README.md) berbahasa Inggris tetap
 > menjadi dokumen kanonis dan paling mutakhir.
@@ -9,6 +17,23 @@
 BibzCode adalah agen AI multi-provider untuk terminal dengan eksekusi alat yang
 terkontrol, penyimpanan sesi, dukungan MCP, utilitas dokumen, otomatisasi browser,
 serta konektor Telegram dan Discord opsional.
+
+## Statistik proyek
+
+| Metrik | Nilai | Metrik | Nilai |
+| --- | ---: | --- | ---: |
+| Provider LLM | 8 | Alat inti | 86 |
+| Alat opsional | 29 | Maksimum alat | 115 |
+| Regression test | 56 | Bahasa dokumentasi | 48 |
+| Mode instalasi | 3 | Command kanonis | `bzcli` |
+
+| Kompatibilitas | Dukungan |
+| --- | --- |
+| Rilis CLI | `7.8.0-r6` |
+| Versi package Python | `7.8.0.post6` |
+| Versi minimum Python | Python 3.10+ |
+| Matrix CI aktif | Python 3.10 dan 3.13 |
+| Platform | Linux, macOS, dan Termux |
 
 ## Persyaratan
 

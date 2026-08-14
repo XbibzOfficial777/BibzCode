@@ -4,6 +4,63 @@
 <p align="center">
   <img src="https://imgbs.com/uploads/bibzcode-313710f2.jpg" alt="BibzCode" width="780">
 </p>
+
+<p align="center">
+  <a href="https://github.com/XbibzOfficial777/BibzCode/actions/workflows/cli-security.yml"><img alt="CLI security checks" src="https://img.shields.io/github/actions/workflow/status/XbibzOfficial777/BibzCode/cli-security.yml?branch=main&style=flat-square&label=CLI%20security"></a>
+  <a href="https://github.com/XbibzOfficial777/BibzCode/actions/workflows/contribution-policy.yml"><img alt="Contribution policy" src="https://img.shields.io/github/actions/workflow/status/XbibzOfficial777/BibzCode/contribution-policy.yml?branch=main&style=flat-square&label=Contribution%20policy"></a>
+  <a href="https://github.com/XbibzOfficial777/BibzCode/actions/workflows/codacy.yml"><img alt="Codacy security scan" src="https://img.shields.io/github/actions/workflow/status/XbibzOfficial777/BibzCode/codacy.yml?branch=main&style=flat-square&label=Codacy%20security"></a>
+  <a href="pyproject.toml"><img alt="Python 3.10 or newer" src="https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white"></a>
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/github/license/XbibzOfficial777/BibzCode?style=flat-square&label=License"></a>
+</p>
+<p align="center">
+  <a href="RELEASE_NOTES_7.8.0.md"><img alt="Release 7.8.0-r6" src="https://img.shields.io/badge/Release-7.8.0--r6-6f42c1?style=flat-square"></a>
+  <a href="pyproject.toml"><img alt="Python package version 7.8.0.post6" src="https://img.shields.io/badge/Package-7.8.0.post6-0A7BBC?style=flat-square"></a>
+  <a href="#start"><img alt="Canonical command bzcli" src="https://img.shields.io/badge/Command-bzcli-111827?style=flat-square&logo=gnometerminal&logoColor=white"></a>
+  <a href="#tool-count"><img alt="Up to 115 built-in tools" src="https://img.shields.io/badge/Tools-115%20max-0F766E?style=flat-square"></a>
+  <a href="docs/i18n/README.md"><img alt="Documentation in 48 languages" src="https://img.shields.io/badge/Docs-48%20languages-EF7C00?style=flat-square"></a>
+  <a href="#requirements"><img alt="Linux, macOS and Termux" src="https://img.shields.io/badge/Platforms-Linux%20%7C%20macOS%20%7C%20Termux-334155?style=flat-square"></a>
+</p>
+<p align="center">
+  <a href="https://github.com/XbibzOfficial777/BibzCode/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/XbibzOfficial777/BibzCode?style=flat-square&logo=github&label=Stars"></a>
+  <a href="https://github.com/XbibzOfficial777/BibzCode/forks"><img alt="GitHub forks" src="https://img.shields.io/github/forks/XbibzOfficial777/BibzCode?style=flat-square&logo=github&label=Forks"></a>
+  <a href="https://github.com/XbibzOfficial777/BibzCode/issues"><img alt="Open GitHub issues" src="https://img.shields.io/github/issues/XbibzOfficial777/BibzCode?style=flat-square&label=Open%20issues"></a>
+  <a href="https://github.com/XbibzOfficial777/BibzCode/graphs/contributors"><img alt="GitHub contributors" src="https://img.shields.io/github/contributors/XbibzOfficial777/BibzCode?style=flat-square&label=Contributors"></a>
+  <a href="https://github.com/XbibzOfficial777/BibzCode/commits/main"><img alt="Last commit" src="https://img.shields.io/github/last-commit/XbibzOfficial777/BibzCode?style=flat-square&label=Last%20commit"></a>
+  <a href="https://github.com/XbibzOfficial777/BibzCode"><img alt="Repository size" src="https://img.shields.io/github/repo-size/XbibzOfficial777/BibzCode?style=flat-square&label=Repo%20size"></a>
+</p>
+
+<table align="center">
+  <tr>
+    <th>LLM providers</th>
+    <th>Core tools</th>
+    <th>Optional tools</th>
+  </tr>
+  <tr align="center">
+    <td><strong>8</strong></td>
+    <td><strong>86</strong></td>
+    <td><strong>29</strong></td>
+  </tr>
+  <tr>
+    <th>Maximum tools</th>
+    <th>Regression tests</th>
+    <th>Documentation</th>
+  </tr>
+  <tr align="center">
+    <td><strong>115</strong></td>
+    <td><strong>56</strong></td>
+    <td><strong>48 languages</strong></td>
+  </tr>
+</table>
+
+<table align="center">
+  <tr><th>Runtime / release</th><th>Value</th></tr>
+  <tr><td>CLI release</td><td><code>7.8.0-r6</code></td></tr>
+  <tr><td>Python package</td><td><code>7.8.0.post6</code></td></tr>
+  <tr><td>Python support</td><td><code>Python 3.10+</code></td></tr>
+  <tr><td>CI matrix</td><td><code>3.10 · 3.13</code></td></tr>
+  <tr><td>Install modes</td><td><strong>3</strong></td></tr>
+</table>
+
 <p align="center">
   <a href="CONTRIBUTING.md">Contributing</a> ·
   <a href="SECURITY.md">Security</a> ·

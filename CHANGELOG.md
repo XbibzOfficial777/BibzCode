@@ -8,6 +8,8 @@ Keep a Changelog, and the project uses release identifiers documented in
 
 ### Added
 
+- Organized README status badges, live repository statistics, capability metrics, and
+  Python/release compatibility summaries in English and Bahasa Indonesia.
 - Multilingual README navigation for 48 languages, with English as the canonical
   default and extended Bahasa Indonesia documentation.
 - Translation maintenance policy and automated minimum-coverage validation.
