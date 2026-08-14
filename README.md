@@ -1,8 +1,8 @@
-# DeepSeek CLI Agent 7.8.0-r6
+# BibzCode 7.8.0-r6
 
 <!-- github-only-logo:start -->
 <p align="center">
-  <img src="https://imgbs.com/uploads/beautyplus-save-17d140cd.jpg" alt="DeepSeek CLI" width="780">
+  <img src="https://imgbs.com/uploads/beautyplus-save-17d140cd.jpg" alt="BibzCode" width="780">
 </p>
 <!-- github-only-logo:end -->
 

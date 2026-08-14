@@ -2359,14 +2359,14 @@ def prompt_input(depth: int | None = None) -> str:
 # ══════════════════════════════════════
 
 BANNER = rf"""[bold cyan]
-________                                            __    
-\______ \   ____   ____ ______  ______ ____   ____ |  | __
- |    |  \_/ __ \_/ __ \\____ \/  ___// __ \_/ __ \|  |/ /
- |    `   \  ___/\  ___/|  |_> >___ \\  ___/\  ___/|    < 
-/_______  /\___  >\___  >   __/____  >\___  >\___  >__|_ \   [bold red]v{__version__}[/bold red]
-        \/     \/     \/|__|       \/     \/     \/     \/[/bold cyan]
+   ___ _ _          ___          _
+  / __(_) |__ ____ / __\___   __| | ___
+ /__\// | '_ \_  // /  / _ \ / _` |/ _ \
+/ \/  \ | |_) / // /__| (_) | (_| |  __/
+\_____/_|_.__/___\____/\___/ \__,_|\___|
+[/bold cyan]
 
-[dim]    DeepSeek CLI Agent v{__version__}[/dim]
+[dim]    BibzCode v{__version__}[/dim]
 [dim]    Developer : Xbibz Official[/dim]
 [dim]    Connectors : Telegram & Discord | Tools: 90+ | Smart Loop[/dim]
 """

@@ -1,1 +1,1 @@
-a9037c2dbaea03156f87c018dbd102a1f907797be8efa50e7b83c23e2a4c050b  deepseek-cli-7.8.0-r6.tar.gz
+ec7e3ae78b7476ef5b064848f6c113db212d16361f7bd83e00dfca61eb5aab91  deepseek-cli-7.8.0-r6.tar.gz

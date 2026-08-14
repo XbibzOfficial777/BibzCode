@@ -13,6 +13,19 @@ from deepseek.config import _parse_version, is_newer_version
 from deepseek.connectors import DiscordBot, TelegramBot
 from deepseek.net_policy import NetworkPolicyError, safe_httpx_request, url_policy_error
 from deepseek.toolkit import ToolRegistry, redact_sensitive_text
+from deepseek.ui import BANNER
+
+
+def test_banner_is_ogre_bibzcode_without_legacy_ascii_font():
+    expected = r"""   ___ _ _          ___          _
+  / __(_) |__ ____ / __\___   __| | ___
+ /__\// | '_ \_  // /  / _ \ / _` |/ _ \
+/ \/  \ | |_) / // /__| (_) | (_| |  __/
+\_____/_|_.__/___\____/\___/ \__,_|\___|"""
+    rendered_art = '\n'.join(BANNER.splitlines()[1:6])
+    assert rendered_art == expected
+    assert '________' not in BANNER
+    assert 'BibzCode' in BANNER
 
 
 def test_r6_versions_compare_as_revision_not_patch():

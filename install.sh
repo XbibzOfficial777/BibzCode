@@ -5,10 +5,10 @@ umask 077
 
 VERSION="7.8.0-r6"
 RELEASE_ID="7.8.0-r6"
-EXPECTED_SHA256="a9037c2dbaea03156f87c018dbd102a1f907797be8efa50e7b83c23e2a4c050b"
+EXPECTED_SHA256="ec7e3ae78b7476ef5b064848f6c113db212d16361f7bd83e00dfca61eb5aab91"
 CF_BASE="${DEEPSEEK_CF_BASE_URL:-https://deepseek-dash.bibzflow.workers.dev}"
 CF_ARCHIVE="$CF_BASE/releases/deepseek-cli-$RELEASE_ID.tar.gz"
-GH_ARCHIVE="${DEEPSEEK_GITHUB_RELEASE_URL:-https://raw.githubusercontent.com/XbibzOfficial777/deepseek-cli/main/releases/deepseek-cli-$RELEASE_ID.tar.gz}"
+GH_ARCHIVE="${DEEPSEEK_GITHUB_RELEASE_URL:-https://raw.githubusercontent.com/XbibzOfficial777/BibzCode/main/releases/deepseek-cli-$RELEASE_ID.tar.gz}"
 INSTALL_DIR="${DEEPSEEK_INSTALL_DIR:-$HOME/.local/lib/deepseek-cli}"
 VENV_DIR="${DEEPSEEK_VENV_DIR:-$HOME/.deepseek-cli/venv}"
 BIN_DIR="${DEEPSEEK_BIN_DIR:-$HOME/.local/bin}"
