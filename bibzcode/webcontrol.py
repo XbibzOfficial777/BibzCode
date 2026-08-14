@@ -1,4 +1,4 @@
-# DeepSeek CLI v5.4 — Web Browser Control Module
+# BibzCode CLI v5.4 — Web Browser Control Module
 # Full HTTP-based browser automation with session management
 # Features: Navigate, Login, Click, Fill Forms, Extract, Download, Snapshot
 #
@@ -789,7 +789,7 @@ class BrowserSession:
 
         save_path = os.path.expanduser(save_path)
 
-        max_bytes = max(1, int(os.environ.get('DEEPSEEK_BROWSER_MAX_DOWNLOAD_MB', '50'))) * 1024 * 1024
+        max_bytes = max(1, int(os.environ.get('BIBZCODE_BROWSER_MAX_DOWNLOAD_MB', '50'))) * 1024 * 1024
         try:
             r = self._request('GET', url, stream=True, max_response_bytes=max_bytes)
             with r:

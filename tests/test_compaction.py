@@ -1,7 +1,7 @@
-from deepseek.agent import Agent
-from deepseek.config import cfg
-from deepseek.memory import Memory, load_session, save_session
-from deepseek.toolkit import ToolRegistry
+from bibzcode.agent import Agent
+from bibzcode.config import cfg
+from bibzcode.memory import Memory, load_session, save_session
+from bibzcode.toolkit import ToolRegistry
 
 
 class SummaryProvider:
@@ -52,7 +52,7 @@ def test_compaction_preserves_lossless_full_history(tmp_path, monkeypatch):
 
 
 def test_session_roundtrip_keeps_archive_summary_and_custom_prompt(tmp_path, monkeypatch):
-    import deepseek.memory as memory_module
+    import bibzcode.memory as memory_module
 
     monkeypatch.setattr(memory_module, 'SESSIONS_DIR', str(tmp_path))
     memory = Memory()
@@ -62,7 +62,7 @@ def test_session_roundtrip_keeps_archive_summary_and_custom_prompt(tmp_path, mon
     archived = memory.apply_compaction('## Facts & Decisions\n- Durable memory.', cut)
     assert archived > 0
 
-    session_id = 'dscli-abcdef123456'
+    session_id = 'bzcli-abcdef123456'
     save_session(session_id, memory)
     loaded = load_session(session_id)
 

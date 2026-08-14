@@ -1,4 +1,4 @@
-# DeepSeek CLI v7.8.0 — UI Components
+# BibzCode CLI v7.8.0 — UI Components
 # Rich-based terminal UI: StreamRenderer, LoadingSpinner, Banner, StatusBar
 # Raw-mode interactive: arrow-key select menu, Ctrl+P input
 #
@@ -2380,8 +2380,8 @@ def show_banner():
     banner so it's actually visible to the user."""
     import os
     import sys
-    # Skip the banner when dscli is being called recursively (e.g. via agent bash tool)
-    if not sys.stdout.isatty() or os.environ.get('DEEPSEEK_NESTED') == '1':
+    # Skip the banner when bzcli is being called recursively (e.g. via agent bash tool)
+    if not sys.stdout.isatty() or os.environ.get('BIBZCODE_NESTED') == '1':
         return
     console.print(BANNER)
 
@@ -2407,10 +2407,10 @@ def show_banner():
 
 def show_welcome(provider_name: str, model: str, has_key: bool):
     """Show welcome message with active provider info."""
-    # Skip if non-TTY (recursive call via bash tool) or DEEPSEEK_NESTED is set
+    # Skip if non-TTY (recursive call via bash tool) or BIBZCODE_NESTED is set
     import os
     import sys
-    if not sys.stdout.isatty() or os.environ.get('DEEPSEEK_NESTED') == '1':
+    if not sys.stdout.isatty() or os.environ.get('BIBZCODE_NESTED') == '1':
         return
     status = '[green]active[/green]' if has_key else '[red]no key[/red]'
     # Pull the saved session (set by auth.ensure_authenticated) so we can show
@@ -2435,7 +2435,7 @@ def show_welcome(provider_name: str, model: str, has_key: bool):
 def show_help():
     """Display a complete help/reference table for user-facing commands."""
     console.print(Panel.fit(
-        '[bold cyan]DeepSeek CLI Command Reference[/bold cyan]\n'
+        '[bold cyan]BibzCode CLI Command Reference[/bold cyan]\n'
         '[dim]Tip:[/dim] type [bold]/[/bold] for command completion.',
         border_style='cyan',
     ))
@@ -2456,7 +2456,7 @@ def show_version():
     version_table = Table(box=box.SIMPLE, show_header=False, border_style='cyan')
     version_table.add_column('Key', style='bold cyan', min_width=20)
     version_table.add_column('Value', style='white')
-    version_table.add_row('Version', f'DeepSeek CLI Agent v{__version__}')
+    version_table.add_row('Version', f'BibzCode CLI Agent v{__version__}')
     version_table.add_row('Developer', 'Xbibz Official')
     version_table.add_row('TUI', 'Full Real-Time Stream | Rich Markdown | Smooth Buffer')
     version_table.add_row('Features', '90+ Tools | 8 Providers | Smart Loop | OCR | Connectors')

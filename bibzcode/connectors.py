@@ -1,4 +1,4 @@
-# DeepSeek CLI v7.0 — Telegram & Discord Bot Connectors
+# BibzCode CLI v7.0 — Telegram & Discord Bot Connectors
 # Connects the AI agent to Telegram and Discord for remote chat.
 # Features:
 #   - Telegram Bot: sends/receives messages, supports markdown, long msg splitting
@@ -31,11 +31,11 @@ except ImportError:
 TELEGRAM_LIB_AVAILABLE = _HTTPX_AVAILABLE
 DISCORD_LIB_AVAILABLE = _HTTPX_AVAILABLE
 
-CONNECTOR_UPLOAD_ROOT = Path.home() / '.deepseek-cli' / 'uploads'
-MAX_CONNECTOR_FILE_BYTES = max(1, int(os.environ.get('DEEPSEEK_CONNECTOR_MAX_FILE_MB', '25'))) * 1024 * 1024
-MAX_CONNECTOR_IDENTITY_BYTES = max(25, int(os.environ.get('DEEPSEEK_CONNECTOR_MAX_IDENTITY_MB', '250'))) * 1024 * 1024
-MAX_CONNECTOR_IDENTITY_FILES = max(10, int(os.environ.get('DEEPSEEK_CONNECTOR_MAX_IDENTITY_FILES', '100')))
-CONNECTOR_FILE_TTL_SECONDS = max(3600, int(os.environ.get('DEEPSEEK_CONNECTOR_FILE_TTL_HOURS', '168')) * 3600)
+CONNECTOR_UPLOAD_ROOT = Path.home() / '.bibzcode-cli' / 'uploads'
+MAX_CONNECTOR_FILE_BYTES = max(1, int(os.environ.get('BIBZCODE_CONNECTOR_MAX_FILE_MB', '25'))) * 1024 * 1024
+MAX_CONNECTOR_IDENTITY_BYTES = max(25, int(os.environ.get('BIBZCODE_CONNECTOR_MAX_IDENTITY_MB', '250'))) * 1024 * 1024
+MAX_CONNECTOR_IDENTITY_FILES = max(10, int(os.environ.get('BIBZCODE_CONNECTOR_MAX_IDENTITY_FILES', '100')))
+CONNECTOR_FILE_TTL_SECONDS = max(3600, int(os.environ.get('BIBZCODE_CONNECTOR_FILE_TTL_HOURS', '168')) * 3600)
 
 
 def _safe_filename(filename: str, fallback: str = 'attachment.bin') -> str:
@@ -487,13 +487,13 @@ class TelegramBot:
             cmd = text.split()[0].lower()
             if cmd == '/start':
                 self.send_message(chat_id,
-                    "Hello! I'm your DeepSeek CLI Agent.\n"
+                    "Hello! I'm your BibzCode CLI Agent.\n"
                     'Send text, reply to a message, or attach a supported file.\n\n'
                     'Commands: /start /status /clear /help')
                 return
             if cmd == '/help':
                 self.send_message(chat_id,
-                    '**DeepSeek CLI Agent**\n\n'
+                    '**BibzCode CLI Agent**\n\n'
                     'I can read the message you reply to and analyze documents, images, audio/video metadata, '
                     'spreadsheets, presentations, PDFs, CSV, APK, and text files.\n\n'
                     'Commands: /status /clear /help')
@@ -610,7 +610,7 @@ class DiscordBot:
         return {
             'Authorization': f'Bot {self.token}',
             'Content-Type': 'application/json',
-            'User-Agent': 'DeepSeekCLI/7.0',
+            'User-Agent': 'BibzCodeCLI/7.0',
         }
 
     def _api(self, method: str, endpoint: str, data: dict | None = None,
@@ -621,7 +621,7 @@ class DiscordBot:
             if files:
                 headers = {
                     'Authorization': f'Bot {self.token}',
-                    'User-Agent': 'DeepSeekCLI/7.0',
+                    'User-Agent': 'BibzCodeCLI/7.0',
                 }
                 resp = _httpx_client.request(method, url, headers=headers,
                                              data=data, files=files, timeout=timeout)
@@ -909,7 +909,7 @@ class DiscordBot:
                         command = content.split()[0].lower()
                         if command == '/help':
                             self.send_message(
-                                '**DeepSeek CLI Agent**\n\nSend text, reply to an existing message, '
+                                '**BibzCode CLI Agent**\n\nSend text, reply to an existing message, '
                                 'or attach a supported file.\nCommands: /status /clear /help')
                             continue
                         if command == '/status':

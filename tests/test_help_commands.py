@@ -9,9 +9,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from deepseek.__main__ import _build_parser
-from deepseek.repl import handle_command
-from deepseek.ui import BANNER, HELP_SECTIONS, SLASH_COMMANDS, show_help
+from bibzcode.__main__ import _build_parser
+from bibzcode.repl import handle_command
+from bibzcode.ui import BANNER, HELP_SECTIONS, SLASH_COMMANDS, show_help
 
 
 def test_custom_bibzcode_banner_is_present():
@@ -28,15 +28,15 @@ def test_custom_bibzcode_banner_is_present():
 
 def test_cli_help_subcommand_works():
     proc = subprocess.run(
-        [sys.executable, '-m', 'deepseek', 'help'],
+        [sys.executable, '-m', 'bibzcode', 'help'],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
         check=False,
     )
     assert proc.returncode == 0, proc.stderr
-    assert 'usage: dscli' in proc.stdout
-    assert 'dscli help' in proc.stdout
+    assert 'usage: bzcli' in proc.stdout
+    assert 'bzcli help' in proc.stdout
     assert 'Inside the interactive REPL use /help' in proc.stdout
 
 
@@ -44,7 +44,7 @@ def test_cli_help_text_mentions_supported_commands():
     help_text = _build_parser().format_help()
     normalized = ' '.join(help_text.split())
     assert 'Commands: help | list session | delete <id> | logout | uninstall-full' in normalized
-    assert 'dscli list session' in help_text
+    assert 'bzcli list session' in help_text
 
 
 def test_help_sections_cover_missing_repl_commands():
@@ -65,7 +65,7 @@ def test_slash_command_completion_includes_aliases_and_utilities():
 
 
 def test_show_help_renders_complete_reference():
-    from deepseek import ui
+    from bibzcode import ui
 
     buffer = io.StringIO()
     original_console = ui.console
@@ -76,14 +76,14 @@ def test_show_help_renders_complete_reference():
         ui.console = original_console
 
     output = buffer.getvalue()
-    assert 'DeepSeek CLI Command Reference' in output
+    assert 'BibzCode CLI Command Reference' in output
     assert '/remind' in output and 'Create an in-terminal reminder' in output
     assert '/rename' in output and 'Rename the current session' in output
     assert '/exit' in output and '/quit' in output and '/q' in output
 
 
 def test_handle_command_help_aliases_do_not_crash():
-    from deepseek import ui
+    from bibzcode import ui
 
     buffer = io.StringIO()
     original_console = ui.console
@@ -97,13 +97,13 @@ def test_handle_command_help_aliases_do_not_crash():
         ui.console = original_console
 
     output = buffer.getvalue()
-    assert 'DeepSeek CLI Command Reference' in output
+    assert 'BibzCode CLI Command Reference' in output
 
 
 def test_agent_profile_switch_does_not_duplicate_system_prompt():
-    from deepseek import ui
-    from deepseek.memory import Memory
-    from deepseek.multi_agent import AGENT_PROFILES, multi_agent_manager
+    from bibzcode import ui
+    from bibzcode.memory import Memory
+    from bibzcode.multi_agent import AGENT_PROFILES, multi_agent_manager
 
     buffer = io.StringIO()
     original_console = ui.console
@@ -127,9 +127,9 @@ def test_agent_profile_switch_does_not_duplicate_system_prompt():
 
 
 def test_sessions_alias_lists_saved_sessions(tmp_path):
-    from deepseek import repl, ui
-    from deepseek.memory import Memory, save_session
-    import deepseek.memory as memory_module
+    from bibzcode import repl, ui
+    from bibzcode.memory import Memory, save_session
+    import bibzcode.memory as memory_module
 
     buffer = io.StringIO()
     original_ui_console = ui.console
@@ -142,7 +142,7 @@ def test_sessions_alias_lists_saved_sessions(tmp_path):
     try:
         memory = Memory()
         memory.session_name = 'Audit Session'
-        save_session('dscli-aaaaaaaaaaaa', memory)
+        save_session('bzcli-aaaaaaaaaaaa', memory)
         assert handle_command('/sessions', None, memory, None) == ''
     finally:
         memory_module.SESSIONS_DIR = original_sessions_dir
@@ -151,13 +151,13 @@ def test_sessions_alias_lists_saved_sessions(tmp_path):
 
     output = buffer.getvalue()
     assert 'Saved Sessions' in output
-    assert 'dscli-aaaaaaaaaaaa' in output
+    assert 'bzcli-aaaaaaaaaaaa' in output
 
 
 def test_rename_current_session_updates_file(tmp_path):
-    from deepseek import repl, ui
-    from deepseek.memory import Memory, save_session
-    import deepseek.memory as memory_module
+    from bibzcode import repl, ui
+    from bibzcode.memory import Memory, save_session
+    import bibzcode.memory as memory_module
     import json
 
     buffer = io.StringIO()
@@ -169,10 +169,10 @@ def test_rename_current_session_updates_file(tmp_path):
     repl.console = ui.console
     try:
         memory = Memory()
-        memory._current_session_id = 'dscli-bbbbbbbbbbbb'
-        save_session('dscli-bbbbbbbbbbbb', memory)
+        memory._current_session_id = 'bzcli-bbbbbbbbbbbb'
+        save_session('bzcli-bbbbbbbbbbbb', memory)
         assert handle_command('/rename Stable Build Session', None, memory, None) == ''
-        with open(tmp_path / 'dscli-bbbbbbbbbbbb.json', encoding='utf-8') as f:
+        with open(tmp_path / 'bzcli-bbbbbbbbbbbb.json', encoding='utf-8') as f:
             data = json.load(f)
     finally:
         memory_module.SESSIONS_DIR = original_sessions_dir
@@ -184,9 +184,9 @@ def test_rename_current_session_updates_file(tmp_path):
 
 
 def test_session_delete_command_removes_saved_session(tmp_path):
-    from deepseek import repl, ui
-    from deepseek.memory import Memory, save_session
-    import deepseek.memory as memory_module
+    from bibzcode import repl, ui
+    from bibzcode.memory import Memory, save_session
+    import bibzcode.memory as memory_module
 
     buffer = io.StringIO()
     original_ui_console = ui.console
@@ -197,21 +197,21 @@ def test_session_delete_command_removes_saved_session(tmp_path):
     repl.console = ui.console
     try:
         memory = Memory()
-        save_session('dscli-cccccccccccc', memory)
-        assert (tmp_path / 'dscli-cccccccccccc.json').exists()
-        assert handle_command('/session delete dscli-cccccccccccc', None, memory, None) == ''
+        save_session('bzcli-cccccccccccc', memory)
+        assert (tmp_path / 'bzcli-cccccccccccc.json').exists()
+        assert handle_command('/session delete bzcli-cccccccccccc', None, memory, None) == ''
     finally:
         memory_module.SESSIONS_DIR = original_sessions_dir
         ui.console = original_ui_console
         repl.console = original_repl_console
 
-    assert not (tmp_path / 'dscli-cccccccccccc.json').exists()
+    assert not (tmp_path / 'bzcli-cccccccccccc.json').exists()
 
 
 def test_rename_specific_session_updates_target_file(tmp_path):
-    from deepseek import repl, ui
-    from deepseek.memory import Memory, save_session
-    import deepseek.memory as memory_module
+    from bibzcode import repl, ui
+    from bibzcode.memory import Memory, save_session
+    import bibzcode.memory as memory_module
     import json
 
     buffer = io.StringIO()
@@ -223,14 +223,14 @@ def test_rename_specific_session_updates_target_file(tmp_path):
     repl.console = ui.console
     try:
         current_memory = Memory()
-        current_memory._current_session_id = 'dscli-dddddddddddd'
-        save_session('dscli-dddddddddddd', current_memory)
+        current_memory._current_session_id = 'bzcli-dddddddddddd'
+        save_session('bzcli-dddddddddddd', current_memory)
 
         target_memory = Memory()
-        save_session('dscli-eeeeeeeeeeee', target_memory)
+        save_session('bzcli-eeeeeeeeeeee', target_memory)
 
-        assert handle_command('/rename dscli-eeeeeeeeeeee Stable Session Name', None, current_memory, None) == ''
-        with open(tmp_path / 'dscli-eeeeeeeeeeee.json', encoding='utf-8') as f:
+        assert handle_command('/rename bzcli-eeeeeeeeeeee Stable Session Name', None, current_memory, None) == ''
+        with open(tmp_path / 'bzcli-eeeeeeeeeeee.json', encoding='utf-8') as f:
             data = json.load(f)
     finally:
         memory_module.SESSIONS_DIR = original_sessions_dir

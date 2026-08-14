@@ -1,6 +1,6 @@
 import json
 
-from deepseek.connectors import ConnectorManager, DiscordBot, TelegramBot, _safe_filename
+from bibzcode.connectors import ConnectorManager, DiscordBot, TelegramBot, _safe_filename
 
 
 def test_connectors_require_explicit_whitelist():
@@ -30,7 +30,7 @@ def test_discord_poll_processes_messages_after_cursor(monkeypatch):
     bot._api = fake_api
     bot.agent_callback = lambda message, **kwargs: seen.append(message) or "ok"
     bot.send_message = lambda *args, **kwargs: True
-    monkeypatch.setattr("deepseek.connectors.time.sleep", lambda _: None)
+    monkeypatch.setattr("bibzcode.connectors.time.sleep", lambda _: None)
     bot._poll_loop()
     assert seen == ["first", "second"]
     assert bot._last_message_id == "102"
@@ -118,7 +118,7 @@ def test_discord_poll_passes_reply_and_attachment(monkeypatch, tmp_path):
     bot._download_discord_attachment = fake_download
     bot.agent_callback = lambda message, **kwargs: captured.append((message, kwargs)) or 'ok'
     bot.send_message = lambda *args, **kwargs: True
-    monkeypatch.setattr('deepseek.connectors.time.sleep', lambda _: None)
+    monkeypatch.setattr('bibzcode.connectors.time.sleep', lambda _: None)
     bot._poll_loop()
 
     message, kwargs = captured[0]
@@ -128,7 +128,7 @@ def test_discord_poll_passes_reply_and_attachment(monkeypatch, tmp_path):
 
 
 def test_telegram_download_is_bounded_private_and_token_free(monkeypatch, tmp_path):
-    import deepseek.connectors as connector_module
+    import bibzcode.connectors as connector_module
 
     requested = {}
 
@@ -143,7 +143,7 @@ def test_telegram_download_is_bounded_private_and_token_free(monkeypatch, tmp_pa
         requested['url'] = url
         return Response()
 
-    import deepseek.net_policy as net_policy
+    import bibzcode.net_policy as net_policy
     monkeypatch.setattr(connector_module, 'CONNECTOR_UPLOAD_ROOT', tmp_path)
     monkeypatch.setattr(net_policy, 'safe_httpx_request', safe_request)
     bot = TelegramBot('secret-bot-token', allowed_users=[1])

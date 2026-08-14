@@ -2,16 +2,16 @@ import os
 
 import pytest
 
-from deepseek.agent import Agent
-from deepseek.mcp_client import MCPConnection
-from deepseek.mcp_tools import tool_get_datetime, tool_get_day_info
-from deepseek.memory import Memory, _session_path, delete_session, load_session
-from deepseek.toolkit import ToolRegistry, redact_sensitive_args
+from bibzcode.agent import Agent
+from bibzcode.mcp_client import MCPConnection
+from bibzcode.mcp_tools import tool_get_datetime, tool_get_day_info
+from bibzcode.memory import Memory, _session_path, delete_session, load_session
+from bibzcode.toolkit import ToolRegistry, redact_sensitive_args
 
 
 @pytest.fixture()
 def registry(tmp_path, monkeypatch):
-    monkeypatch.setenv("DEEPSEEK_WORKSPACE", str(tmp_path))
+    monkeypatch.setenv("BIBZCODE_WORKSPACE", str(tmp_path))
     return ToolRegistry()
 
 
@@ -60,7 +60,7 @@ def test_remote_policy_blocks_host_tools(registry, tmp_path):
 
 def test_remote_connector_can_only_read_exact_approved_attachment(monkeypatch, tmp_path):
     monkeypatch.setenv('HOME', str(tmp_path))
-    upload_dir = tmp_path / '.deepseek-cli' / 'uploads' / 'telegram' / 'chat' / 'user'
+    upload_dir = tmp_path / '.bibzcode-cli' / 'uploads' / 'telegram' / 'chat' / 'user'
     upload_dir.mkdir(parents=True)
     approved = upload_dir / 'approved.txt'
     approved.write_text('connector payload')
@@ -111,7 +111,7 @@ def test_sensitive_argument_redaction_is_recursive():
 
 
 def test_session_path_rejects_traversal(tmp_path, monkeypatch):
-    import deepseek.memory as memory_module
+    import bibzcode.memory as memory_module
     monkeypatch.setattr(memory_module, "SESSIONS_DIR", str(tmp_path))
     with pytest.raises(ValueError):
         _session_path("../../victim")

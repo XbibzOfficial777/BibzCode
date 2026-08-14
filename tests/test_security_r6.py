@@ -1,19 +1,22 @@
 import ipaddress
 import json
+import os
+import subprocess
+import sys
 
 import httpx
 import pytest
 
-from deepseek import agent as agent_module
-from deepseek import auth as auth_module
-from deepseek import config as config_module
-from deepseek.agent import AgentMetrics, safe_execute
-from deepseek.auth import _build_session
-from deepseek.config import _parse_version, is_newer_version
-from deepseek.connectors import DiscordBot, TelegramBot
-from deepseek.net_policy import NetworkPolicyError, safe_httpx_request, url_policy_error
-from deepseek.toolkit import ToolRegistry, redact_sensitive_text
-from deepseek.ui import BANNER
+from bibzcode import agent as agent_module
+from bibzcode import auth as auth_module
+from bibzcode import config as config_module
+from bibzcode.agent import AgentMetrics, safe_execute
+from bibzcode.auth import _build_session
+from bibzcode.config import _parse_version, is_newer_version
+from bibzcode.connectors import DiscordBot, TelegramBot
+from bibzcode.net_policy import NetworkPolicyError, safe_httpx_request, url_policy_error
+from bibzcode.toolkit import ToolRegistry, redact_sensitive_text
+from bibzcode.ui import BANNER
 
 
 def test_banner_is_ogre_bibzcode_without_legacy_ascii_font():
@@ -28,6 +31,35 @@ def test_banner_is_ogre_bibzcode_without_legacy_ascii_font():
     assert 'BibzCode' in BANNER
 
 
+def test_legacy_module_command_environment_and_data_migration(tmp_path):
+    import deepseek
+    from deepseek.version import __version__ as legacy_version
+
+    assert deepseek.__version__ == legacy_version == '7.8.0-r6'
+    proc = subprocess.run(
+        [sys.executable, '-m', 'deepseek', 'help'],
+        capture_output=True, text=True, check=False,
+    )
+    assert proc.returncode == 0
+    assert 'usage: bzcli' in proc.stdout
+
+    old_dir = tmp_path / ('.deep' 'seek-cli')
+    old_dir.mkdir()
+    (old_dir / 'legacy.txt').write_text('migrate')
+    env = os.environ.copy()
+    env['HOME'] = str(tmp_path)
+    env['DEEP' 'SEEK_WORKSPACE'] = str(tmp_path / 'workspace')
+    proc = subprocess.run(
+        [sys.executable, '-c', (
+            "import os, pathlib, bibzcode; "
+            "assert os.environ['BIBZCODE_WORKSPACE'].endswith('workspace'); "
+            "assert (pathlib.Path.home()/'.bibzcode-cli'/'legacy.txt').read_text()=='migrate'"
+        )],
+        cwd=os.getcwd(), env=env, capture_output=True, text=True, check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+
+
 def test_r6_versions_compare_as_revision_not_patch():
     assert _parse_version('7.8.0-r6') == (7, 8, 0, 6)
     assert _parse_version('7.8.0.post6') == (7, 8, 0, 6)
@@ -40,7 +72,7 @@ def test_all_outside_path_metadata_operations_require_confirmation(tmp_path, mon
     workspace.mkdir()
     outside = tmp_path / 'outside.txt'
     outside.write_text('x')
-    monkeypatch.setenv('DEEPSEEK_WORKSPACE', str(workspace))
+    monkeypatch.setenv('BIBZCODE_WORKSPACE', str(workspace))
     registry = ToolRegistry()
     for name in ('list_files', 'file_info', 'docx_info', 'pptx_info', 'xlsx_info', 'video_play'):
         assert registry.requires_confirmation(name, {'path': str(outside)}), name
@@ -49,7 +81,7 @@ def test_all_outside_path_metadata_operations_require_confirmation(tmp_path, mon
 def test_persistent_approval_is_workspace_scoped(tmp_path, monkeypatch):
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
-    monkeypatch.setenv('DEEPSEEK_WORKSPACE', str(workspace))
+    monkeypatch.setenv('BIBZCODE_WORKSPACE', str(workspace))
     registry = ToolRegistry()
     assert registry.approval_key('write_file', {'path': str(workspace / 'ok.txt')})
     assert registry.approval_key('write_file', {'path': str(tmp_path / 'outside.txt')}) is None
@@ -111,7 +143,7 @@ def test_connector_classes_deny_empty_whitelist_direct_start():
 
 
 def test_private_network_policy_blocks_special_destinations(monkeypatch):
-    monkeypatch.delenv('DEEPSEEK_ALLOW_PRIVATE_NETWORK', raising=False)
+    monkeypatch.delenv('BIBZCODE_ALLOW_PRIVATE_NETWORK', raising=False)
     assert url_policy_error('http://127.0.0.1/')
     assert url_policy_error('http://169.254.169.254/latest/meta-data')
     assert url_policy_error('http://localhost/')
@@ -154,7 +186,7 @@ def test_bounded_http_response_is_streamed_and_stopped_at_limit(monkeypatch):
         lambda request: httpx.Response(200, stream=stream, request=request)
     )
     monkeypatch.setattr(
-        'deepseek.net_policy._normalized_ips',
+        'bibzcode.net_policy._normalized_ips',
         lambda host, port: {ipaddress.ip_address('93.184.216.34')},
     )
     with httpx.Client(transport=transport) as client:
@@ -169,8 +201,8 @@ def test_bounded_http_response_is_streamed_and_stopped_at_limit(monkeypatch):
 
 def test_production_auth_and_access_gate_ignore_skip_environment(monkeypatch):
     real_session = {'uid': 'verified-user', 'username': 'verified'}
-    monkeypatch.setenv('DEEPSEEK_SKIP_AUTH', '1')
-    monkeypatch.setenv('DEEPSEEK_SKIP_ACCESS_GATE', '1')
+    monkeypatch.setenv('BIBZCODE_SKIP_AUTH', '1')
+    monkeypatch.setenv('BIBZCODE_SKIP_ACCESS_GATE', '1')
     monkeypatch.setattr(auth_module, '_try_restore_session', lambda: real_session)
     assert auth_module.ensure_authenticated() == real_session
 
@@ -188,8 +220,8 @@ def test_production_auth_and_access_gate_ignore_skip_environment(monkeypatch):
 
 
 def test_backend_origin_is_pinned_even_with_legacy_override(monkeypatch):
-    monkeypatch.setenv('DEEPSEEK_API_URL', 'https://attacker.example')
-    monkeypatch.setenv('DEEPSEEK_ALLOW_CUSTOM_BACKEND', '1')
+    monkeypatch.setenv('BIBZCODE_API_URL', 'https://attacker.example')
+    monkeypatch.setenv('BIBZCODE_ALLOW_CUSTOM_BACKEND', '1')
     with pytest.raises(RuntimeError, match='not permitted'):
         config_module._backend_url()
 

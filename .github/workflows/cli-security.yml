@@ -2,9 +2,9 @@ name: CLI security checks
 
 on:
   push:
-    branches: [nightly]
+    branches: [main, nightly]
   pull_request:
-    branches: [nightly]
+    branches: [main, nightly]
 
 permissions:
   contents: read
@@ -28,11 +28,11 @@ jobs:
           python -m pip install 'pytest>=8,<10' 'pyflakes>=3,<4' 'bandit>=1.8,<2' 'build>=1.2,<2'
       - name: Compile and unit tests
         run: |
-          python -m compileall -q deepseek tests
+          python -m compileall -q bibzcode deepseek tests
           python -m pytest -q
-          python -m pyflakes deepseek tests
+          python -m pyflakes bibzcode deepseek tests
       - name: Static security scan
-        run: bandit -q -r deepseek --severity-level medium
+        run: bandit -q -r bibzcode --severity-level medium
       - name: Build package
         run: python -m build
       - name: Verify deterministic CLI release

@@ -2,7 +2,7 @@
   "rules": {
     ".read": false,
     ".write": false,
-    "dscliUsers": {
+    "bibzcodeUsers": {
       "$uid": {
         ".read": "auth != null && auth.uid === $uid",
         "uid": {

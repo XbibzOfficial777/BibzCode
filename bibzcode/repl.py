@@ -1,4 +1,4 @@
-# DeepSeek CLI v7.8.0 — Interactive REPL
+# BibzCode CLI v7.8.0 — Interactive REPL
 # Main loop: reads user input, handles slash commands, delegates to Agent
 # Features: Ctrl+P settings panel, arrow-key select menus, command history
 
@@ -69,7 +69,7 @@ def _reminder_worker(seconds, message):
 
 
 VERSION = __version__
-VERSION_BANNER = f'DeepSeek CLI Agent v{__version__}'
+VERSION_BANNER = f'BibzCode CLI Agent v{__version__}'
 VERSION_FEATURES = 'Multi-Provider | 7 AI Services | 80+ Tools | Real-Time Stream | Rich Markdown | Web Browser | Smart Loop | OCR | Telegram & Discord | Auth Automation'
 
 
@@ -77,8 +77,8 @@ def main(session_id: str | None = None, memory=None, user=None):
     """Main entry point — start the REPL."""
     show_banner()
 
-    # Restore original CWD (dscli wrapper cd'd to install dir)
-    orig_cwd = os.environ.get('DEEPSEEK_ORIGINAL_CWD')
+    # Restore original CWD (bzcli wrapper cd'd to install dir)
+    orig_cwd = os.environ.get('BIBZCODE_ORIGINAL_CWD')
     if orig_cwd:
         try:
             os.chdir(orig_cwd)
@@ -149,7 +149,7 @@ def main(session_id: str | None = None, memory=None, user=None):
 
     # ── Scan current directory for AI context ──
     try:
-        cwd = os.environ.get('DEEPSEEK_ORIGINAL_CWD') or os.getcwd()
+        cwd = os.environ.get('BIBZCODE_ORIGINAL_CWD') or os.getcwd()
         cwd_items = sorted(os.listdir(cwd))
         visible = [f for f in cwd_items if not f.startswith('.')][:50]
         if visible:
@@ -652,7 +652,7 @@ def handle_command(cmd: str, agent: Agent, memory: Memory, tools: ToolRegistry) 
             console.print(f'  [bold]{name}[/bold]')
             console.print(f'    [dim]ID: {sid}  |  {n} msgs  |  {c}[/dim]')
         console.print()
-        console.print('  [dim]Resume: dscli -s <session_id>[/dim]')
+        console.print('  [dim]Resume: bzcli -s <session_id>[/dim]')
         console.print('  [dim]Delete: /session delete <session_id>[/dim]')
         console.print()
 
@@ -667,7 +667,7 @@ def handle_command(cmd: str, agent: Agent, memory: Memory, tools: ToolRegistry) 
             console.print()
             return ''
         first, separator, remainder = args.partition(' ')
-        if separator and re.fullmatch(r'dscli-[0-9a-f]{12}', first):
+        if separator and re.fullmatch(r'(?:bzcli|dscli)-[0-9a-f]{12}', first):
             sid, new_name = first, remainder.strip()
             target_memory = load_session(sid)
         else:
@@ -837,7 +837,7 @@ def _list_sessions_cli(agent, memory, current_session_id):
         console.print(f'  [bold]{name}{marker}[/bold]')
         console.print(f'    [dim]ID: {sid}  |  {n} msgs  |  {c}[/dim]')
     console.print()
-    console.print('  [dim]Resume: dscli -s <session_id>[/dim]')
+    console.print('  [dim]Resume: bzcli -s <session_id>[/dim]')
     console.print()
 
 
@@ -1094,7 +1094,7 @@ def show_version_info():
     table.add_row('Max Tool Rounds', f'{rounds_str} (smart loop)')
     table.add_row('Loop Detection', f'max_same_tool={3}, anti_stuck=ON')
     table.add_row('Validation', 'Pydantic (with fallback)')
-    table.add_row('Logging', '~/.deepseek-cli/logs/')
+    table.add_row('Logging', '~/.bibzcode-cli/logs/')
     table.add_row('Tool Categories', 'File, Web, Code, System, Math, Utility, PDF, DOCX, Image, Video, APK, OCR, Live Search, Browser, Connectors')
     table.add_row('Response Style', 'Rich Markdown (bold, italic, code, syntax highlight)')
     console.print(table)
@@ -1144,7 +1144,7 @@ def export_chat(memory: Memory, filename: str = ''):
     """Export conversation to file. Supports .html, .md, or .txt."""
     if not filename:
         timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-        filename = f'deepseek_chat_{timestamp}.txt'
+        filename = f'bibzcode_chat_{timestamp}.txt'
 
     ext = os.path.splitext(filename)[1].lower()
 
@@ -2369,7 +2369,7 @@ def _mcp_try_import():
         from . import mcp_client as _m
         return True, _m
     except (ImportError, ModuleNotFoundError):
-        return False, 'mcp_client module not found. Run: bash install.sh to update, or copy deepseek/mcp_client.py to the install dir.'
+        return False, 'mcp_client module not found. Run: bash install.sh to update, or copy bibzcode/mcp_client.py to the install dir.'
 
 
 def _mcp_list_popular():

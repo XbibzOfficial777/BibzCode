@@ -1,4 +1,4 @@
-# Security Review: DeepSeek CLI 7.8.0-r6
+# Security Review: BibzCode CLI 7.8.0-r6
 
 **Review date:** 13 August 2026 (Asia/Jakarta)
 **Baseline reviewed:** GitHub `main` commit `37bf70827a42396a21f22e58b8493231383b159d`
@@ -17,9 +17,9 @@ No remaining high-confidence vulnerability was identified after remediation.
 
 ### VULN-001 — Client-controlled authentication and access-policy bypass (High)
 
-- **Original locations:** `deepseek/auth.py:463-485`, `deepseek/config.py:603-605`, `deepseek/config.py:651-652` at baseline commit
+- **Original locations:** `bibzcode/auth.py:463-485`, `bibzcode/config.py:603-605`, `bibzcode/config.py:651-652` at baseline commit
 - **Confidence:** High
-- **Issue:** Production code honored `DEEPSEEK_SKIP_AUTH=1` and `DEEPSEEK_SKIP_ACCESS_GATE=1`. A local CLI user could set both environment variables and receive a synthetic `dev` session while skipping Worker ban and quota checks.
+- **Issue:** Production code honored `BIBZCODE_SKIP_AUTH=1` and `BIBZCODE_SKIP_ACCESS_GATE=1`. A local CLI user could set both environment variables and receive a synthetic `dev` session while skipping Worker ban and quota checks.
 - **Impact:** Trivial bypass of the application's intended Firebase authentication, account ban, device ban, and token-limit enforcement.
 - **Verified evidence:** Executing the baseline with both variables returned `uid=dev` and `_cached_usage_status={'offline': True}` without contacting Firebase or the Worker.
 - **Remediation:** Removed both production bypasses. The access gate now fails closed. The Worker origin is pinned exactly; the legacy custom-backend override can no longer redirect Firebase ID tokens to another origin.
@@ -28,7 +28,7 @@ No remaining high-confidence vulnerability was identified after remediation.
 
 ### VULN-002 — Broken RTDB authentication undermined profile registration and account-ban coverage (High)
 
-- **Original locations:** `deepseek/auth.py:138-182`, `deepseek/auth.py:313-327`, `deepseek/auth.py:390-415` at baseline commit
+- **Original locations:** `bibzcode/auth.py:138-182`, `bibzcode/auth.py:313-327`, `bibzcode/auth.py:390-415` at baseline commit
 - **Confidence:** High
 - **Issue:** The CLI sent a Firebase ID token to RTDB as `Authorization: Bearer`. RTDB treats that header as a Google OAuth credential; Firebase ID tokens must not be used there in this form. Every profile read/write failed with HTTP 401, and broad exception handlers converted those failures to empty profiles or `False`.
 - **Impact:** New Firebase identities could be created but profile bootstrap failed before the verification flow completed. Missing RTDB profiles were omitted from the dashboard's account-management list, weakening account-level ban administration and leaving only per-device controls.
@@ -38,7 +38,7 @@ No remaining high-confidence vulnerability was identified after remediation.
 
 ### VULN-003 — Response limit applied only after full body buffering (Medium)
 
-- **Original location:** `deepseek/net_policy.py:111-126` at baseline commit
+- **Original location:** `bibzcode/net_policy.py:111-126` at baseline commit
 - **Confidence:** High
 - **Issue:** `safe_httpx_request` called `client.send(..., stream=False)` for normal requests. httpx therefore buffered the complete response before `len(response.content)` checked `max_response_bytes`. An attacker-controlled public endpoint could omit `Content-Length` and stream an arbitrarily large decoded body.
 - **Impact:** Memory exhaustion or process termination through `web_fetch`, OCR URL handling, or HTTP browser operations that advertised a response-size limit.
@@ -49,7 +49,7 @@ No remaining high-confidence vulnerability was identified after remediation.
 
 ### VERIFY-001 — DNS resolution and connection are not cryptographically pinned
 
-- **Location:** `deepseek/net_policy.py`
+- **Location:** `bibzcode/net_policy.py`
 - **Question:** URL policy validates all DNS answers before the HTTP library performs its own resolution. A hostile authoritative DNS server may be able to change an answer between validation and connection (DNS rebinding/TOCTOU).
 - **Current mitigations:** all resolved non-global addresses are rejected; redirects are manually revalidated; localhost, metadata, internal suffixes, credentials-in-URL, and nonstandard ports are blocked by default.
 - **Reason not reported as a confirmed vulnerability:** exploitability depends on resolver caching, transport behavior, and timing and was not reproduced in this environment. A future hardening pass should evaluate IP pinning while preserving TLS SNI and certificate verification.

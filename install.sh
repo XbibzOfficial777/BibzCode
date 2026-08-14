@@ -1,17 +1,28 @@
 #!/usr/bin/env bash
-# DeepSeek CLI 7.8.0-r6 secure installer.
+# BibzCode CLI 7.8.0-r6 secure installer.
 set -Eeuo pipefail
 umask 077
 
 VERSION="7.8.0-r6"
 RELEASE_ID="7.8.0-r6"
-EXPECTED_SHA256="2af7753eba00a4af4a6b65c64b44be749e8f0827bd7af391328c77d57aae9821"
-CF_BASE="${DEEPSEEK_CF_BASE_URL:-https://deepseek-dash.bibzflow.workers.dev}"
-CF_ARCHIVE="$CF_BASE/releases/deepseek-cli-$RELEASE_ID.tar.gz"
-GH_ARCHIVE="${DEEPSEEK_GITHUB_RELEASE_URL:-https://raw.githubusercontent.com/XbibzOfficial777/BibzCode/main/releases/deepseek-cli-$RELEASE_ID.tar.gz}"
-INSTALL_DIR="${DEEPSEEK_INSTALL_DIR:-$HOME/.local/lib/deepseek-cli}"
-VENV_DIR="${DEEPSEEK_VENV_DIR:-$HOME/.deepseek-cli/venv}"
-BIN_DIR="${DEEPSEEK_BIN_DIR:-$HOME/.local/bin}"
+EXPECTED_SHA256="5532b2c73dc40328b2f42bba2c19c2555d519a508289e9a715a7c083c261eade"
+LEGACY_ENV_PREFIX='DEEP''SEEK_'
+compat_env(){
+  local suffix="$1" fallback="${2:-}" primary="BIBZCODE_$1" legacy="${LEGACY_ENV_PREFIX}$1"
+  if [[ -n "${!primary:-}" ]]; then printf '%s' "${!primary}"
+  elif [[ -n "${!legacy:-}" ]]; then printf '%s' "${!legacy}"
+  else printf '%s' "$fallback"
+  fi
+}
+CF_BASE="$(compat_env CF_BASE_URL 'https://bibzcode.bibzflow.workers.dev')"
+CF_ARCHIVE="$CF_BASE/releases/bibzcode-cli-$RELEASE_ID.tar.gz"
+GH_ARCHIVE="$(compat_env GITHUB_RELEASE_URL "https://raw.githubusercontent.com/XbibzOfficial777/BibzCode/main/releases/bibzcode-cli-$RELEASE_ID.tar.gz")"
+INSTALL_DIR="$(compat_env INSTALL_DIR "$HOME/.local/lib/bibzcode-cli")"
+VENV_DIR="$(compat_env VENV_DIR "$HOME/.bibzcode-cli/venv")"
+BIN_DIR="$(compat_env BIN_DIR "$HOME/.local/bin")"
+LEGACY_CONFIG_DIR="$HOME/.deep"'seek-cli'
+LEGACY_INSTALL_DIR="$HOME/.local/lib/deep"'seek-cli'
+LEGACY_KEY_FILE="$HOME/.deep"'seek_api_key'
 FULL=false
 ACTION=install
 YES=false
@@ -41,7 +52,7 @@ set_install_mode(){
 }
 
 usage(){ cat <<EOF
-DeepSeek CLI $VERSION installer
+BibzCode CLI $VERSION installer
 Usage: bash install.sh [--full] [install mode] [--uninstall|--purge] [--yes]
 
 Install modes (interactive when a terminal is available):
@@ -56,15 +67,16 @@ Other options:
   --purge           remove application plus all local auth/config/sessions (destructive)
   --yes             confirm --purge non-interactively
 
-Environment: DEEPSEEK_CF_BASE_URL, DEEPSEEK_INSTALL_DIR,
-             DEEPSEEK_VENV_DIR, DEEPSEEK_BIN_DIR, DEEPSEEK_PYTHON,
-             DEEPSEEK_INSTALL_MODE=managed|active|user,
-             DEEPSEEK_SOURCE_ORDER=cf,github
+Environment: BIBZCODE_CF_BASE_URL, BIBZCODE_INSTALL_DIR,
+             BIBZCODE_VENV_DIR, BIBZCODE_BIN_DIR, BIBZCODE_PYTHON,
+             BIBZCODE_INSTALL_MODE=managed|active|user,
+             BIBZCODE_SOURCE_ORDER=cf,github
 EOF
 }
 
-if [[ -n "${DEEPSEEK_INSTALL_MODE:-}" ]]; then
-  set_install_mode "$DEEPSEEK_INSTALL_MODE"
+configured_mode="$(compat_env INSTALL_MODE '')"
+if [[ -n "$configured_mode" ]]; then
+  set_install_mode "$configured_mode"
 fi
 
 for arg in "$@"; do
@@ -84,7 +96,10 @@ done
 
 remove_application(){
   rm -rf -- "$INSTALL_DIR"
-  rm -f -- "$BIN_DIR/dscli"
+  if [[ -L "$LEGACY_INSTALL_DIR" || "$LEGACY_INSTALL_DIR" == "$HOME/.local/lib/deep"'seek-cli' ]]; then
+    rm -rf -- "$LEGACY_INSTALL_DIR"
+  fi
+  rm -f -- "$BIN_DIR/bzcli" "$BIN_DIR/dscli"
 }
 
 if [[ "$ACTION" == uninstall ]]; then
@@ -94,23 +109,37 @@ if [[ "$ACTION" == uninstall ]]; then
 fi
 
 if [[ "$ACTION" == purge ]]; then
-  previous_mode="$(head -n 1 "$HOME/.deepseek-cli/install-mode" 2>/dev/null || true)"
+  previous_mode="$(head -n 1 "$HOME/.bibzcode-cli/install-mode" 2>/dev/null || true)"
   if [[ "$YES" != true ]]; then
     [[ -r /dev/tty && -w /dev/tty ]] && (: </dev/tty) 2>/dev/null \
       || die "--purge requires --yes without an interactive terminal"
-    printf 'Delete ALL DeepSeek CLI local data under %s? Type PURGE: ' "$HOME/.deepseek-cli" >/dev/tty
+    printf 'Delete ALL BibzCode CLI local data under %s? Type PURGE: ' "$HOME/.bibzcode-cli" >/dev/tty
     read -r answer </dev/tty
     [[ "$answer" == PURGE ]] || die "Purge cancelled"
   fi
   remove_application
-  rm -rf -- "$HOME/.deepseek-cli"
-  rm -f -- "$HOME/.deepseek_api_key"
-  ok "Application and all DeepSeek CLI local data removed"
+  rm -rf -- "$HOME/.bibzcode-cli" "$LEGACY_CONFIG_DIR"
+  rm -f -- "$HOME/.bibzcode_api_key" "$LEGACY_KEY_FILE"
+  ok "Application and all BibzCode CLI local data removed"
   if [[ "$previous_mode" == active || "$previous_mode" == user ]]; then
     warn "Dependencies installed in the external Python environment were preserved."
   fi
   exit 0
 fi
+
+migrate_legacy_layout(){
+  if [[ -d "$LEGACY_CONFIG_DIR" && ! -L "$LEGACY_CONFIG_DIR" && ! -e "$HOME/.bibzcode-cli" ]]; then
+    info "Migrating existing CLI data to ~/.bibzcode-cli"
+    mv -- "$LEGACY_CONFIG_DIR" "$HOME/.bibzcode-cli"
+  fi
+  if [[ "$INSTALL_DIR" == "$HOME/.local/lib/bibzcode-cli" \
+        && -d "$LEGACY_INSTALL_DIR" && ! -L "$LEGACY_INSTALL_DIR" && ! -e "$INSTALL_DIR" ]]; then
+    info "Migrating existing application directory to $INSTALL_DIR"
+    mv -- "$LEGACY_INSTALL_DIR" "$INSTALL_DIR"
+  fi
+}
+
+migrate_legacy_layout
 
 has_controlling_tty(){
   [[ -r /dev/tty && -w /dev/tty ]] && (: </dev/tty) 2>/dev/null
@@ -125,7 +154,7 @@ choose_install_mode(){
 
   cat >/dev/tty <<'EOF'
 
-Choose the Python environment for DeepSeek CLI:
+Choose the Python environment for BibzCode CLI:
   1) Managed venv (recommended, isolated, default)
   2) Currently active venv (requires VIRTUAL_ENV)
   3) User/default Python (no venv, installs with pip --user)
@@ -142,7 +171,7 @@ EOF
 
 choose_install_mode
 
-PYTHON_REQUESTED="${DEEPSEEK_PYTHON:-python3}"
+PYTHON_REQUESTED="$(compat_env PYTHON 'python3')"
 PYTHON="$(command -v -- "$PYTHON_REQUESTED" 2>/dev/null || true)"
 [[ -n "$PYTHON" && -x "$PYTHON" ]] || die "Python 3.10+ is required (not found: $PYTHON_REQUESTED)"
 check_python(){
@@ -168,7 +197,7 @@ case "$INSTALL_MODE" in
     ;;
   user)
     if [[ -n "${VIRTUAL_ENV:-}" && "$PYTHON" == "$VIRTUAL_ENV"/bin/* ]]; then
-      die "--user-python cannot use the active venv interpreter; deactivate it or set DEEPSEEK_PYTHON"
+      die "--user-python cannot use the active venv interpreter; deactivate it or set BIBZCODE_PYTHON"
     fi
     RUNTIME_PYTHON="$PYTHON"
     info "Install mode: user/default Python at $RUNTIME_PYTHON (pip --user)"
@@ -235,22 +264,22 @@ PY
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P || true)"
 SOURCE_DIR=""
-TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/deepseek-r6.XXXXXX")"
+TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/bibzcode-r6.XXXXXX")"
 trap 'rm -rf -- "${TEMP_DIR:-}"' EXIT
 
-if [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/deepseek/version.py" ]]; then
+if [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/bibzcode/version.py" ]]; then
   SOURCE_DIR="$SCRIPT_DIR"
   info "Using verified local source tree"
 else
   archive="$TEMP_DIR/release.tar.gz"
-  order="${DEEPSEEK_SOURCE_ORDER:-cf,github}"
+  order="$(compat_env SOURCE_ORDER 'cf,github')"
   downloaded=false
   IFS=',' read -ra sources <<< "$order"
   for source in "${sources[@]}"; do
     case "$source" in
       cf) url="$CF_ARCHIVE" ;;
       github) url="$GH_ARCHIVE" ;;
-      *) die "Unknown source in DEEPSEEK_SOURCE_ORDER: $source" ;;
+      *) die "Unknown source in BIBZCODE_SOURCE_ORDER: $source" ;;
     esac
     info "Downloading $source release"
     if fetch "$url" "$archive"; then
@@ -263,15 +292,18 @@ else
   [[ "$downloaded" == true ]] || die "No verified release source is available"
   mkdir -p "$TEMP_DIR/extract"
   safe_extract "$archive" "$TEMP_DIR/extract"
-  SOURCE_DIR="$TEMP_DIR/extract/deepseek-cli-$RELEASE_ID"
+  SOURCE_DIR="$TEMP_DIR/extract/bibzcode-cli-$RELEASE_ID"
 fi
 
-[[ -f "$SOURCE_DIR/deepseek/version.py" ]] || die "Release is missing version.py"
+[[ -f "$SOURCE_DIR/bibzcode/version.py" ]] || die "Release is missing version.py"
 [[ -f "$SOURCE_DIR/requirements.txt" ]] || die "Release is missing requirements.txt"
 [[ -f "$SOURCE_DIR/requirements-lock.txt" ]] || die "Release is missing hashed dependency lock"
 
-mkdir -p "$HOME/.deepseek-cli" "$BIN_DIR" "$(dirname "$INSTALL_DIR")"
-chmod 0700 "$HOME/.deepseek-cli"
+mkdir -p "$HOME/.bibzcode-cli" "$BIN_DIR" "$(dirname "$INSTALL_DIR")"
+chmod 0700 "$HOME/.bibzcode-cli"
+if [[ ! -e "$LEGACY_CONFIG_DIR" && ! -L "$LEGACY_CONFIG_DIR" ]]; then
+  ln -s -- "$HOME/.bibzcode-cli" "$LEGACY_CONFIG_DIR"
+fi
 
 PIP_SCOPE=()
 case "$INSTALL_MODE" in
@@ -309,11 +341,12 @@ if [[ "$FULL" == true ]]; then
     --require-hashes -r "$SOURCE_DIR/requirements-optional-lock.txt"
 fi
 
-stage="$(dirname "$INSTALL_DIR")/.deepseek-cli-stage.$$"
-backup="$(dirname "$INSTALL_DIR")/.deepseek-cli-backup.$$"
+stage="$(dirname "$INSTALL_DIR")/.bibzcode-cli-stage.$$"
+backup="$(dirname "$INSTALL_DIR")/.bibzcode-cli-backup.$$"
 rm -rf -- "$stage" "$backup"
 mkdir -p "$stage"
-cp -a "$SOURCE_DIR/deepseek" "$stage/deepseek"
+cp -a "$SOURCE_DIR/bibzcode" "$stage/bibzcode"
+[[ -d "$SOURCE_DIR/deepseek" ]] && cp -a "$SOURCE_DIR/deepseek" "$stage/deepseek"
 cp "$SOURCE_DIR/requirements.txt" "$stage/requirements.txt"
 cp "$SOURCE_DIR/requirements-lock.txt" "$stage/requirements-lock.txt"
 [[ -f "$SOURCE_DIR/requirements-optional.txt" ]] && cp "$SOURCE_DIR/requirements-optional.txt" "$stage/"
@@ -324,8 +357,8 @@ find "$stage" -type d -name __pycache__ -prune -exec rm -rf {} +
 "$RUNTIME_PYTHON" - "$stage" "$VERSION" <<'PY'
 import sys
 sys.path.insert(0, sys.argv[1])
-from deepseek.version import __version__
-from deepseek.toolkit import ToolRegistry
+from bibzcode.version import __version__
+from bibzcode.toolkit import ToolRegistry
 assert __version__ == sys.argv[2], (__version__, sys.argv[2])
 registry = ToolRegistry()
 assert len(registry.tools) >= 80, len(registry.tools)
@@ -338,24 +371,31 @@ if ! mv "$stage" "$INSTALL_DIR"; then
   die "Atomic application install failed"
 fi
 rm -rf -- "$backup"
+if [[ "$INSTALL_DIR" == "$HOME/.local/lib/bibzcode-cli" \
+      && ! -e "$LEGACY_INSTALL_DIR" && ! -L "$LEGACY_INSTALL_DIR" ]]; then
+  ln -s -- "$INSTALL_DIR" "$LEGACY_INSTALL_DIR"
+fi
 
-printf '%s\n' "$INSTALL_MODE" > "$HOME/.deepseek-cli/install-mode"
-chmod 0600 "$HOME/.deepseek-cli/install-mode"
+printf '%s\n' "$INSTALL_MODE" > "$HOME/.bibzcode-cli/install-mode"
+chmod 0600 "$HOME/.bibzcode-cli/install-mode"
 
 {
   printf '%s\n' '#!/usr/bin/env bash' 'set -Eeuo pipefail'
-  printf 'DEEPSEEK_APP_DIR=%q\n' "$INSTALL_DIR"
-  printf 'DEEPSEEK_PYTHON_BIN=%q\n' "$RUNTIME_PYTHON"
+  printf 'BIBZCODE_APP_DIR=%q\n' "$INSTALL_DIR"
+  printf 'BIBZCODE_PYTHON_BIN=%q\n' "$RUNTIME_PYTHON"
   cat <<'EOF'
-export DEEPSEEK_ORIGINAL_CWD="$PWD"
-export PYTHONPATH="$DEEPSEEK_APP_DIR${PYTHONPATH:+:$PYTHONPATH}"
-exec "$DEEPSEEK_PYTHON_BIN" -m deepseek "$@"
+export BIBZCODE_ORIGINAL_CWD="$PWD"
+export PYTHONPATH="$BIBZCODE_APP_DIR${PYTHONPATH:+:$PYTHONPATH}"
+exec "$BIBZCODE_PYTHON_BIN" -m bibzcode "$@"
 EOF
-} > "$BIN_DIR/dscli"
+} > "$BIN_DIR/bzcli"
+chmod 0755 "$BIN_DIR/bzcli"
+cp "$BIN_DIR/bzcli" "$BIN_DIR/dscli"
 chmod 0755 "$BIN_DIR/dscli"
 
-ok "Installed DeepSeek CLI $VERSION using install mode: $INSTALL_MODE"
-printf 'Launcher: %s\n' "$BIN_DIR/dscli"
+ok "Installed BibzCode CLI $VERSION using install mode: $INSTALL_MODE"
+printf 'Launcher: %s\n' "$BIN_DIR/bzcli"
+printf 'Compatibility alias: %s\n' "$BIN_DIR/dscli"
 if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
   warn "$BIN_DIR is not in PATH. Add it manually to your shell profile."
 fi

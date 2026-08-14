@@ -1,4 +1,4 @@
-# DeepSeek CLI v7.8.0 — Multi-Provider Configuration
+# BibzCode CLI v7.8.0 — Multi-Provider Configuration
 # Manages 7 AI providers with YAML config file, API keys, and model selection
 # NO TOOL LIMITS — all tools available at all times
 
@@ -13,9 +13,9 @@ import yaml
 
 from .version import __version__
 
-CONFIG_DIR = Path.home() / '.deepseek-cli'
+CONFIG_DIR = Path.home() / '.bibzcode-cli'
 CONFIG_FILE = CONFIG_DIR / 'config.yaml'
-LEGACY_KEY_FILE = Path.home() / '.deepseek_api_key'
+LEGACY_KEY_FILE = Path.home() / '.bibzcode_api_key'
 CLIENT_VERSION = __version__
 
 # Default Gist ID — embedded so every install auto-connects to dashboard backend
@@ -32,19 +32,19 @@ DEFAULT_PROVIDERS = {
         'type': 'openai_compatible',
         'base_url': 'https://openrouter.ai/api/v1',
         'api_key_env': 'OPENROUTER_API_KEY',
-        'default_model': 'deepseek/deepseek-r1-0528:free',
+        'default_model': 'bibzcode/bibzcode-r1-0528:free',
         'enabled': True,
         'supports_tools': True,
         'supports_streaming': True,
         'has_free_models': True,
         'get_key_url': 'https://openrouter.ai/keys',
         'extra_headers': {
-            'HTTP-Referer': 'https://deepseek-cli.local',
-            'X-Title': f'DeepSeek CLI v{__version__}',
+            'HTTP-Referer': 'https://bibzcode-cli.local',
+            'X-Title': f'BibzCode CLI v{__version__}',
         },
         'popular_models': [
-            'deepseek/deepseek-r1-0528:free',
-            'deepseek/deepseek-chat-v3-0324:free',
+            'bibzcode/bibzcode-r1-0528:free',
+            'bibzcode/bibzcode-chat-v3-0324:free',
             'meta-llama/llama-4-maverick:free',
             'google/gemini-2.5-flash-preview:free',
             'qwen/qwen3-235b-a22b:free',
@@ -291,7 +291,7 @@ class ConfigManager:
         # an attacker-controlled host. Custom endpoints are explicit opt-in.
         default_url = str(defaults.get('base_url', '')).rstrip('/')
         configured_url = str(merged.get('base_url', '')).rstrip('/')
-        if default_url and configured_url != default_url and os.environ.get('DEEPSEEK_ALLOW_CUSTOM_PROVIDER') != '1':
+        if default_url and configured_url != default_url and os.environ.get('BIBZCODE_ALLOW_CUSTOM_PROVIDER') != '1':
             merged['base_url'] = default_url
         return merged
 
@@ -512,7 +512,7 @@ def get_update_info() -> dict:
     return _update_info or {}
 
 
-DEFAULT_API_URL = "https://deepseek-dash.bibzflow.workers.dev"
+DEFAULT_API_URL = "https://bibzcode.bibzflow.workers.dev"
 
 
 def _backend_url() -> str:
@@ -522,12 +522,12 @@ def _backend_url() -> str:
     config overrides must never be able to redirect it to another service.
     """
     value = (
-        os.environ.get("DEEPSEEK_API_URL", "")
+        os.environ.get("BIBZCODE_API_URL", "")
         or cfg.config.get("api_url", "")
         or DEFAULT_API_URL
     ).rstrip("/")
     if value != DEFAULT_API_URL:
-        raise RuntimeError('Custom DeepSeek backends are not permitted')
+        raise RuntimeError('Custom BibzCode backends are not permitted')
     return DEFAULT_API_URL
 
 
@@ -541,10 +541,10 @@ def _worker_json(path: str, *, method: str = "GET", payload: dict | None = None,
 
     token = get_valid_id_token()
     if not token:
-        raise RuntimeError("No valid Firebase session. Please log in again with: dscli logout")
+        raise RuntimeError("No valid Firebase session. Please log in again with: bzcli logout")
     headers = {
         "Authorization": f"Bearer {token}",
-        "User-Agent": f"deepseek-cli/{CLIENT_VERSION}",
+        "User-Agent": f"bibzcode-cli/{CLIENT_VERSION}",
         "Accept": "application/json",
     }
     data = None
@@ -609,7 +609,7 @@ def enforce_gist():
         except Exception:
             _update_info = {}
     except Exception as exc:
-        print(f"\033[91mFailed to verify access with the DeepSeek backend: {exc}\033[0m", file=sys.stderr)
+        print(f"\033[91mFailed to verify access with the BibzCode backend: {exc}\033[0m", file=sys.stderr)
         raise SystemExit(1)
 
     if result.get("banned"):

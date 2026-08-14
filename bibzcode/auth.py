@@ -1,4 +1,4 @@
-# DeepSeek CLI v7.8.0 — Firebase Authentication Gate
+# BibzCode CLI v7.8.0 — Firebase Authentication Gate
 # Email/password login + register (with username) + email verification +
 # forgot-password (email reset). Verified profiles are synchronized through the
 # Worker so the dashboard can manage them. Pure stdlib (urllib) — Termux friendly.
@@ -17,13 +17,13 @@ from .ui import console
 
 # ── Firebase project configuration (web app config) ─────────────────────────
 FIREBASE_API_KEY = os.environ.get(
-    "DEEPSEEK_FIREBASE_API_KEY", "AIzaSyDfdWsO1H11PjSY7IecaX_QICc14yLOtpQ"
+    "BIBZCODE_FIREBASE_API_KEY", "AIzaSyDfdWsO1H11PjSY7IecaX_QICc14yLOtpQ"
 )
 IDENTITY_BASE = "https://identitytoolkit.googleapis.com/v1/accounts"
 SECURETOKEN_BASE = "https://securetoken.googleapis.com/v1/token"
-WORKER_API_BASE = "https://deepseek-dash.bibzflow.workers.dev"
+WORKER_API_BASE = "https://bibzcode.bibzflow.workers.dev"
 
-AUTH_DIR = Path.home() / ".deepseek-cli"
+AUTH_DIR = Path.home() / ".bibzcode-cli"
 AUTH_FILE = AUTH_DIR / "auth.json"
 
 
@@ -36,7 +36,7 @@ def _post_json(url: str, payload: dict, timeout: int = 15) -> dict:
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         url, data=data,
-        headers={"Content-Type": "application/json", "User-Agent": "deepseek-cli-auth/1.0"},
+        headers={"Content-Type": "application/json", "User-Agent": "bibzcode-cli-auth/1.0"},
         method="POST",
     )
     try:
@@ -139,7 +139,7 @@ def _worker_user_json(path: str, id_token: str, payload: dict | None = None) -> 
             "Authorization": f"Bearer {id_token}",
             "Content-Type": "application/json",
             "Accept": "application/json",
-            "User-Agent": "deepseek-cli-auth/1.0",
+            "User-Agent": "bibzcode-cli-auth/1.0",
         },
         method="POST",
     )
@@ -258,7 +258,7 @@ def _prompt_password(label: str) -> str:
 
 def _banner_auth():
     console.print()
-    console.print("  [bold cyan]🔐 DeepSeek CLI — Account Required[/bold cyan]")
+    console.print("  [bold cyan]🔐 BibzCode CLI — Account Required[/bold cyan]")
     console.print("  [dim]Sign in or create an account to continue.[/dim]")
     console.print()
 

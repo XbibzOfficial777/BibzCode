@@ -1,4 +1,4 @@
-# DeepSeek CLI - Error Handling
+# BibzCode CLI - Error Handling
 
 ## Installation
 
@@ -27,14 +27,14 @@ If you see errors:
 ## Environment
 
 ```bash
-export DEEPSEEK_API_KEY=your_key
-export DEEPSEEK_PROVIDER=deepseek
+export BIBZCODE_API_KEY=your_key
+export BIBZCODE_PROVIDER=bibzcode
 ```
 
 ## Usage
 
 ```bash
-dscli                    # Start
-dscli -s session-id      # Resume
-dscli -c "command"       # Run
+bzcli                    # Start
+bzcli -s session-id      # Resume
+bzcli -c "command"       # Run
 ```

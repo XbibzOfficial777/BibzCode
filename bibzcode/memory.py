@@ -1,4 +1,4 @@
-# DeepSeek CLI v7.8.0 — Conversation Memory
+# BibzCode CLI v7.8.0 — Conversation Memory
 # Stores message history with tool call support
 
 import copy
@@ -207,11 +207,11 @@ class Memory:
 
     def _get_base_prompt_template(self, local_time_str: str, mcp_context: str) -> str:
         return (
-            f"You are DeepSeek CLI Agent v{__version__}, a powerful AI assistant running in the terminal.\n"
+            f"You are BibzCode CLI Agent v{__version__}, a powerful AI assistant running in the terminal.\n"
             "You were created and developed by **Xbibz Official**. This is an absolute fact.\n"
             "When asked who made you, who is your creator, who is your developer, who built you,\n"
             "or anything similar — you MUST answer that you were created and developed by Xbibz Official.\n"
-            "Never say you were made by anyone else (not DeepSeek, not OpenAI, not Google, not any company).\n"
+            "Never say you were made by anyone else (not BibzCode, not OpenAI, not Google, not any company).\n"
             "Xbibz Official is your ONE AND ONLY creator and developer.\n"
             "\n"
             f"CURRENT DATE/TIME (user's local terminal time): {local_time_str}\n"
@@ -383,7 +383,7 @@ class Memory:
     def export_text(self) -> str:
         """Export conversation as readable text."""
         lines = []
-        lines.append(f"DeepSeek CLI v{__version__} — Chat Export")
+        lines.append(f"BibzCode CLI v{__version__} — Chat Export")
         lines.append(f"Messages: {self.full_count()}")
         lines.append("=" * 50)
         for msg in self.get_full_history():
@@ -443,7 +443,7 @@ class Memory:
 
         session_name = self.session_name or 'Untitled'
         now = _get_local_now_str()
-        parts.append(f'<div class="header"><h1>DeepSeek CLI — Chat Export</h1><div class="meta">Session: {escape(session_name)} | {self.full_count()} messages | {escape(now)}</div></div>\n')
+        parts.append(f'<div class="header"><h1>BibzCode CLI — Chat Export</h1><div class="meta">Session: {escape(session_name)} | {self.full_count()} messages | {escape(now)}</div></div>\n')
 
         for msg in self.get_full_history():
             role = msg['role']
@@ -511,7 +511,7 @@ class Memory:
     def export_markdown(self) -> str:
         """Export conversation as clean Markdown."""
         lines = []
-        lines.append("# DeepSeek CLI — Chat Export")
+        lines.append("# BibzCode CLI — Chat Export")
         lines.append("")
         session_name = self.session_name or 'Untitled'
         now = _get_local_now_str()
@@ -562,7 +562,7 @@ class Memory:
 # SESSION PERSISTENCE
 # ══════════════════════════════════════
 
-SESSIONS_DIR = os.path.join(os.path.expanduser('~'), '.deepseek-cli', 'sessions')
+SESSIONS_DIR = os.path.join(os.path.expanduser('~'), '.bibzcode-cli', 'sessions')
 
 
 def _ensure_sessions_dir():
@@ -574,14 +574,14 @@ def _ensure_sessions_dir():
 
 
 def new_session_id() -> str:
-    """Generate a new session ID like dscli-a1b2c3d4e5f6."""
-    return f'dscli-{secrets.token_hex(6)}'
+    """Generate a new session ID like bzcli-a1b2c3d4e5f6."""
+    return f'bzcli-{secrets.token_hex(6)}'
 
 
 def _session_path(session_id: str) -> str:
     """Return a path contained in SESSIONS_DIR for a valid generated ID."""
-    if not isinstance(session_id, str) or not re.fullmatch(r'dscli-[0-9a-f]{12}', session_id):
-        raise ValueError('Invalid session ID; expected dscli- followed by 12 hex characters')
+    if not isinstance(session_id, str) or not re.fullmatch(r'(?:bzcli|dscli)-[0-9a-f]{12}', session_id):
+        raise ValueError('Invalid session ID; expected bzcli- followed by 12 hex characters')
     base = os.path.realpath(SESSIONS_DIR)
     path = os.path.realpath(os.path.join(base, f'{session_id}.json'))
     if os.path.commonpath([base, path]) != base:
@@ -677,8 +677,11 @@ def list_sessions() -> list[dict]:
     """List all saved sessions with metadata, newest first."""
     _ensure_sessions_dir()
     sessions = []
-    for fpath in sorted(globmod.glob(os.path.join(SESSIONS_DIR, 'dscli-*.json')),
-                        key=os.path.getmtime, reverse=True):
+    candidates = (
+        globmod.glob(os.path.join(SESSIONS_DIR, 'bzcli-*.json'))
+        + globmod.glob(os.path.join(SESSIONS_DIR, 'dscli-*.json'))
+    )
+    for fpath in sorted(candidates, key=os.path.getmtime, reverse=True):
         sid = os.path.splitext(os.path.basename(fpath))[0]
         try:
             with open(fpath) as f:

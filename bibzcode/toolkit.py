@@ -1,4 +1,4 @@
-# DeepSeek CLI v7.5 — Tool Registry (90+ Tools)
+# BibzCode CLI v7.5 — Tool Registry (90+ Tools)
 # File, Web, Code, System, Math, Utility + PDF, DOCX, Image, Video, APK, OCR
 # + Live Search, Live Model Search, MCP Real-Time Data (16 tools)
 # + Web Browser Control (10 tools): Navigate, Login, Click, Fill, Snapshot, etc.
@@ -168,7 +168,7 @@ class ToolRegistry:
 
     def allow_remote_attachment_paths(self, paths: list[str]):
         """Allow connector read-tools to access exact downloaded attachment files."""
-        upload_root = (Path.home() / '.deepseek-cli' / 'uploads').resolve()
+        upload_root = (Path.home() / '.bibzcode-cli' / 'uploads').resolve()
         current = {path for path in self._remote_allowed_paths if path.exists()}
         for raw_path in paths:
             try:
@@ -392,7 +392,7 @@ class ToolRegistry:
 
     @staticmethod
     def _workspace_root() -> Path:
-        root = os.environ.get('DEEPSEEK_WORKSPACE') or os.environ.get('DEEPSEEK_ORIGINAL_CWD') or os.getcwd()
+        root = os.environ.get('BIBZCODE_WORKSPACE') or os.environ.get('BIBZCODE_ORIGINAL_CWD') or os.getcwd()
         return Path(root).expanduser().resolve()
 
     @classmethod
@@ -1915,7 +1915,7 @@ class ToolRegistry:
 
     def _run_code(self, code: str, timeout: int) -> str:
         try:
-            cwd = os.environ.get('DEEPSEEK_ORIGINAL_CWD') or os.getcwd()
+            cwd = os.environ.get('BIBZCODE_ORIGINAL_CWD') or os.getcwd()
             if cwd in ('$PWD', '${PWD}'):
                 cwd = os.getcwd()
             returncode, stdout, stderr, timed_out = self._run_process_group(
@@ -1942,7 +1942,7 @@ class ToolRegistry:
                 if re.match(r'^\s*sudo\s', command):
                     if not re.search(r'\s-[in]\s', command):
                         command = re.sub(r'^\s*sudo\s', 'sudo -n ', command)
-            cwd = os.environ.get('DEEPSEEK_ORIGINAL_CWD') or os.getcwd()
+            cwd = os.environ.get('BIBZCODE_ORIGINAL_CWD') or os.getcwd()
             # Safety: reject literal $PWD (wrapper bug in old installs)
             if cwd in ('$PWD', '${PWD}'):
                 cwd = os.getcwd()
@@ -1969,7 +1969,7 @@ class ToolRegistry:
         try:
             returncode, stdout, stderr, timed_out = self._run_process_group(
                 [sys.executable, '-m', 'pip', 'install', '-q', '--', package],
-                120, os.environ.get('DEEPSEEK_ORIGINAL_CWD') or os.getcwd(),
+                120, os.environ.get('BIBZCODE_ORIGINAL_CWD') or os.getcwd(),
             )
             if timed_out:
                 return "[TIMEOUT] Package installation and child processes were killed after 120s"
@@ -2054,7 +2054,7 @@ class ToolRegistry:
             env = {k: v for k, v in env.items() if filter_name.upper() in k.upper()}
         if not env:
             return f"No env vars matching '{filter_name}'"
-        reveal = os.environ.get('DEEPSEEK_SHOW_SECRETS') == '1'
+        reveal = os.environ.get('BIBZCODE_SHOW_SECRETS') == '1'
         sensitive_markers = ('KEY', 'TOKEN', 'SECRET', 'PASSWORD', 'PASSCODE', 'COOKIE',
                              'CREDENTIAL', 'AUTH', 'PRIVATE', 'SESSION')
         lines = []

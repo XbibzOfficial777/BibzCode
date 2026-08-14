@@ -1,4 +1,4 @@
-"""Single source of truth for DeepSeek CLI release metadata."""
+"""Single source of truth for BibzCode CLI release metadata."""
 
 BASE_VERSION = "7.8.0"
 RELEASE_REVISION = 6

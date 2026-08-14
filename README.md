@@ -22,7 +22,7 @@ connectors.
 The Cloudflare mirror works when GitHub is unavailable or blocked:
 
 ```bash
-curl -fsSL https://deepseek-dash.bibzflow.workers.dev/install.sh | bash
+curl -fsSL https://bibzcode.bibzflow.workers.dev/install.sh | bash
 ```
 
 <!-- github-only-installer:start -->
@@ -30,7 +30,7 @@ curl -fsSL https://deepseek-dash.bibzflow.workers.dev/install.sh | bash
 
 When a terminal is available, the installer asks how dependencies should be installed:
 
-1. **Managed venv** — creates or reuses `~/.deepseek-cli/venv` (recommended/default).
+1. **Managed venv** — creates or reuses `~/.bibzcode-cli/venv` (recommended/default).
 2. **Active venv** — uses the currently active `VIRTUAL_ENV`.
 3. **User/default Python** — no venv; installs dependencies with `pip --user`.
 
@@ -43,14 +43,14 @@ bash install.sh --user-python    # no venv; uses pip --user
 ```
 
 Piped or automated installation without a controlling terminal safely defaults to the
-managed venv. Use `--non-interactive` or `DEEPSEEK_INSTALL_MODE=managed|active|user`
+managed venv. Use `--non-interactive` or `BIBZCODE_INSTALL_MODE=managed|active|user`
 for explicit automation.
 <!-- github-only-installer:end -->
 
 Install optional browser/document/OCR dependencies:
 
 ```bash
-curl -fsSL https://deepseek-dash.bibzflow.workers.dev/install.sh | bash -s -- --full
+curl -fsSL https://bibzcode.bibzflow.workers.dev/install.sh | bash -s -- --full
 ```
 
 Local checkout:
@@ -62,7 +62,7 @@ bash install.sh
 The installer contains the expected SHA-256 of one immutable r6 tarball. Cloudflare
 and the nightly GitHub mirror serve that same byte-for-byte archive; mutable per-file
 downloads are not used. Source order can be changed with
-`DEEPSEEK_SOURCE_ORDER=github,cf`.
+`BIBZCODE_SOURCE_ORDER=github,cf`.
 
 ## Uninstall
 
@@ -75,8 +75,12 @@ bash install.sh --purge --yes      # non-interactive destructive purge
 ## Start
 
 ```bash
-dscli
+bzcli
 ```
+
+Existing 7.x user data is migrated automatically. The previous `dscli` command and
+legacy environment-variable prefix remain compatibility aliases; all new output,
+paths, packages, archives, and endpoints use BibzCode naming.
 
 Useful commands:
 
@@ -123,7 +127,7 @@ external MCP processes, or sub-agent delegation.
 - Telegram/Discord refuse to start without an explicit user-ID whitelist.
 - Each connector identity has isolated conversation memory.
 - Private/local network destinations are blocked by default. Set
-  `DEEPSEEK_ALLOW_PRIVATE_NETWORK=1` only in a trusted development environment.
+  `BIBZCODE_ALLOW_PRIVATE_NETWORK=1` only in a trusted development environment.
 - Environment, tool-argument, cookie, and common tool-result secrets are redacted.
 - Provider HTTP requests have finite timeouts and retries have a bounded deadline.
 - Untrusted PDF/Office/image/media parsers run in a resource-limited child process
@@ -153,10 +157,10 @@ token in model-visible context. Remote agents receive read-only access to the ex
 downloaded paths—never arbitrary host filesystem access.
 
 ```bash
-export DEEPSEEK_CONNECTOR_MAX_FILE_MB=25
-export DEEPSEEK_CONNECTOR_MAX_IDENTITY_MB=250
-export DEEPSEEK_CONNECTOR_MAX_IDENTITY_FILES=100
-export DEEPSEEK_CONNECTOR_FILE_TTL_HOURS=168
+export BIBZCODE_CONNECTOR_MAX_FILE_MB=25
+export BIBZCODE_CONNECTOR_MAX_IDENTITY_MB=250
+export BIBZCODE_CONNECTOR_MAX_IDENTITY_FILES=100
+export BIBZCODE_CONNECTOR_FILE_TTL_HOURS=168
 ```
 
 Each `(platform, chat, user)` has isolated conversation memory. Connector whitelists
@@ -164,7 +168,7 @@ remain mandatory.
 
 ## Automatic long-conversation memory
 
-DeepSeek CLI automatically compacts active context before it reaches the model's
+BibzCode CLI automatically compacts active context before it reaches the model's
 context limit (default trigger: 72%, or 80 active messages). Older turns are
 summarized into structured long-term memory while their complete original messages
 are moved to a lossless session archive. The archive is not sent on every model
@@ -204,7 +208,7 @@ billing enforcement requires provider traffic to be proxied and metered server-s
 
 ## Local data
 
-Stored under `~/.deepseek-cli/`:
+Stored under `~/.bibzcode-cli/`:
 
 - `config.yaml` — provider settings and local API keys (`0600`)
 - `auth.json` — Firebase refresh/session tokens (`0600`)
@@ -229,7 +233,7 @@ cd dashboard-react
 npm ci
 npm run lint
 npm run build
-npx wrangler d1 migrations apply deepseek-dash-db --remote
+npx wrangler d1 migrations apply bibzcode-db --remote
 npx wrangler secret put ADMIN_PASSCODE
 npx wrangler secret put SESSION_SECRET
 npx wrangler secret put FIREBASE_SERVICE_ACCOUNT

@@ -12,7 +12,7 @@ import tarfile
 
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_ID = "7.8.0-r6"
-ARCHIVE_NAME = f"deepseek-cli-{RELEASE_ID}.tar.gz"
+ARCHIVE_NAME = f"bibzcode-cli-{RELEASE_ID}.tar.gz"
 RELEASE_DIR = ROOT / "releases"
 ARCHIVE = RELEASE_DIR / ARCHIVE_NAME
 CHECKSUM = RELEASE_DIR / f"{ARCHIVE_NAME}.sha256.txt"
@@ -25,7 +25,8 @@ INCLUDE_FILES = [
 
 def source_files() -> list[Path]:
     files = [ROOT / name for name in INCLUDE_FILES]
-    files.extend(sorted((ROOT / "deepseek").glob("*.py")))
+    files.extend(sorted((ROOT / "bibzcode").glob("*.py")))
+    files.extend(sorted((ROOT / "deepseek").glob("*.py")))  # compatibility package
     files.extend(sorted((ROOT / "tests").glob("test_*.py")))
     missing = [str(path) for path in files if not path.is_file()]
     if missing:
@@ -49,7 +50,7 @@ def release_file_bytes(path: Path) -> bytes:
 
 def tar_bytes(files: list[Path]) -> bytes:
     output = io.BytesIO()
-    release_root = f"deepseek-cli-{RELEASE_ID}"
+    release_root = f"bibzcode-cli-{RELEASE_ID}"
     with tarfile.open(fileobj=output, mode="w", format=tarfile.PAX_FORMAT) as tf:
         # Explicit root directory entry.
         root_info = tarfile.TarInfo(f"{release_root}/")

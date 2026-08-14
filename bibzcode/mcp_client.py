@@ -1,4 +1,4 @@
-# DeepSeek CLI v7.8.0 — Real MCP Client
+# BibzCode CLI v7.8.0 — Real MCP Client
 # Connects to external MCP servers via stdio or SSE
 # Supports popular servers: Canva, Context7, GitHub, Brave Search, etc.
 #
@@ -73,7 +73,7 @@ POPULAR_MCP_SERVERS = {
         "command": "npx",
         "args": [
             "-y", "@modelcontextprotocol/server-filesystem@2026.7.10",
-            os.path.realpath(os.environ.get("DEEPSEEK_WORKSPACE") or os.environ.get("DEEPSEEK_ORIGINAL_CWD") or os.getcwd()),
+            os.path.realpath(os.environ.get("BIBZCODE_WORKSPACE") or os.environ.get("BIBZCODE_ORIGINAL_CWD") or os.getcwd()),
         ],
         "env_key": None,
         "install": "npm install -g @modelcontextprotocol/server-filesystem@2026.7.10",

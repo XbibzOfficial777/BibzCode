@@ -1,5 +1,5 @@
 """
-DeepSeek CLI — tools.py is DEPRECATED.
+BibzCode CLI — tools.py is DEPRECATED.
 All tool definitions moved to toolkit.py.
 This file kept for backward compatibility.
 """

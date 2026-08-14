@@ -1,4 +1,4 @@
-# DeepSeek CLI v7.8.0 — Multi-Agent System
+# BibzCode CLI v7.8.0 — Multi-Agent System
 # Agent delegation, specialized profiles, and concurrent execution
 
 import json

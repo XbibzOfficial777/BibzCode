@@ -1,0 +1,1 @@
+5532b2c73dc40328b2f42bba2c19c2555d519a508289e9a715a7c083c261eade  bibzcode-cli-7.8.0-r6.tar.gz

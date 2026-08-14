@@ -1,4 +1,4 @@
-# DeepSeek CLI v7.0 — Planner Layer
+# BibzCode CLI v7.0 — Planner Layer
 # Transforms agent from reactive to strategic: User -> Planner -> Task Breakdown -> Execution
 # LLM-based task decomposition with step prioritization
 

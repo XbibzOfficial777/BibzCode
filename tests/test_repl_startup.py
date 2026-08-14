@@ -1,9 +1,9 @@
-from deepseek.memory import Memory
-from deepseek import repl
+from bibzcode.memory import Memory
+from bibzcode import repl
 
 
 def test_repl_starts_and_exits_without_multi_agent_scope_error(tmp_path, monkeypatch):
-    import deepseek.memory as memory_module
+    import bibzcode.memory as memory_module
 
     monkeypatch.setattr(memory_module, 'SESSIONS_DIR', str(tmp_path / 'sessions'))
     monkeypatch.setattr(repl, 'show_banner', lambda: None)
@@ -12,7 +12,7 @@ def test_repl_starts_and_exits_without_multi_agent_scope_error(tmp_path, monkeyp
     monkeypatch.setattr(repl.connector_manager, 'stop_all', lambda: None)
 
     repl.main(
-        session_id='dscli-0123456789ab',
+        session_id='bzcli-0123456789ab',
         memory=Memory(),
         user={'username': 'test-user'},
     )

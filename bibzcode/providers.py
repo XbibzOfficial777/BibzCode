@@ -1,4 +1,4 @@
-# DeepSeek CLI v7.8.0 — Multi-Provider AI Client
+# BibzCode CLI v7.8.0 — Multi-Provider AI Client
 # Real streaming implementations for 8 providers:
 #   OpenRouter, Google Gemini, HuggingFace, OpenAI, Anthropic, Groq, Together AI, Agnes AI
 # ALL providers support tools/skills (HuggingFace via prompt-based tool calling;

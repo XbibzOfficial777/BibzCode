@@ -1,4 +1,4 @@
-# DeepSeek CLI v7.8.0 — Backward compatibility shim
+# BibzCode CLI v7.8.0 — Backward compatibility shim
 # Re-exports from providers module
 
 # Note: fetch_models and chat_stream are used as class methods on provider instances.

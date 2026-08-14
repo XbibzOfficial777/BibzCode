@@ -1,4 +1,4 @@
-"""Shared outbound-network policy for DeepSeek CLI.
+"""Shared outbound-network policy for BibzCode CLI.
 
 The policy is deliberately independent from ToolRegistry so every HTTP-capable
 module can apply the same checks, including redirects discovered at runtime.
@@ -30,7 +30,7 @@ _REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 
 def private_network_allowed() -> bool:
     """Return whether the user explicitly opted into private-network access."""
-    return os.environ.get("DEEPSEEK_ALLOW_PRIVATE_NETWORK") == "1"
+    return os.environ.get("BIBZCODE_ALLOW_PRIVATE_NETWORK") == "1"
 
 
 def _normalized_ips(host: str, port: int) -> set[ipaddress.IPv4Address | ipaddress.IPv6Address]:
@@ -66,7 +66,7 @@ def url_policy_error(raw_url: str) -> str | None:
         port = parsed.port or (443 if parsed.scheme == "https" else 80)
     except ValueError as exc:
         return f"Invalid port: {exc}"
-    if port not in _ALLOWED_STANDARD_PORTS and os.environ.get("DEEPSEEK_ALLOW_NONSTANDARD_PORTS") != "1":
+    if port not in _ALLOWED_STANDARD_PORTS and os.environ.get("BIBZCODE_ALLOW_NONSTANDARD_PORTS") != "1":
         return f"Non-standard outbound port is blocked ({port})"
 
     try:

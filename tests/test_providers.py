@@ -1,6 +1,6 @@
 import httpx
 
-from deepseek.providers import GeminiProvider, OpenAICompatibleProvider
+from bibzcode.providers import GeminiProvider, OpenAICompatibleProvider
 
 
 class FailingClient:

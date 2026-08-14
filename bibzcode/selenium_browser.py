@@ -1,4 +1,4 @@
-# DeepSeek CLI v7.0 — Advanced Selenium Browser Automation Module
+# BibzCode CLI v7.0 — Advanced Selenium Browser Automation Module
 # Real browser automation using Selenium + Firefox/Geckodriver
 # Features:
 #   - Full DOM interaction (click, type, scroll, hover, drag)
@@ -106,7 +106,7 @@ WINDOW_SIZES = [
 DEFAULT_PAGE_LOAD_TIMEOUT = 30    # seconds
 DEFAULT_SCRIPT_TIMEOUT = 20
 DEFAULT_IMPLICIT_WAIT = 2
-SCREENSHOT_DIR = os.path.join(tempfile.gettempdir(), 'deepseek-cli-screenshots')
+SCREENSHOT_DIR = os.path.join(tempfile.gettempdir(), 'bibzcode-cli-screenshots')
 
 FIREFOX_BIN = os.environ.get('FIREFOX_BIN', '')
 GECKO_PATH = os.environ.get('GECKO_PATH', '')

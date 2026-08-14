@@ -1,4 +1,4 @@
-# DeepSeek CLI v7.5 — Document Tools Module
+# BibzCode CLI v7.5 — Document Tools Module
 # REAL document processing — NO SIMULATION
 # PPTX: create, read, edit, info, slide operations
 # XLSX: create, read, edit, info, sheet operations, charts, formulas

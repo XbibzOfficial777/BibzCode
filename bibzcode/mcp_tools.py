@@ -1,4 +1,4 @@
-# DeepSeek CLI v5.2 — MCP Real-Time Data Tools
+# BibzCode CLI v5.2 — MCP Real-Time Data Tools
 # Integrated with Model Context Protocol (mcp package)
 # Provides 15+ real-time tools: datetime, calendar, news, weather, currency,
 # stock, holidays, timezone, countdown, sunrise/sunset, and more
@@ -1149,7 +1149,7 @@ def tool_get_random_fact(args: dict) -> str:
                     lines = [f"Today in History ({month}/{day})", "=" * 45]
                     for ev in selected:
                         year = ev.get('year', '?')
-                        desc = ev.get('description', 'Unknown event')
+                        desc = str(ev.get('description') or 'Unknown event')
                         desc = re.sub(r'<[^>]+>', '', desc)
                         lines.append(f"\n  {year} — {desc[:150]}")
                     return '\n'.join(lines)

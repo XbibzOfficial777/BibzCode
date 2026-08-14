@@ -1,4 +1,4 @@
-# DeepSeek CLI 7.8.0
+# BibzCode CLI 7.8.0
 
 ## Long-conversation memory
 

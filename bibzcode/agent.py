@@ -1,4 +1,4 @@
-# DeepSeek CLI v7.8.0 — Smart Agentic Loop (FIXED + Enhanced UI + OCR + Rich MD)
+# BibzCode CLI v7.8.0 — Smart Agentic Loop (FIXED + Enhanced UI + OCR + Rich MD)
 # ═══════════════════════════════════════════════════════════════
 # FIXED v5.5 — 8-Point Agent Improvement Plan:
 #   1. Smart loop stop: max_rounds=12, max_same_tool=3
@@ -210,7 +210,7 @@ class ThinkTagStreamParser:
 # ══════════════════════════════════════════════════
 # LOGGING CONFIG
 # ══════════════════════════════════════════════════
-LOG_DIR = os.path.join(os.path.expanduser('~'), '.deepseek-cli', 'logs')
+LOG_DIR = os.path.join(os.path.expanduser('~'), '.bibzcode-cli', 'logs')
 
 
 class AgentMetrics:
@@ -294,13 +294,13 @@ def _isolated_tool_execute(tool_name: str, args: dict, timeout: int) -> str:
     env_allow = {
         'PATH', 'HOME', 'USER', 'LOGNAME', 'LANG', 'LC_ALL', 'LC_CTYPE',
         'TMPDIR', 'TEMP', 'TMP', 'SYSTEMROOT', 'PYTHONPATH',
-        'DEEPSEEK_ORIGINAL_CWD', 'DEEPSEEK_WORKSPACE',
+        'BIBZCODE_ORIGINAL_CWD', 'BIBZCODE_WORKSPACE',
     }
     child_env = {key: value for key, value in os.environ.items() if key in env_allow}
     proc = subprocess.Popen(
-        [sys.executable, '-m', 'deepseek.tool_runner'],
+        [sys.executable, '-m', 'bibzcode.tool_runner'],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        cwd=os.environ.get('DEEPSEEK_ORIGINAL_CWD') or os.getcwd(),
+        cwd=os.environ.get('BIBZCODE_ORIGINAL_CWD') or os.getcwd(),
         env=child_env, start_new_session=(os.name == 'posix'),
     )
     try:
@@ -612,7 +612,7 @@ class Agent:
             return 1_048_576
         if 'claude' in model:
             return 200_000
-        if any(name in model for name in ('gpt-4.1', 'gpt-4o', 'deepseek', 'qwen', 'llama-3.3', 'llama-4')):
+        if any(name in model for name in ('gpt-4.1', 'gpt-4o', 'bibzcode', 'qwen', 'llama-3.3', 'llama-4')):
             return 128_000
         if any(name in model for name in ('gpt-4', 'mistral', 'mixtral')):
             return 32_768
@@ -1231,7 +1231,7 @@ class Agent:
             # ── NO TOOL CALLS → Agent is done speaking ──
             if not tool_calls_list:
                 # BUG FIX: If content is empty but thinking has text, use thinking as content
-                # DeepSeek R1 and other reasoning models may send all text as reasoning_content
+                # BibzCode R1 and other reasoning models may send all text as reasoning_content
                 # and leave the 'content' field empty, causing blank responses.
                 display_content = full_content
                 if not full_content.strip() and thinking_text.strip():

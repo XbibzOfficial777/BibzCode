@@ -16,7 +16,7 @@ def _apply_resource_limits() -> None:
     """Best-effort Unix limits for untrusted parsers."""
     try:
         import resource
-        memory = max(256, int(os.environ.get('DEEPSEEK_PARSER_MAX_MEMORY_MB', '1024'))) * 1024 * 1024
+        memory = max(256, int(os.environ.get('BIBZCODE_PARSER_MAX_MEMORY_MB', '1024'))) * 1024 * 1024
         resource.setrlimit(resource.RLIMIT_AS, (memory, memory))
         resource.setrlimit(resource.RLIMIT_FSIZE, (100 * 1024 * 1024, 100 * 1024 * 1024))
         resource.setrlimit(resource.RLIMIT_NOFILE, (128, 128))
