@@ -14,7 +14,7 @@ await mkdir(outputDir, { recursive: true });
 await writeFile(path.join(workspace, 'hello.py'), 'print("hello from BibzCode IDE")\n');
 
 const executable = path.resolve('node_modules', 'electron', 'dist', process.platform === 'win32' ? 'electron.exe' : 'electron');
-const child = spawn(executable, ['--no-sandbox', `--user-data-dir=${profile}`, '.'], {
+const child = spawn(executable, ['--no-sandbox', '--disable-gpu', `--user-data-dir=${profile}`, '.'], {
   cwd: process.cwd(),
   env: {
     ...process.env,
@@ -37,7 +37,10 @@ let parsed;
 try {
   while (Date.now() < deadline) {
     try { parsed = JSON.parse(await readFile(report, 'utf8')); break; }
-    catch { await new Promise((resolve) => setTimeout(resolve, 150)); }
+    catch {
+      if (exitState !== 'running') break;
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
   }
   if (!parsed) {
     const markers = [];
