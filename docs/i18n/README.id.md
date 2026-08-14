@@ -251,9 +251,6 @@ Jangan pernah mengirim API key, password, token, cookie, private key, service ac
 database export, `.env`, percakapan pengguna, atau data pribadi. Vulnerability harus
 dilaporkan secara privat melalui tab **Security**, bukan issue publik.
 
-Dashboard React dan Worker deployment dikelola terpisah dan tidak boleh dimasukkan ke
-repository CLI publik ini.
-
 ## Lisensi
 
 MIT — lihat [`LICENSE`](../../LICENSE).

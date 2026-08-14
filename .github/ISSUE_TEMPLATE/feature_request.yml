@@ -15,7 +15,7 @@ body:
           required: true
         - label: This request fits the public CLI repository scope.
           required: true
-        - label: The request does not depend on publishing dashboard deployment code or credentials.
+        - label: The request does not depend on publishing private deployment code or credentials.
           required: true
   - type: textarea
     id: problem

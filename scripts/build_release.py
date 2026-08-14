@@ -7,7 +7,6 @@ import gzip
 import hashlib
 import io
 from pathlib import Path
-import shutil
 import tarfile
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -95,15 +94,6 @@ def main() -> None:
     digest = hashlib.sha256(ARCHIVE.read_bytes()).hexdigest()
     CHECKSUM.write_text(f"{digest}  {ARCHIVE_NAME}\n")
     update_installer(digest)
-
-    dashboard_public = ROOT / "dashboard-react" / "public"
-    if dashboard_public.is_dir():
-        (dashboard_public / "releases").mkdir(parents=True, exist_ok=True)
-        (dashboard_public / "installers").mkdir(parents=True, exist_ok=True)
-        shutil.copy2(ARCHIVE, dashboard_public / "releases" / ARCHIVE_NAME)
-        shutil.copy2(CHECKSUM, dashboard_public / "releases" / CHECKSUM.name)
-        shutil.copy2(ROOT / "install.sh", dashboard_public / "install.sh")
-        shutil.copy2(ROOT / "install.sh", dashboard_public / "installers" / f"install-{RELEASE_ID}.sh")
     print(f"{ARCHIVE} {digest}")
 
 

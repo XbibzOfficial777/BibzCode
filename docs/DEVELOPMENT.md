@@ -43,8 +43,8 @@ releases/                 immutable CLI archive and checksum
 .github/                  CI, issue forms, review templates, CODEOWNERS
 ```
 
-The deployment-only dashboard is intentionally outside this public repository. Do not
-create or commit `dashboard-react/`.
+Private deployment and administration sources are outside this public repository and
+must never be created or committed here.
 
 ## Fast checks
 
@@ -107,7 +107,7 @@ the bypass is rejected.
 
 ## IDE development
 
-The Electron IDE requires Node.js 22.22.2+ and uses the same Python source from the
+The desktop IDE requires Node.js 22.22.2+ and uses the same Python source from the
 repository root as a packaged runtime resource.
 
 ```bash
@@ -134,5 +134,5 @@ git diff origin/nightly...HEAD
 ```
 
 Confirm that the diff contains no `.env`, key, service-account, database, local state,
-cache, build output, or dashboard files. Then complete the pull request template and
-target `nightly`.
+cache, build output, or private deployment files. Then complete the pull request
+template and target `nightly`.

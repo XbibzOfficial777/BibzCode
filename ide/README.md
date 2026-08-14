@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <strong>Production Electron + React + Monaco desktop environment with complete BibzCode CLI feature access.</strong>
+  <strong>Production BibzCode desktop development environment.</strong>
 </p>
 
 ## Supported production packages
@@ -47,7 +47,7 @@ launches reuse the managed environment.
 
 ## IDE capabilities
 
-- Offline Monaco editor and language workers—no editor code is fetched from a CDN.
+- Offline code editing and language support—no editor code is fetched from a CDN.
 - Lazy workspace explorer with create, rename, atomic save, and system-trash deletion.
 - Workspace search with binary, size, symlink, and generated-directory boundaries.
 - Integrated command terminal restricted to the selected workspace.
@@ -56,7 +56,7 @@ launches reuse the managed environment.
 - Command palette, native menus, editor tabs, dirty-state protection, and settings.
 - Local-only logs, opt-in update checks, no telemetry, and no remote UI scripts.
 
-## Electron security boundary
+## Desktop security boundary
 
 The renderer uses `nodeIntegration: false`, `contextIsolation: true`, `sandbox: true`,
 and `webSecurity: true`. It receives a narrow, frozen preload API rather than Node.js
@@ -68,12 +68,10 @@ or generic IPC access. Main-process handlers validate payloads and enforce:
 - system trash instead of renderer-triggered permanent deletion;
 - command/input length limits;
 - HTTPS allowlisting for external links;
-- denied Electron permission requests, webviews, popups, and navigation;
+- denied permission requests, embedded remote views, popups, and navigation;
 - a restrictive renderer Content Security Policy;
 - a secure `bibzcode://app/` protocol instead of privileged `file://` renderer pages;
-- hardened Electron fuses: RunAsNode/Node options/CLI inspect disabled, cookie
-  encryption enabled, ASAR-only loading and embedded ASAR integrity enabled, and
-  extra file-protocol privileges disabled.
+- hardened packaged-runtime controls and integrity validation.
 
 ## Development
 

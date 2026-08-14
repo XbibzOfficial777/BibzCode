@@ -316,44 +316,11 @@ versions and receive a minimal environment containing only the credential reques
 by that server. The filesystem preset is rooted at the active workspace, not the
 entire home directory. Review every server before connecting it.
 
-## Dashboard deployment
-
-```bash
-cd dashboard-react
-npm ci
-npm run lint
-npm run build
-npx wrangler d1 migrations apply bibzcode-db --remote
-npx wrangler secret put ADMIN_PASSCODE
-npx wrangler secret put SESSION_SECRET
-npx wrangler secret put FIREBASE_SERVICE_ACCOUNT
-npx wrangler deploy
-```
-
-Wrangler 4.122 requires Node.js 22+. `FIREBASE_SERVICE_ACCOUNT` must be a newly
-rotated, least-privilege key. Never commit or package it. Deploy
-`firebase-database.rules.json` separately through Firebase CLI/Console and verify
-that unauthenticated reads and writes are denied.
-
 ## Development
 
 ```bash
 python -m pip install -e '.[test,full]'
 pytest
-cd dashboard-react
-npm ci
-npm run lint
-npm run build
-```
-
-## Architecture
-
-```text
-__main__.py -> Firebase auth -> Worker access check -> repl.py
-repl.py -> Memory + ToolRegistry + Provider + Agent
-Agent -> planner -> optional reasoning pass -> streaming provider loop
-Agent -> centralized tool policy -> tool handler -> result -> provider
-Worker -> signed admin cookie / verified Firebase bearer auth -> D1 + Firebase RTDB
 ```
 
 ## License

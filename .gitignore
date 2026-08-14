@@ -9,11 +9,9 @@ build/
 dist/
 .venv/
 
-# Node / dashboard build
+# Node / private deployment
 node_modules/
-dashboard-react/node_modules/
-dashboard-react/dist/
-dashboard-react/.wrangler/
+dashboard-react/
 *.tsbuildinfo
 
 # Secrets and local credentials

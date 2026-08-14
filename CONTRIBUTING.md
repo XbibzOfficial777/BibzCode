@@ -6,9 +6,9 @@ compatibility policy, and release integrity.
 
 > **Ringkasan Bahasa Indonesia:** buat issue atau diskusi teknis lebih dahulu untuk
 > perubahan besar, buat branch dari `nightly`, tambahkan test, jangan pernah
-> mengirim credential/data pribadi, dan buka pull request ke `nightly`. Dashboard
-> deployment tidak termasuk scope repository publik ini. Semua kontribusi akan
-> melalui CI dan review maintainer sebelum dapat digabungkan.
+> mengirim credential/data pribadi, dan buka pull request ke `nightly`. Sumber
+> deployment privat tidak termasuk scope repository publik ini. Semua kontribusi
+> akan melalui CI dan review maintainer sebelum dapat digabungkan.
 
 ## 1. Choose the right channel
 
@@ -29,18 +29,18 @@ Accepted contributions include:
 - the `bibzcode` Python package;
 - tests, CLI documentation, and examples;
 - installer and deterministic release tooling;
-- the cross-platform Electron IDE under `ide/`;
+- the cross-platform desktop IDE under `ide/`;
 - the narrow `deepseek`/`dscli` migration shims;
 - GitHub Actions and repository community files.
 
-The deployed React dashboard and its Cloudflare Worker are maintained separately and
-must **not** be added under `dashboard-react/` or otherwise committed to this public
-repository. Do not submit generated dashboard assets, deployment state, database
-exports, service-account files, or production configuration.
+Private deployment and administration sources are maintained separately and must
+**never** be committed to this public repository, copied into the IDE, or included in
+public release payloads. Do not submit deployment state, database exports,
+service-account files, or production configuration.
 
 ### IDE contributions
 
-IDE changes belong under `ide/` and require Node.js 22.22.2+. Preserve the Electron
+IDE changes belong under `ide/` and require Node.js 22.22.2+. Preserve the desktop
 security boundary: no renderer Node integration, generic IPC bridge, disabled sandbox,
 unrestricted navigation, permanent renderer deletion, or secret storage. Feature
 changes must continue to invoke the canonical bundled `bibzcode` runtime rather than

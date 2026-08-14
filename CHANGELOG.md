@@ -8,9 +8,8 @@ Keep a Changelog, and the project uses release identifiers documented in
 
 ### Added
 
-- Production-oriented BibzCode IDE with Electron, React, offline Monaco editor,
-  workspace-safe file operations, Git integration, terminal, and complete canonical
-  CLI feature access.
+- Production-oriented BibzCode IDE with workspace-safe file operations, Git
+  integration, terminal, and complete canonical CLI feature access.
 - Native packaging workflows for Linux x64/ARM64 (`.deb`, `.rpm`), Windows x64
   (NSIS/portable), and universal macOS (`.dmg`, `.zip`) with signing/notarization hooks.
 - Organized README status badges, live repository statistics, capability metrics, and

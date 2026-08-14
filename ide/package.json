@@ -165,7 +165,7 @@
       "maintainer": "XbibzOfficial777",
       "vendor": "BibzCode",
       "synopsis": "BibzCode AI-powered development environment",
-      "description": "Secure cross-platform IDE with Monaco editor, workspace tools, Git integration, terminal, and complete BibzCode CLI feature access."
+      "description": "Secure cross-platform IDE with workspace tools, Git integration, terminal, and complete BibzCode CLI feature access."
     },
     "deb": {
       "depends": [

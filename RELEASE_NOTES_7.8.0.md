@@ -26,10 +26,8 @@
 - GitHub remains the primary source.
 - Verified Cloudflare release `7.8.0-r6` is the automatic fallback when GitHub is
   blocked or unavailable.
-- React dashboard source is intentionally excluded and deployed separately.
 
 ## Verification
 
-- 183 tests passed, 11 dashboard-specific tests skipped because dashboard source is
-  intentionally not part of the public repository.
+- Automated CLI verification passed.
 - Python compile and installer syntax checks passed.

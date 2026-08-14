@@ -27,7 +27,7 @@
 ## Security and compatibility
 
 - [ ] I did not commit credentials, private data, database exports, `.env` files, or deployment state.
-- [ ] I did not add `dashboard-react/` or deployment-only dashboard code.
+- [ ] I did not add private deployment or administration code.
 - [ ] New user-visible names use BibzCode and `bzcli`.
 - [ ] Legacy names appear only in explicit compatibility/migration code.
 - [ ] I considered filesystem, network, process, authentication, redaction, and connector trust boundaries.
