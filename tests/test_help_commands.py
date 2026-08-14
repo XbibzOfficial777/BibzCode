@@ -11,7 +11,19 @@ if str(REPO_ROOT) not in sys.path:
 
 from deepseek.__main__ import _build_parser
 from deepseek.repl import handle_command
-from deepseek.ui import HELP_SECTIONS, SLASH_COMMANDS, show_help
+from deepseek.ui import BANNER, HELP_SECTIONS, SLASH_COMMANDS, show_help
+
+
+def test_custom_bibzcode_banner_is_present():
+    expected_lines = (
+        '   ___ _ _          ___          _',
+        "  / __(_) |__ ____ / __\\___   __| | ___",
+        " /__\\// | '_ \\_  // /  / _ \\ / _` |/ _ \\",
+        "/ \\/  \\ | |_) / // /__| (_) | (_| |  __/",
+        "\\_____/_|_.__/___\\____/\\___/ \\__,_|\\___|",
+    )
+    for line in expected_lines:
+        assert line in BANNER
 
 
 def test_cli_help_subcommand_works():

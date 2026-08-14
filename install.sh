@@ -5,7 +5,7 @@ umask 077
 
 VERSION="7.8.0-r6"
 RELEASE_ID="7.8.0-r6"
-EXPECTED_SHA256="ec7e3ae78b7476ef5b064848f6c113db212d16361f7bd83e00dfca61eb5aab91"
+EXPECTED_SHA256="2af7753eba00a4af4a6b65c64b44be749e8f0827bd7af391328c77d57aae9821"
 CF_BASE="${DEEPSEEK_CF_BASE_URL:-https://deepseek-dash.bibzflow.workers.dev}"
 CF_ARCHIVE="$CF_BASE/releases/deepseek-cli-$RELEASE_ID.tar.gz"
 GH_ARCHIVE="${DEEPSEEK_GITHUB_RELEASE_URL:-https://raw.githubusercontent.com/XbibzOfficial777/BibzCode/main/releases/deepseek-cli-$RELEASE_ID.tar.gz}"

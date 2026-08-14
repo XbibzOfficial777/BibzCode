@@ -17,9 +17,8 @@ RELEASE_DIR = ROOT / "releases"
 ARCHIVE = RELEASE_DIR / ARCHIVE_NAME
 CHECKSUM = RELEASE_DIR / f"{ARCHIVE_NAME}.sha256.txt"
 INCLUDE_FILES = [
-    ".gitignore", "README.md", "AGENTS.md", "SECURITY_AND_MIGRATION.md",
-    "LICENSE", "pyproject.toml", "firebase-database.rules.json",
-    "requirements.txt", "requirements-lock.txt",
+    ".gitignore", "README.md", "LICENSE", "pyproject.toml",
+    "firebase-database.rules.json", "requirements.txt", "requirements-lock.txt",
     "requirements-optional.txt", "requirements-optional-lock.txt",
 ]
 
