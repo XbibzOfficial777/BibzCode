@@ -1,0 +1,66 @@
+[
+  {
+    "id": "openrouter",
+    "name": "OpenRouter",
+    "env": "OPENROUTER_API_KEY",
+    "getKeyUrl": "https://openrouter.ai/keys",
+    "defaultModel": "bibzcode/bibzcode-r1-0528:free",
+    "models": ["bibzcode/bibzcode-r1-0528:free", "bibzcode/bibzcode-chat-v3-0324:free", "meta-llama/llama-4-maverick:free", "google/gemini-2.5-flash-preview:free", "qwen/qwen3-235b-a22b:free", "anthropic/claude-sonnet-4", "openai/gpt-4o", "openai/gpt-4.1-mini"]
+  },
+  {
+    "id": "gemini",
+    "name": "Google Gemini",
+    "env": "GEMINI_API_KEY",
+    "getKeyUrl": "https://aistudio.google.com/apikey",
+    "defaultModel": "gemini-2.5-flash-preview-05-20",
+    "models": ["gemini-2.5-flash-preview-05-20", "gemini-2.5-pro-preview-05-06", "gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash", "gemini-1.5-pro"]
+  },
+  {
+    "id": "huggingface",
+    "name": "Hugging Face",
+    "env": "HUGGINGFACE_API_KEY",
+    "getKeyUrl": "https://huggingface.co/settings/tokens",
+    "defaultModel": "Qwen/Qwen2.5-72B-Instruct",
+    "models": ["Qwen/Qwen2.5-72B-Instruct", "NousResearch/Hermes-3-Llama-3.1-8B", "meta-llama/Llama-3.3-70B-Instruct", "mistralai/Mistral-7B-Instruct-v0.3", "google/gemma-2-2b-it"]
+  },
+  {
+    "id": "openai",
+    "name": "OpenAI",
+    "env": "OPENAI_API_KEY",
+    "getKeyUrl": "https://platform.openai.com/api-keys",
+    "defaultModel": "gpt-4.1-mini",
+    "models": ["gpt-4.1-mini", "gpt-4.1", "gpt-4o", "gpt-4o-mini", "o3-mini", "o4-mini"]
+  },
+  {
+    "id": "anthropic",
+    "name": "Anthropic",
+    "env": "ANTHROPIC_API_KEY",
+    "getKeyUrl": "https://console.anthropic.com/settings/keys",
+    "defaultModel": "claude-sonnet-4-20250514",
+    "models": ["claude-sonnet-4-20250514", "claude-3-7-sonnet-20250219", "claude-3-5-haiku-20241022"]
+  },
+  {
+    "id": "groq",
+    "name": "Groq",
+    "env": "GROQ_API_KEY",
+    "getKeyUrl": "https://console.groq.com/keys",
+    "defaultModel": "llama-3.3-70b-versatile",
+    "models": ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "gemma2-9b-it", "deepseek-r1-distill-llama-70b"]
+  },
+  {
+    "id": "together",
+    "name": "Together AI",
+    "env": "TOGETHER_API_KEY",
+    "getKeyUrl": "https://api.together.xyz/settings/api-keys",
+    "defaultModel": "meta-llama/Llama-3-70b-chat-hf",
+    "models": ["meta-llama/Llama-3-70b-chat-hf", "meta-llama/Llama-3.3-70B-Instruct-Turbo", "Qwen/Qwen2.5-72B-Instruct-Turbo", "mistralai/Mixtral-8x7B-Instruct-v0.1"]
+  },
+  {
+    "id": "agnes",
+    "name": "Agnes AI",
+    "env": "AGNES_API_KEY",
+    "getKeyUrl": "https://platform.agnes-ai.com",
+    "defaultModel": "agnes-2.0-flash",
+    "models": ["agnes-2.0-flash"]
+  }
+]

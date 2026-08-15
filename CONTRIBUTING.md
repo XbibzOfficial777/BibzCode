@@ -40,12 +40,12 @@ service-account files, or production configuration.
 
 ### IDE contributions
 
-IDE changes belong under `ide/` and require Node.js 22.22.2+. Preserve the desktop
-security boundary: no renderer Node integration, generic IPC bridge, disabled sandbox,
-unrestricted navigation, permanent renderer deletion, or secret storage. Feature
-changes must continue to invoke the canonical bundled `bibzcode` runtime rather than
-forking its provider/tool/security logic. Run `npm run verify` and the production-window
-smoke test documented in `ide/README.md`.
+IDE compatibility changes belong under `ide/codeoss/` and require Node.js 24.18+.
+Preserve workspace trust, extension-host isolation, OS-backed secret storage, strict
+session identifiers, checksummed upstream inputs, and shell-free process launching.
+Feature changes must continue to invoke the canonical bundled `bibzcode` runtime
+rather than forking its provider/tool/security logic. Run `npm run verify` as documented
+in `ide/codeoss/README.md`.
 
 Generated installers, unpacked applications, `node_modules`, signing certificates, and
 notarization credentials must never be committed. Native packages are produced only by

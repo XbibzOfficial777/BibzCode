@@ -107,23 +107,20 @@ the bypass is rejected.
 
 ## IDE development
 
-The desktop IDE requires Node.js 22.22.2+ and uses the same Python source from the
-repository root as a packaged runtime resource.
+The compatibility workbench requires Node.js 24.18+ and packages the canonical Python
+source from the repository root as its agent runtime.
 
 ```bash
-cd ide
+cd ide/codeoss
 npm ci
-npm audit
-npm run typecheck
-npm run lint
-npm test
-npm run build
-xvfb-run -a npm run test:e2e  # Linux
+npm run verify
+npm run prepare:upstream
 ```
 
-Do not weaken `contextIsolation`, renderer sandboxing, CSP, IPC schemas, path
-containment, symlink checks, or CLI approval policy. Build `.deb`, `.rpm`, Windows, and
-macOS artifacts through the native release workflow described in `ide/README.md`.
+Do not weaken workspace trust, extension-host isolation, secret storage, process
+boundaries, upstream checksum validation, path controls, or CLI approval policy. Build
+`.deb`, `.rpm`, Windows, and macOS artifacts through the native workflow described in
+`ide/codeoss/README.md`.
 
 ## Pull request preparation
 

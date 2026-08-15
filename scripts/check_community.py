@@ -27,6 +27,12 @@ REQUIRED = {
     "ide/README.md",
     "ide/package.json",
     "ide/package-lock.json",
+    "ide/codeoss/README.md",
+    "ide/codeoss/UPSTREAM.json",
+    "ide/codeoss/product.template.json",
+    "ide/codeoss/package.json",
+    "ide/codeoss/package-lock.json",
+    "ide/codeoss/extension/package.json",
     "ide/tests/security.test.ts",
     ".github/workflows/ide-ci.yml",
     ".github/workflows/ide-release.yml",
@@ -260,15 +266,52 @@ def validate_ide(files: list[str], errors: list[str]) -> None:
         if not path.is_file() or path.stat().st_size < 1024:
             errors.append(f"IDE production icon is missing or invalid: ide/build/{icon}")
 
-    forbidden_prefixes = ("ide/release/", "ide/dist-electron/", "ide/dist-renderer/", "ide/node_modules/")
+    forbidden_prefixes = (
+        "ide/release/", "ide/dist-electron/", "ide/dist-renderer/", "ide/node_modules/",
+        "ide/codeoss/.work/", "ide/codeoss/.cache/", "ide/codeoss/release/",
+    )
     for relative in files:
         if relative.startswith(forbidden_prefixes):
             errors.append(f"generated IDE output must not be tracked: {relative}")
+
+    compatibility_root = ROOT / "ide" / "codeoss"
+    try:
+        upstream = json.loads((compatibility_root / "UPSTREAM.json").read_text("utf-8"))
+        product = json.loads((compatibility_root / "product.template.json").read_text("utf-8"))
+        extension = json.loads((compatibility_root / "extension" / "package.json").read_text("utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        errors.append(f"IDE compatibility overlay metadata is invalid: {error}")
+    else:
+        if not re.fullmatch(r"[0-9a-f]{40}", str(upstream.get("commit", ""))):
+            errors.append("IDE upstream source is not pinned to a full commit")
+        if not re.fullmatch(r"[0-9a-f]{64}", str(upstream.get("archiveSha256", ""))):
+            errors.append("IDE upstream archive SHA-256 is invalid")
+        if product.get("nameLong") != "BibzCode IDE" or product.get("applicationName") != "bibzcode":
+            errors.append("IDE compatibility product identity is invalid")
+        if product.get("extensionsGallery", {}).get("serviceUrl") != "https://open-vsx.org/vscode/gallery":
+            errors.append("IDE selected extension catalog is not configured")
+        if product.get("enableTelemetry") is not False:
+            errors.append("IDE product telemetry is not disabled")
+        serialized_product = json.dumps(product).lower()
+        for forbidden in ("marketplace." + "visualstudio.com", "tmpfiles" + ".org", "copilot_internal"):
+            if forbidden in serialized_product:
+                errors.append(f"IDE product contains a forbidden service: {forbidden}")
+        commands = {item.get("command") for item in extension.get("contributes", {}).get("commands", [])}
+        for command in ("bibzcode.openAgent", "bibzcode.setupRuntime", "bibzcode.providers.setKey", "bibzcode.sessions.resume"):
+            if command not in commands:
+                errors.append(f"IDE built-in integration command is missing: {command}")
+        if extension.get("capabilities", {}).get("untrustedWorkspaces", {}).get("supported") is not False:
+            errors.append("IDE agent must require workspace trust")
 
     workflow = (ROOT / ".github" / "workflows" / "ide-release.yml").read_text("utf-8")
     for marker in ("ubuntu-24.04-arm", "windows-2025", "macos-14", "WIN_CSC_LINK", "APPLE_TEAM_ID"):
         if marker not in workflow:
             errors.append(f"IDE native release workflow is missing: {marker}")
+
+    compatibility_workflow = (ROOT / ".github" / "workflows" / "codeoss-release.yml").read_text("utf-8")
+    for marker in ("ubuntu-24.04-arm", "windows-2025", "macos-14", "scripts/prepare-upstream.mjs", "SHA256SUMS", "attest-build-provenance"):
+        if marker not in compatibility_workflow:
+            errors.append(f"IDE compatibility release workflow is missing: {marker}")
 
 
 def validate_canonical_identity(errors: list[str]) -> None:

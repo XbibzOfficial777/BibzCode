@@ -1,0 +1,275 @@
+{
+	"name": "bibzcode-ai",
+	"displayName": "BibzCode AI",
+	"description": "Integrated BibzCode agent, provider controls, and persistent session management.",
+	"version": "7.8.0",
+	"publisher": "bibzcode",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/XbibzOfficial777/BibzCode.git",
+		"directory": "ide/codeoss/extension"
+	},
+	"engines": {
+		"vscode": "^1.126.0"
+	},
+	"categories": [
+		"AI",
+		"Machine Learning",
+		"Other"
+	],
+	"keywords": [
+		"bibzcode",
+		"agent",
+		"provider",
+		"session"
+	],
+	"main": "./extension.js",
+	"icon": "media/icon.png",
+	"capabilities": {
+		"untrustedWorkspaces": {
+			"supported": false,
+			"description": "The agent can run tools and modify files, so workspace trust is required."
+		},
+		"virtualWorkspaces": {
+			"supported": false
+		}
+	},
+	"contributes": {
+		"commands": [
+			{
+				"command": "bibzcode.openAgent",
+				"title": "BibzCode: Open Agent",
+				"icon": "$(sparkle)"
+			},
+			{
+				"command": "bibzcode.setupRuntime",
+				"title": "BibzCode: Set Up Managed Runtime"
+			},
+			{
+				"command": "bibzcode.providers.select",
+				"title": "BibzCode: Select Provider"
+			},
+			{
+				"command": "bibzcode.providers.setKey",
+				"title": "BibzCode: Set Provider API Key"
+			},
+			{
+				"command": "bibzcode.providers.deleteKey",
+				"title": "BibzCode: Remove Provider API Key"
+			},
+			{
+				"command": "bibzcode.providers.selectModel",
+				"title": "BibzCode: Select Model"
+			},
+			{
+				"command": "bibzcode.providers.test",
+				"title": "BibzCode: Test Provider Connection"
+			},
+			{
+				"command": "bibzcode.providers.refresh",
+				"title": "Refresh Providers",
+				"icon": "$(refresh)"
+			},
+			{
+				"command": "bibzcode.sessions.new",
+				"title": "BibzCode: New Session",
+				"icon": "$(add)"
+			},
+			{
+				"command": "bibzcode.sessions.resume",
+				"title": "Resume Session"
+			},
+			{
+				"command": "bibzcode.sessions.rename",
+				"title": "Rename Session"
+			},
+			{
+				"command": "bibzcode.sessions.delete",
+				"title": "Delete Session"
+			},
+			{
+				"command": "bibzcode.sessions.export",
+				"title": "Export Session"
+			},
+			{
+				"command": "bibzcode.sessions.refresh",
+				"title": "Refresh Sessions",
+				"icon": "$(refresh)"
+			},
+			{
+				"command": "bibzcode.askSelection",
+				"title": "BibzCode: Ask About Selection"
+			},
+			{
+				"command": "bibzcode.workspace.addFolder",
+				"title": "BibzCode: Add Folder to Workspace"
+			},
+			{
+				"command": "bibzcode.languages.browseExtensions",
+				"title": "BibzCode: Browse Language Extensions"
+			}
+		],
+		"keybindings": [
+			{
+				"command": "bibzcode.openAgent",
+				"key": "ctrl+shift+b",
+				"mac": "cmd+shift+b"
+			},
+			{
+				"command": "bibzcode.askSelection",
+				"key": "ctrl+alt+b",
+				"mac": "cmd+alt+b",
+				"when": "editorHasSelection"
+			}
+		],
+		"viewsContainers": {
+			"activitybar": [
+				{
+					"id": "bibzcode",
+					"title": "BibzCode",
+					"icon": "media/activity.svg"
+				}
+			]
+		},
+		"views": {
+			"bibzcode": [
+				{
+					"id": "bibzcode.agent",
+					"name": "Agent",
+					"type": "webview"
+				},
+				{
+					"id": "bibzcode.providers",
+					"name": "Providers"
+				},
+				{
+					"id": "bibzcode.sessions",
+					"name": "Sessions"
+				}
+			]
+		},
+		"viewsWelcome": [
+			{
+				"view": "bibzcode.providers",
+				"contents": "Configure a provider to start the agent.\n[Select Provider](command:bibzcode.providers.select)\n[Set Up Runtime](command:bibzcode.setupRuntime)"
+			},
+			{
+				"view": "bibzcode.sessions",
+				"contents": "Sessions are saved locally and isolated from the admin dashboard.\n[New Session](command:bibzcode.sessions.new)"
+			}
+		],
+		"menus": {
+			"view/title": [
+				{
+					"command": "bibzcode.providers.refresh",
+					"when": "view == bibzcode.providers",
+					"group": "navigation"
+				},
+				{
+					"command": "bibzcode.sessions.new",
+					"when": "view == bibzcode.sessions",
+					"group": "navigation@1"
+				},
+				{
+					"command": "bibzcode.sessions.refresh",
+					"when": "view == bibzcode.sessions",
+					"group": "navigation@2"
+				}
+			],
+			"view/item/context": [
+				{
+					"command": "bibzcode.providers.select",
+					"when": "view == bibzcode.providers && viewItem == bibzcode.provider",
+					"group": "inline@1"
+				},
+				{
+					"command": "bibzcode.providers.setKey",
+					"when": "view == bibzcode.providers && viewItem == bibzcode.provider",
+					"group": "provider@1"
+				},
+				{
+					"command": "bibzcode.providers.selectModel",
+					"when": "view == bibzcode.providers && viewItem == bibzcode.provider",
+					"group": "provider@2"
+				},
+				{
+					"command": "bibzcode.providers.test",
+					"when": "view == bibzcode.providers && viewItem == bibzcode.provider",
+					"group": "provider@3"
+				},
+				{
+					"command": "bibzcode.providers.deleteKey",
+					"when": "view == bibzcode.providers && viewItem == bibzcode.provider",
+					"group": "provider@4"
+				},
+				{
+					"command": "bibzcode.sessions.resume",
+					"when": "view == bibzcode.sessions && viewItem == bibzcode.session",
+					"group": "inline@1"
+				},
+				{
+					"command": "bibzcode.sessions.rename",
+					"when": "view == bibzcode.sessions && viewItem == bibzcode.session",
+					"group": "session@1"
+				},
+				{
+					"command": "bibzcode.sessions.export",
+					"when": "view == bibzcode.sessions && viewItem == bibzcode.session",
+					"group": "session@2"
+				},
+				{
+					"command": "bibzcode.sessions.delete",
+					"when": "view == bibzcode.sessions && viewItem == bibzcode.session",
+					"group": "session@3"
+				}
+			],
+			"editor/context": [
+				{
+					"command": "bibzcode.askSelection",
+					"when": "editorHasSelection && resourceScheme == file",
+					"group": "navigation@90"
+				}
+			],
+			"commandPalette": [
+				{
+					"command": "bibzcode.sessions.resume"
+				},
+				{
+					"command": "bibzcode.workspace.addFolder"
+				}
+			]
+		},
+		"configuration": {
+			"title": "BibzCode",
+			"properties": {
+				"bibzcode.pythonPath": {
+					"type": "string",
+					"default": "",
+					"scope": "machine",
+					"description": "Optional Python 3.10+ executable. Empty uses the managed runtime or system Python."
+				},
+				"bibzcode.runtimeProfile": {
+					"type": "string",
+					"enum": [
+						"core",
+						"full"
+					],
+					"default": "core",
+					"scope": "machine",
+					"description": "Dependency profile used when creating the managed runtime."
+				},
+				"bibzcode.confirmSessionDelete": {
+					"type": "boolean",
+					"default": true,
+					"description": "Require confirmation before deleting a saved session."
+				}
+			}
+		}
+	},
+	"__metadata": {
+		"installedTimestamp": 1786755884002,
+		"targetPlatform": "undefined",
+		"size": 1330602
+	}
+}

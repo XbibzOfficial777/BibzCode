@@ -1,0 +1,96 @@
+name: BibzCode IDE native compatibility release
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag: {description: Release tag, required: true, default: bibzcode-ide-v7.8.0-r6}
+      draft: {description: Create draft release, required: true, type: boolean, default: true}
+  push:
+    tags: ['bibzcode-ide-v*']
+permissions: {contents: write, id-token: write, attestations: write}
+jobs:
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {runner: ubuntu-24.04, arch: x64}
+          - {runner: ubuntu-24.04-arm, arch: arm64}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '24.18.0', cache: npm, cache-dependency-path: ide/codeoss/package-lock.json}
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libx11-dev libxkbfile-dev libsecret-1-dev libkrb5-dev fakeroot rpm dpkg-dev jq xvfb libgtk-3-0 libnss3 libasound2t64
+          sudo fallocate -l 8G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
+      - working-directory: ide/codeoss
+        run: npm ci && npm run verify && node scripts/prepare-upstream.mjs && npm run audit:prepared
+      - working-directory: ide/codeoss
+        env: {GITHUB_TOKEN: '${{ github.token }}', BIBZCODE_BUILD_PLATFORM: linux, BIBZCODE_BUILD_ARCH: '${{ matrix.arch }}'}
+        run: bash scripts/build-client.sh
+      - if: matrix.arch == 'x64'
+        run: |
+          mkdir -p "$RUNNER_TEMP/bibzcode-workspace" "$RUNNER_TEMP/bibzcode-profile" "$RUNNER_TEMP/bibzcode-extensions"
+          printf 'print("native smoke")\n' > "$RUNNER_TEMP/bibzcode-workspace/main.py"
+          xvfb-run -a ide/codeoss/.work/VSCode-linux-x64/bin/bibzcode --no-sandbox --disable-gpu --skip-welcome --skip-release-notes --disable-updates --user-data-dir "$RUNNER_TEMP/bibzcode-profile" --extensions-dir "$RUNNER_TEMP/bibzcode-extensions" --extensionDevelopmentPath="$GITHUB_WORKSPACE/ide/codeoss/.work/vscode/extensions/bibzcode-ai" --extensionTestsPath="$GITHUB_WORKSPACE/ide/codeoss/extension/test/integration.js" "$RUNNER_TEMP/bibzcode-workspace"
+      - uses: actions/attest-build-provenance@v2
+        with: {subject-path: "ide/codeoss/release/*"}
+      - uses: actions/upload-artifact@v4
+        with: {name: 'codeoss-linux-${{ matrix.arch }}', path: 'ide/codeoss/release/*', if-no-files-found: error}
+  windows:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '24.18.0', cache: npm, cache-dependency-path: ide/codeoss/package-lock.json}
+      - working-directory: ide/codeoss
+        shell: bash
+        run: npm ci && npm run verify && node scripts/prepare-upstream.mjs && npm run audit:prepared
+      - working-directory: ide/codeoss
+        shell: bash
+        env: {GITHUB_TOKEN: '${{ github.token }}', BIBZCODE_BUILD_PLATFORM: win32, BIBZCODE_BUILD_ARCH: x64}
+        run: bash scripts/build-client.sh
+      - uses: actions/attest-build-provenance@v2
+        with: {subject-path: "ide/codeoss/release/*"}
+      - uses: actions/upload-artifact@v4
+        with: {name: codeoss-windows-x64, path: 'ide/codeoss/release/*', if-no-files-found: error}
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '24.18.0', cache: npm, cache-dependency-path: ide/codeoss/package-lock.json}
+      - working-directory: ide/codeoss
+        run: npm ci && npm run verify && node scripts/prepare-upstream.mjs && npm run audit:prepared
+      - working-directory: ide/codeoss
+        env: {GITHUB_TOKEN: '${{ github.token }}', BIBZCODE_BUILD_PLATFORM: darwin, BIBZCODE_BUILD_ARCH: x64}
+        run: bash scripts/build-client.sh
+      - working-directory: ide/codeoss/.work/vscode
+        env: {npm_config_arch: arm64, GITHUB_TOKEN: '${{ github.token }}', ELECTRON_SKIP_BINARY_DOWNLOAD: '1', PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'}
+        run: npm ci
+      - working-directory: ide/codeoss
+        env: {GITHUB_TOKEN: '${{ github.token }}', BIBZCODE_BUILD_PLATFORM: darwin, BIBZCODE_BUILD_ARCH: arm64, BIBZCODE_SKIP_INSTALL: '1'}
+        run: bash scripts/build-client.sh
+      - working-directory: ide/codeoss
+        run: bash scripts/package-macos-universal.sh
+      - uses: actions/attest-build-provenance@v2
+        with: {subject-path: "ide/codeoss/release/*universal*"}
+      - uses: actions/upload-artifact@v4
+        with: {name: codeoss-macos-universal, path: 'ide/codeoss/release/*universal*', if-no-files-found: error}
+  release:
+    needs: [linux, windows, macos]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with: {pattern: 'codeoss-*', path: artifacts, merge-multiple: true}
+      - run: cd artifacts && rm -f SHA256SUMS && find . -maxdepth 1 -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag || github.ref_name }}
+          name: BibzCode IDE ${{ inputs.release_tag || github.ref_name }}
+          draft: ${{ inputs.draft == true }}
+          body: |
+            BibzCode IDE with an integrated extension catalog, manual VSIX installation, multi-root workspaces, provider/session management, and the built-in BibzCode agent. Verify downloads with SHA256SUMS.
+          files: artifacts/*
+          fail_on_unmatched_files: true

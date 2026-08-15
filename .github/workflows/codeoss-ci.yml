@@ -1,0 +1,31 @@
+name: BibzCode IDE compatibility checks
+on:
+  push:
+    branches: [main, master, nightly, stable]
+    paths: ['ide/codeoss/**','bibzcode/**','deepseek/**','requirements*.txt','.github/workflows/codeoss-ci.yml']
+  pull_request:
+    branches: [main, nightly]
+    paths: ['ide/codeoss/**','bibzcode/**','deepseek/**','requirements*.txt','.github/workflows/codeoss-ci.yml']
+permissions: {contents: read}
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '24.18.0', cache: npm, cache-dependency-path: ide/codeoss/package-lock.json}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.13'}
+      - working-directory: ide/codeoss
+        run: npm ci && npm run verify
+      - run: python -m pip install -r requirements.txt && python -m pip install pytest && python -m pytest -q tests/test_ide_bridge.py
+      - working-directory: ide/codeoss
+        run: node scripts/prepare-upstream.mjs && npm run audit:prepared
+      - run: |
+          node - <<'NODE'
+          const fs=require('fs'),p=JSON.parse(fs.readFileSync('ide/codeoss/.work/vscode/product.json'));
+          if(p.nameLong!=='BibzCode IDE'||p.extensionsGallery.serviceUrl!=='https://open-vsx.org/vscode/gallery')throw Error('product mismatch');
+          if(p.defaultChatAgent||p.voiceWsUrl||p.webviewContentExternalBaseUrlTemplate)throw Error('vendor service remained');
+          if(fs.existsSync('ide/codeoss/.work/vscode/extensions/copilot'))throw Error('vendor agent remained');
+          NODE
+          ! grep -E 'tmpfiles[.]org|marketplace[.]visualstudio[.]com' ide/codeoss/.work/vscode/product.json

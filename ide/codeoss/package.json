@@ -1,0 +1,14 @@
+{
+  "name": "bibzcode-codeoss-overlay",
+  "version": "7.8.0-r6",
+  "private": true,
+  "type": "module",
+  "engines": {"node": ">=24.18.0"},
+  "scripts": {
+    "test": "node --test extension/test/*.test.js tests/*.test.mjs",
+    "verify": "node scripts/verify-overlay.mjs && npm test",
+    "prepare:upstream": "node scripts/prepare-upstream.mjs",
+    "audit:prepared": "node scripts/audit-prepared.mjs",
+    "build": "bash scripts/build-client.sh"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "repository": "https://github.com/microsoft/vscode",
+  "tag": "1.126.0",
+  "commit": "7e7950df89d055b5a378379db9ee14290772148a",
+  "archiveUrl": "https://github.com/microsoft/vscode/archive/7e7950df89d055b5a378379db9ee14290772148a.tar.gz",
+  "archiveSha256": "e5a169d651febead48f704ca2a8ee89c7ad98eb635957977ecea650801820784",
+  "node": "24.15.0",
+  "license": "MIT",
+  "patchSource": {
+    "repository": "https://github.com/VSCodium/vscodium",
+    "release": "1.126.04524",
+    "commit": "4015f2d0191311733aa5dbb2abde8101dce63eef",
+    "archiveSha256": "8073711c4084f062b442d2b567ac15501ced80d87b2043847a6200b6b865aa8e",
+    "license": "MIT"
+  }
+}

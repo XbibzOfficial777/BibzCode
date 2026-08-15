@@ -8,6 +8,12 @@ Keep a Changelog, and the project uses release identifiers documented in
 
 ### Added
 
+- Full desktop compatibility workbench with multi-root workspaces, extension catalog,
+  manual VSIX installation, built-in language grammars, debugger/task/notebook APIs,
+  and extension-host isolation.
+- Native BibzCode provider and session views with OS-backed secret storage, model
+  selection, connection checks, resume/rename/delete/export actions, and trusted-folder
+  agent terminals.
 - Production-oriented BibzCode IDE with workspace-safe file operations, Git
   integration, terminal, and complete canonical CLI feature access.
 - Native packaging workflows for Linux x64/ARM64 (`.deb`, `.rpm`), Windows x64

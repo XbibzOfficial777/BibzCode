@@ -273,6 +273,11 @@ class ConfigManager:
 
     @property
     def active_provider(self) -> str:
+        # Desktop integration supplies a per-process override so secrets and provider
+        # choices can stay in the OS credential store instead of the workspace.
+        override = os.environ.get('BIBZCODE_PROVIDER', '').strip().lower()
+        if override in DEFAULT_PROVIDERS:
+            return override
         return self.config.get('active_provider', 'openrouter')
 
     @active_provider.setter
@@ -312,17 +317,19 @@ class ConfigManager:
     # ── API Key ─────────────────────────
 
     def get_api_key(self, provider_id: str | None = None) -> str:
-        """Get API key: priority = saved config > env var > empty."""
+        """Get API key: priority = process environment > saved config > empty."""
         pid = provider_id or self.active_provider
         pconfig = self.get_provider_config(pid)
+
+        env_var = pconfig.get('api_key_env', '')
+        if env_var:
+            process_value = os.environ.get(env_var, '').strip()
+            if process_value:
+                return process_value
 
         saved = self.config.get('api_keys', {}).get(pid, '')
         if saved:
             return saved
-
-        env_var = pconfig.get('api_key_env', '')
-        if env_var:
-            return os.environ.get(env_var, '')
 
         return ''
 
@@ -361,8 +368,11 @@ class ConfigManager:
     # ── Model ───────────────────────────
 
     def get_provider_model(self, provider_id: str | None = None) -> str:
-        """Get selected model for a provider (saved > default)."""
+        """Get selected model for a provider (process override > saved > default)."""
         pid = provider_id or self.active_provider
+        process_model = os.environ.get('BIBZCODE_MODEL', '').strip()
+        if process_model and pid == self.active_provider:
+            return process_model
         saved = self.config.get('models', {}).get(pid, '')
         if saved:
             return saved

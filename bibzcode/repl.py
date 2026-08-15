@@ -3,6 +3,7 @@
 # Features: Ctrl+P settings panel, arrow-key select menus, command history
 
 import datetime
+import getpass
 import json
 import os
 import sys
@@ -1296,7 +1297,8 @@ def set_api_key(agent: Agent):
     console.print()
 
     try:
-        key = console.input('  [bold]Enter API key:[/bold] ').strip()
+        # Never echo provider secrets into terminal scrollback or recordings.
+        key = getpass.getpass('  Enter API key: ').strip()
     except (KeyboardInterrupt, EOFError):
         console.print('\n  [dim]Cancelled.[/dim]')
         return
