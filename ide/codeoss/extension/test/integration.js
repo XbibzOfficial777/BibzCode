@@ -12,7 +12,9 @@ async function run() {
     'bibzcode.openAgent', 'bibzcode.setupRuntime', 'bibzcode.providers.select',
     'bibzcode.providers.setKey', 'bibzcode.providers.selectModel',
     'bibzcode.sessions.new', 'bibzcode.sessions.resume', 'bibzcode.sessions.rename',
-    'bibzcode.sessions.delete', 'bibzcode.sessions.export',
+    'bibzcode.sessions.delete', 'bibzcode.sessions.export', 'bibzcode.sessions.search',
+    'bibzcode.sessions.clearSearch', 'bibzcode.sessions.pin', 'bibzcode.sessions.context',
+    'bibzcode.sessions.compact',
     'bibzcode.languages.browseExtensions',
   ]) assert.ok(commands.has(command), `missing command: ${command}`);
   await vscode.commands.executeCommand('bibzcode.providers.refresh');

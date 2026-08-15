@@ -29,4 +29,48 @@ function workspaceRoot(workspaceFolders) {
   return first?.uri?.fsPath || undefined;
 }
 
-module.exports = { validateSessionId, stripAnsi, safeFileName, managedPythonPath, workspaceRoot };
+class ProtocolDecoder {
+  constructor(marker, onText, onMessage) {
+    this.marker = marker;
+    this.onText = onText;
+    this.onMessage = onMessage;
+    this.buffer = '';
+  }
+
+  push(value) {
+    this.buffer += String(value ?? '');
+    while (this.buffer) {
+      const index = this.buffer.indexOf(this.marker);
+      if (index < 0) {
+        let keep = 0;
+        const limit = Math.min(this.marker.length - 1, this.buffer.length);
+        for (let size = limit; size > 0; size -= 1) {
+          if (this.marker.startsWith(this.buffer.slice(-size))) { keep = size; break; }
+        }
+        const ready = this.buffer.slice(0, this.buffer.length - keep);
+        if (ready) this.onText(ready);
+        this.buffer = this.buffer.slice(this.buffer.length - keep);
+        return;
+      }
+      if (index > 0) this.onText(this.buffer.slice(0, index));
+      this.buffer = this.buffer.slice(index);
+      const newline = this.buffer.indexOf('\n');
+      if (newline < 0) return;
+      const encoded = this.buffer.slice(this.marker.length, newline).trim();
+      this.buffer = this.buffer.slice(newline + 1);
+      try {
+        const decoded = Buffer.from(encoded, 'base64').toString('utf8');
+        this.onMessage(JSON.parse(decoded));
+      } catch {
+        this.onText(`${this.marker}${encoded}\n`);
+      }
+    }
+  }
+
+  flush() {
+    if (this.buffer) this.onText(this.buffer);
+    this.buffer = '';
+  }
+}
+
+module.exports = { validateSessionId, stripAnsi, safeFileName, managedPythonPath, workspaceRoot, ProtocolDecoder };

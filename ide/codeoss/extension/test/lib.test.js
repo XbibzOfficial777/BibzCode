@@ -2,9 +2,20 @@
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const test = require('node:test');
-const { validateSessionId, stripAnsi, safeFileName, managedPythonPath, workspaceRoot } = require('../lib');
+const { validateSessionId, stripAnsi, safeFileName, managedPythonPath, workspaceRoot, ProtocolDecoder } = require('../lib');
 test('session ids are strictly validated',()=>{assert.equal(validateSessionId('bzcli-0123456789ab'),'bzcli-0123456789ab');assert.equal(validateSessionId('dscli-abcdefabcdef'),'dscli-abcdefabcdef');assert.equal(validateSessionId('../bzcli-0123456789ab'),null);assert.equal(validateSessionId('bzcli-0123'),null)});
 test('file names remove path and control characters',()=>{assert.equal(safeFileName('../a:b?c'),'.._a_b_c');assert.equal(safeFileName(''),'session')});
 test('managed Python path is platform aware',()=>{assert.equal(managedPythonPath('/data','win32'),path.join('/data','runtime','Scripts','python.exe'));assert.equal(managedPythonPath('/data','linux'),path.join('/data','runtime','bin','python'))});
 test('workspace root uses first local folder',()=>{assert.equal(workspaceRoot([{uri:{scheme:'untitled',fsPath:'/bad'}},{uri:{scheme:'file',fsPath:'/safe'}}]),'/safe')});
 test('ANSI terminal escapes are stripped',()=>{assert.equal(stripAnsi('\u001b[31merror\u001b[0m'),'error')});
+test('authenticated protocol frames are decoded across chunks without leaking marker text',()=>{
+  const texts=[],messages=[],marker='__BIBZCODE_IDE_CHANGE__:nonce:';
+  const decoder=new ProtocolDecoder(marker,(value)=>texts.push(value),(value)=>messages.push(value));
+  const encoded=Buffer.from(JSON.stringify({id:'0123456789abcdef01234567',tool:'edit_file'})).toString('base64');
+  decoder.push(`before\n${marker.slice(0,12)}`);
+  decoder.push(`${marker.slice(12)}${encoded.slice(0,7)}`);
+  decoder.push(`${encoded.slice(7)}\nafter`);
+  decoder.flush();
+  assert.equal(texts.join(''),'before\nafter');
+  assert.deepEqual(messages,[{id:'0123456789abcdef01234567',tool:'edit_file'}]);
+});

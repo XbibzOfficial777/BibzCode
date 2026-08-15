@@ -11,10 +11,12 @@
 #   8. Prompt control: system prompt instructions to stop when done
 # ═══════════════════════════════════════════════════════════════
 
+import base64
 import itertools
 import json
 import os
 import re
+import secrets
 import select as _select
 import signal
 import subprocess
@@ -585,6 +587,8 @@ class Agent:
         self._interrupt_monitor_running = False
         self._interrupt_last_time = 0.0
         self._execution_source = 'cli'
+        # Consume the desktop protocol nonce before any tool subprocess can inherit it.
+        self._ide_protocol_nonce = os.environ.pop('BIBZCODE_IDE_PROTOCOL', '')
         self._always_allow_tools = set()  # Tools user auto-approved this session
         self.created_files = []  # Files created during last chat() call
         
@@ -593,6 +597,21 @@ class Agent:
             self.planner = Planner(self.provider)
         except Exception:
             self.planner = None
+
+    def _emit_ide_change_preview(self, tool_name: str, args: dict) -> None:
+        """Send an authenticated, local-only change preview to the desktop host."""
+        nonce = self._ide_protocol_nonce
+        if not re.fullmatch(r'[0-9a-f]{48}', nonce):
+            return
+        preview = self.tools.ide_change_preview(tool_name, args)
+        if not preview:
+            return
+        preview['id'] = secrets.token_hex(12)
+        encoded = base64.b64encode(
+            json.dumps(preview, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+        ).decode('ascii')
+        sys.stdout.write(f'\n__BIBZCODE_IDE_CHANGE__:{nonce}:{encoded}\n')
+        sys.stdout.flush()
 
     def _context_window_limit(self) -> int:
         """Best available context limit, with a conservative unknown-model fallback."""
@@ -1381,6 +1400,7 @@ class Agent:
                     if monitor_was_running:
                         self._stop_interrupt_monitor()
                     try:
+                        self._emit_ide_change_preview(tool_name, args)
                         verb = 'write' if any(x in tool_name for x in ('write', 'edit', 'create', 'delete')) else 'execute'
                         ans = confirm_action(tool_name, redact_sensitive_args(args), verb=verb)
                     finally:

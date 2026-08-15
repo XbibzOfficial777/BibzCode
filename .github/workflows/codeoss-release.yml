@@ -19,7 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: {node-version: '24.18.0', cache: npm, cache-dependency-path: ide/codeoss/package-lock.json}
+        with: {node-version: '24.15.0', cache: npm, cache-dependency-path: ide/codeoss/package-lock.json}
       - run: |
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config libx11-dev libxkbfile-dev libsecret-1-dev libkrb5-dev fakeroot rpm dpkg-dev jq xvfb libgtk-3-0 libnss3 libasound2t64
@@ -43,7 +43,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: {node-version: '24.18.0', cache: npm, cache-dependency-path: ide/codeoss/package-lock.json}
+        with: {node-version: '24.15.0', cache: npm, cache-dependency-path: ide/codeoss/package-lock.json}
       - working-directory: ide/codeoss
         shell: bash
         run: npm ci && npm run verify && node scripts/prepare-upstream.mjs && npm run audit:prepared
@@ -60,7 +60,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: {node-version: '24.18.0', cache: npm, cache-dependency-path: ide/codeoss/package-lock.json}
+        with: {node-version: '24.15.0', cache: npm, cache-dependency-path: ide/codeoss/package-lock.json}
       - working-directory: ide/codeoss
         run: npm ci && npm run verify && node scripts/prepare-upstream.mjs && npm run audit:prepared
       - working-directory: ide/codeoss

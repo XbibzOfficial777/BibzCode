@@ -10,8 +10,10 @@ The BibzCode activity bar contains:
 - an agent view with streamed output and approval input;
 - provider selection, OS-backed secret storage, model selection, live model lookup,
   and connection testing;
-- local session new/resume/rename/delete/export actions;
-- managed core/full runtime setup from hash-locked requirements.
+- local session search, pin, resume, context inspection, compaction, rename,
+  export, and delete actions;
+- native before/after change review with Apply once, Always allow, and Reject controls;
+- managed core/full runtime setup from hash-locked requirements with process-tree cancellation.
 
 Prepared source currently verifies 74 built-in language IDs and 51 grammar extensions.
 Additional languages are installed from Open VSX or a compatible VSIX file. Extensions

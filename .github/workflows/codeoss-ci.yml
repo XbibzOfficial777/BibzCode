@@ -13,7 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: {node-version: '24.18.0', cache: npm, cache-dependency-path: ide/codeoss/package-lock.json}
+        with: {node-version: '24.15.0', cache: npm, cache-dependency-path: ide/codeoss/package-lock.json}
       - uses: actions/setup-python@v5
         with: {python-version: '3.13'}
       - working-directory: ide/codeoss

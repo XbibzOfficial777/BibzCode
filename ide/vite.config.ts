@@ -30,7 +30,7 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     setupFiles: ['./tests/setup.ts'],
-    exclude: ['tests/e2e.spec.ts', '**/node_modules/**', '**/dist*/**', '**/release/**'],
+    exclude: ['tests/e2e.spec.ts', 'codeoss/**', '**/node_modules/**', '**/dist*/**', '**/release/**'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json-summary'],

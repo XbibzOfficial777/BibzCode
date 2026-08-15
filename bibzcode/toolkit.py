@@ -459,6 +459,58 @@ class ToolRegistry:
             return None
         return f"{name}|workspace:{self._workspace_root()}"
 
+    def ide_change_preview(self, name: str, arguments: dict,
+                           max_chars: int = 512 * 1024) -> dict | None:
+        """Build a bounded before/after preview for the trusted desktop client.
+
+        Previewing is deliberately limited to non-sensitive text files contained
+        in the active workspace. The method never changes the target.
+        """
+        if name not in {'write_file', 'edit_file', 'delete_file'}:
+            return None
+        raw_path = arguments.get('path')
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            return None
+        if self._path_is_outside_workspace(raw_path) or self._is_sensitive_path(raw_path):
+            return None
+        try:
+            root = self._workspace_root()
+            target = Path(raw_path).expanduser()
+            if not target.is_absolute():
+                target = root / target
+            target = target.resolve(strict=False)
+            if target != root and root not in target.parents:
+                return None
+            if target.exists() and (not target.is_file() or target.stat().st_size > max_chars):
+                return None
+            before = target.read_text(encoding='utf-8') if target.exists() else ''
+            if len(before) > max_chars:
+                return None
+            if name == 'write_file':
+                after = arguments.get('content')
+                if not isinstance(after, str):
+                    return None
+            elif name == 'edit_file':
+                old = arguments.get('old_string')
+                new = arguments.get('new_string')
+                if not isinstance(old, str) or not isinstance(new, str) or old not in before:
+                    return None
+                after = before.replace(old, new, 1)
+            else:
+                if not target.exists():
+                    return None
+                after = ''
+            if len(after) > max_chars:
+                return None
+            return {
+                'tool': name,
+                'path': str(target),
+                'before': before,
+                'after': after,
+            }
+        except (OSError, UnicodeError, ValueError):
+            return None
+
     @staticmethod
     def should_process_isolate(name: str) -> bool:
         """Whether untrusted parsing should run in a killable child process."""

@@ -107,9 +107,10 @@ integrated extension catalog, manual VSIX installation, built-in language gramma
 debuggers and language tools supplied by compatible extensions, source control,
 terminals, tasks, notebooks, and the built-in BibzCode agent.
 
-Provider keys are managed through the operating-system credential service. Provider,
-model, session resume/rename/delete/export, runtime setup, and agent controls are
-available from the BibzCode activity bar. See [`ide/codeoss/README.md`](ide/codeoss/README.md).
+Provider keys are managed through the operating-system credential service. Provider
+and model controls, session search/pin/context/compact/export actions, cancellable
+runtime setup, native change review, and agent controls are available from the
+BibzCode activity bar. See [`ide/codeoss/README.md`](ide/codeoss/README.md).
 
 ## Requirements
 

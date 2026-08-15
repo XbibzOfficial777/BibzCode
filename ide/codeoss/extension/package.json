@@ -98,6 +98,31 @@
 				"icon": "$(refresh)"
 			},
 			{
+				"command": "bibzcode.sessions.search",
+				"title": "Search Sessions",
+				"icon": "$(search)"
+			},
+			{
+				"command": "bibzcode.sessions.clearSearch",
+				"title": "Clear Session Search",
+				"icon": "$(clear-all)"
+			},
+			{
+				"command": "bibzcode.sessions.pin",
+				"title": "Pin / Unpin Session",
+				"icon": "$(pinned)"
+			},
+			{
+				"command": "bibzcode.sessions.context",
+				"title": "Show Session Context",
+				"icon": "$(book)"
+			},
+			{
+				"command": "bibzcode.sessions.compact",
+				"title": "Compact Session",
+				"icon": "$(fold)"
+			},
+			{
 				"command": "bibzcode.askSelection",
 				"title": "BibzCode: Ask About Selection"
 			},
@@ -175,6 +200,16 @@
 					"command": "bibzcode.sessions.refresh",
 					"when": "view == bibzcode.sessions",
 					"group": "navigation@2"
+				},
+				{
+					"command": "bibzcode.sessions.search",
+					"when": "view == bibzcode.sessions",
+					"group": "navigation@3"
+				},
+				{
+					"command": "bibzcode.sessions.clearSearch",
+					"when": "view == bibzcode.sessions",
+					"group": "navigation@4"
 				}
 			],
 			"view/item/context": [
@@ -209,6 +244,16 @@
 					"group": "inline@1"
 				},
 				{
+					"command": "bibzcode.sessions.pin",
+					"when": "view == bibzcode.sessions && viewItem == bibzcode.session",
+					"group": "inline@2"
+				},
+				{
+					"command": "bibzcode.sessions.context",
+					"when": "view == bibzcode.sessions && viewItem == bibzcode.session",
+					"group": "session@0"
+				},
+				{
 					"command": "bibzcode.sessions.rename",
 					"when": "view == bibzcode.sessions && viewItem == bibzcode.session",
 					"group": "session@1"
@@ -219,9 +264,14 @@
 					"group": "session@2"
 				},
 				{
-					"command": "bibzcode.sessions.delete",
+					"command": "bibzcode.sessions.compact",
 					"when": "view == bibzcode.sessions && viewItem == bibzcode.session",
 					"group": "session@3"
+				},
+				{
+					"command": "bibzcode.sessions.delete",
+					"when": "view == bibzcode.sessions && viewItem == bibzcode.session",
+					"group": "session@4"
 				}
 			],
 			"editor/context": [

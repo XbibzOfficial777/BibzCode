@@ -1467,10 +1467,17 @@ def confirm_action(tool_name: str, args: dict, verb: str = 'execute') -> str:
     ]
     fd = sys.stdin.fileno()
     out_fd = sys.stdout.fileno()
-    old_settings = termios.tcgetattr(fd)
-    arg_summary = ', '.join(f'{k}={v}' for k, v in list(args.items())[:3])
+    is_tty = os.isatty(fd)
+    old_settings = termios.tcgetattr(fd) if is_tty else None
+    def _safe_arg(value):
+        text = re.sub(r'[\x00-\x1f\x7f-\x9f]', ' ', str(value))
+        text = re.sub(r'\s+', ' ', text).strip()
+        return text[:160] + ('…' if len(text) > 160 else '')
+
+    arg_summary = ', '.join(f'{_safe_arg(k)}={_safe_arg(v)}' for k, v in list(args.items())[:3])
     if len(args) > 3:
         arg_summary += '...'
+    arg_summary = arg_summary[:600]
 
     def _draw():
         line1 = f'\r\033[1;33m⚠ Confirm {verb}:\033[0m \033[1;36m{tool_name}\033[0m \033[2m({arg_summary})\033[0m\033[K\n'
@@ -1486,12 +1493,15 @@ def confirm_action(tool_name: str, args: dict, verb: str = 'execute') -> str:
     try:
         sys.stdout.flush()
         sys.stderr.flush()
-        _flush_stdin(fd)
-        tty.setraw(fd)
+        if is_tty:
+            _flush_stdin(fd)
+            tty.setraw(fd)
         _draw()
         while True:
             raw = _raw_read_byte(fd, 0.3)
             if not raw:
+                if not is_tty and _select.select([fd], [], [], 0.0)[0]:
+                    return 'reject'
                 continue
             ch = raw.decode('latin-1')
 
@@ -1513,10 +1523,11 @@ def confirm_action(tool_name: str, args: dict, verb: str = 'execute') -> str:
     except Exception:
         pass
     finally:
-        try:
-            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-        except Exception:
-            pass
+        if old_settings is not None:
+            try:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+            except Exception:
+                pass
     return 'reject'
 
 # ══════════════════════════════════════

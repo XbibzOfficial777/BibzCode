@@ -1,4 +1,6 @@
 import os
+import subprocess
+import sys
 
 import pytest
 
@@ -92,6 +94,60 @@ def test_local_approved_write_works(registry, tmp_path):
     )
     assert target.read_text() == "ok"
     assert "Written" in result
+
+
+def test_confirmation_accepts_ide_pipe_input_without_a_tty():
+    script = "from bibzcode.ui import confirm_action; print('RESULT=' + confirm_action('write_file', {'path':'x'}))"
+    completed = subprocess.run(
+        [sys.executable, "-c", script], input="0", text=True,
+        capture_output=True, timeout=10, check=True,
+    )
+    assert "RESULT=allow_once" in completed.stdout
+
+
+def test_ide_change_preview_is_bounded_workspace_only_and_non_mutating(registry, tmp_path):
+    target = tmp_path / "app.py"
+    target.write_text("print('old')\n")
+    preview = registry.ide_change_preview("edit_file", {
+        "path": str(target), "old_string": "old", "new_string": "new",
+    })
+    assert preview["before"] == "print('old')\n"
+    assert preview["after"] == "print('new')\n"
+    assert target.read_text() == "print('old')\n"
+
+    sensitive = tmp_path / ".env"
+    sensitive.write_text("TOKEN=secret")
+    assert registry.ide_change_preview("delete_file", {"path": str(sensitive)}) is None
+    assert registry.ide_change_preview("write_file", {
+        "path": str(tmp_path.parent / "outside.txt"), "content": "blocked",
+    }) is None
+
+
+def test_ide_change_protocol_requires_nonce_and_carries_bounded_preview(registry, tmp_path, monkeypatch, capsys):
+    target = tmp_path / "code.py"
+    target.write_text("old\n")
+    args = {"path": str(target), "old_string": "old", "new_string": "new"}
+
+    monkeypatch.setenv("BIBZCODE_IDE_PROTOCOL", "invalid")
+    invalid_agent = Agent(Memory(), registry, DummyProvider(), "dummy", thinking_visible=False)
+    invalid_agent._emit_ide_change_preview("edit_file", args)
+    assert capsys.readouterr().out == ""
+
+    import base64
+    import json
+    nonce = "a" * 48
+    monkeypatch.setenv("BIBZCODE_IDE_PROTOCOL", nonce)
+    agent = Agent(Memory(), registry, DummyProvider(), "dummy", thinking_visible=False)
+    assert "BIBZCODE_IDE_PROTOCOL" not in os.environ
+    agent._emit_ide_change_preview("edit_file", args)
+    frame = capsys.readouterr().out.strip()
+    prefix = f"__BIBZCODE_IDE_CHANGE__:{nonce}:"
+    assert frame.startswith(prefix)
+    payload = json.loads(base64.b64decode(frame[len(prefix):]))
+    assert payload["before"] == "old\n"
+    assert payload["after"] == "new\n"
+    assert len(payload["id"]) == 24
+    assert target.read_text() == "old\n"
 
 
 def test_private_and_local_urls_are_blocked(registry):
