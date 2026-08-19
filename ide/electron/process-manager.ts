@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn, type ChildProcessByStdio, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import type { ExitEvent, ProcessEvent } from '../shared/contracts.js';
@@ -7,7 +7,9 @@ import { MAX_COMMAND_CHARS, isWithin } from './security.js';
 
 export type ProcessEmitter = (channel: 'terminal:data' | 'terminal:exit', payload: ProcessEvent | ExitEvent) => void;
 
-function terminate(child: ChildProcessWithoutNullStreams): void {
+type TerminableChild = ChildProcessWithoutNullStreams | ChildProcessByStdio<null, NodeJS.ReadableStream, NodeJS.ReadableStream>;
+
+function terminate(child: TerminableChild): void {
   if (child.killed) return;
   if (process.platform === 'win32') {
     const killer = spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true });
