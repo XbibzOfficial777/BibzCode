@@ -1,10 +1,25 @@
-name: Build BibzCode Theia IDE
+name: BibzCode Theia IDE CI and Release
 
 on:
-  workflow_dispatch:
   push:
+    branches:
+      - '**'
     tags:
       - 'ide-v*'
+    paths:
+      - 'ide/theia/**'
+      - '.github/workflows/build-theia-ide.yml'
+  pull_request:
+    paths:
+      - 'ide/theia/**'
+      - '.github/workflows/build-theia-ide.yml'
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: 'Publish a GitHub Release after a successful build'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -13,9 +28,15 @@ concurrency:
   group: theia-ide-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  NODE_VERSION: '20'
+  ELECTRON_BUILDER_CONCURRENCY: '1'
+  CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+  BIBZCODE_RETRY_ATTEMPTS: '3'
+
 jobs:
   linux:
-    name: Linux ${{ matrix.arch }} Debian package
+    name: Linux ${{ matrix.arch }} packages
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -23,57 +44,98 @@ jobs:
         include:
           - runner: ubuntu-24.04
             arch: amd64
-            target: x64
+            electron_arch: x64
           - runner: ubuntu-24.04-arm
             arch: arm64
-            target: arm64
+            electron_arch: arm64
           - runner: ubuntu-24.04
             arch: armv7l
-            target: armv7l
+            electron_arch: arm
+            cross_platform: linux
     defaults:
       run:
         working-directory: ide/theia
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Setup Node.js 20
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
           cache-dependency-path: ide/theia/package-lock.json
       - name: Install Linux packaging tools
         run: |
           sudo apt-get update
           sudo apt-get install -y rpm
-      - name: Install dependencies
-        run: npm ci
-      - name: Build and package Debian
-        run: npm run package:linux:${{ matrix.arch }}
+      - name: Install dependencies without lifecycle deadlocks
+        run: bash scripts/ci/retry.sh npm ci --ignore-scripts
+      - name: Verify Theia dependency versions
+        run: npx theia check:theia-version
+      - name: Build browser bundle
+        run: bash scripts/ci/retry.sh npm run build:browser
+      - name: Build and package Linux targets
+        run: bash scripts/ci/retry.sh npm run package:linux:${{ matrix.arch }}
         env:
-          ELECTRON_BUILDER_CONCURRENCY: '1'
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-      - name: Validate Debian metadata
+          BIBZCODE_REBUILD_ARCH: ${{ matrix.electron_arch == 'arm' && 'arm' || '' }}
+          BIBZCODE_REBUILD_PLATFORM: ${{ matrix.cross_platform || 'linux' }}
+      - name: Validate native module architecture
         shell: bash
         run: |
-          set -euo pipefail
-          deb="$(find dist -maxdepth 1 -type f -name '*${{ matrix.arch }}.deb' -print -quit)"
-          test -n "$deb"
-          dpkg-deb --info "$deb" | tee metadata.txt
-          grep -Eq 'Architecture: (amd64|arm64|armhf)' metadata.txt
-          sha256sum "$deb" > SHA256SUMS
-      - name: Upload Debian artifact
+          set -Eeuo pipefail
+          expected=''
+          case '${{ matrix.arch }}' in
+            amd64) expected='x86-64' ;;
+            arm64) expected='ARM aarch64' ;;
+            armv7l) expected='ARM' ;;
+          esac
+          shopt -s nullglob
+          native_files=(electron-app/lib/backend/native/*.node electron-app/lib/prebuilds/*/pty.node)
+          test "${#native_files[@]}" -gt 0
+          file "${native_files[@]}" | tee native-architectures.txt
+          grep -q "$expected" native-architectures.txt
+      - name: Validate Debian and RPM metadata
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p validation
+          deb="$(find dist -maxdepth 1 -type f -name '*.deb' -print -quit)"
+          rpm_file="$(find dist -maxdepth 1 -type f -name '*.rpm' -print -quit)"
+          appimage="$(find dist -maxdepth 1 -type f -name '*.AppImage' -print -quit)"
+          test -n "$deb" && test -n "$rpm_file" && test -n "$appimage"
+          dpkg-deb --info "$deb" | tee "validation/${{ matrix.arch }}-deb-metadata.txt"
+          rpm -qip "$rpm_file" | tee "validation/${{ matrix.arch }}-rpm-metadata.txt"
+          case '${{ matrix.arch }}' in
+            amd64) grep -q 'Architecture: amd64' "validation/${{ matrix.arch }}-deb-metadata.txt" ;;
+            arm64) grep -q 'Architecture: arm64' "validation/${{ matrix.arch }}-deb-metadata.txt" ;;
+            armv7l) grep -Eq 'Architecture: armhf|Architecture: arm' "validation/${{ matrix.arch }}-deb-metadata.txt" ;;
+          esac
+          file "$appimage" | grep -q 'ELF'
+          sha256sum dist/* > "validation/${{ matrix.arch }}-SHA256SUMS"
+      - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
         with:
           name: bibzcode-theia-linux-${{ matrix.arch }}
+          retention-days: 14
           path: |
-            ide/theia/dist/*.deb
-            ide/theia/SHA256SUMS
-            ide/theia/metadata.txt
+            ide/theia/dist/*
+            ide/theia/validation/*
+            ide/theia/native-architectures.txt
           if-no-files-found: error
+      - name: Upload Linux diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bibzcode-theia-linux-${{ matrix.arch }}-diagnostics
+          retention-days: 7
+          path: |
+            ide/theia/*.log
+            ide/theia/**/npm-debug.log*
+            ide/theia/native-architectures.txt
+          if-no-files-found: ignore
 
   windows:
-    name: Windows x64 installer
+    name: Windows x64 packages
     runs-on: windows-2025
     defaults:
       run:
@@ -81,54 +143,130 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Setup Node.js 20
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
           cache-dependency-path: ide/theia/package-lock.json
-      - name: Install dependencies
-        run: npm ci
+      - name: Install dependencies without lifecycle deadlocks
+        shell: bash
+        run: bash scripts/ci/retry.sh npm ci --ignore-scripts
+      - name: Verify Theia dependency versions
+        shell: bash
+        run: npx theia check:theia-version
+      - name: Build browser bundle
+        shell: bash
+        run: bash scripts/ci/retry.sh npm run build:browser
       - name: Build Windows installer and portable package
-        run: npm run package:windows
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        shell: bash
+        run: bash scripts/ci/retry.sh npm run package:windows
+      - name: Validate Windows artifacts
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          find dist -maxdepth 1 -type f -name '*.exe' -print -quit | grep -q .
+          sha256sum dist/*.exe > SHA256SUMS-windows-x64
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
           name: bibzcode-theia-windows-x64
+          retention-days: 14
           path: |
-            ide/theia/dist/*.exe
-            ide/theia/dist/*.blockmap
+            ide/theia/dist/*
+            ide/theia/SHA256SUMS-windows-x64
           if-no-files-found: error
 
   macos:
-    name: macOS x64 package
-    runs-on: macos-14
+    name: macOS ${{ matrix.arch }} packages
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-13
+            arch: x64
+          - runner: macos-14
+            arch: arm64
     defaults:
       run:
         working-directory: ide/theia
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Setup Node.js 20
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
           cache-dependency-path: ide/theia/package-lock.json
-      - name: Install dependencies
-        run: npm ci
+      - name: Install dependencies without lifecycle deadlocks
+        run: bash scripts/ci/retry.sh npm ci --ignore-scripts
+      - name: Verify Theia dependency versions
+        run: npx theia check:theia-version
+      - name: Build browser bundle
+        run: bash scripts/ci/retry.sh npm run build:browser
       - name: Build macOS package
-        run: npm run package:mac
+        run: bash scripts/ci/retry.sh npm run package:mac:${{ matrix.arch }}
         env:
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          BIBZCODE_REBUILD_ARCH: ''
+          BIBZCODE_REBUILD_PLATFORM: darwin
+      - name: Validate macOS artifacts
+        run: |
+          set -Eeuo pipefail
+          test -n "$(find dist -maxdepth 1 -type f -name '*.dmg' -print -quit)"
+          test -n "$(find dist -maxdepth 1 -type f -name '*.zip' -print -quit)"
+          shasum -a 256 dist/* > "SHA256SUMS-macos-${{ matrix.arch }}"
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: bibzcode-theia-macos-x64
+          name: bibzcode-theia-macos-${{ matrix.arch }}
+          retention-days: 14
           path: |
-            ide/theia/dist/*.dmg
-            ide/theia/dist/*.zip
-            ide/theia/dist/*.blockmap
+            ide/theia/dist/*
+            ide/theia/SHA256SUMS-macos-${{ matrix.arch }}
           if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    if: >-
+      (github.event_name == 'push' &&
+       (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/ide-v'))) ||
+      (github.event_name == 'workflow_dispatch' && inputs.publish_release == true)
+    needs: [linux, windows, macos]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download all validated build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: bibzcode-theia-*
+          path: release-input
+          merge-multiple: false
+      - name: Assemble release assets and canonical checksums
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf release-assets
+          mkdir -p release-assets
+          find release-input -type f \( \
+            -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' -o \
+            -name '*.exe' -o -name '*.dmg' -o -name '*.zip' -o \
+            -name 'SHA256SUMS*' \
+          \) -exec cp -f {} release-assets/ \;
+          test "$(find release-assets -maxdepth 1 -type f | wc -l)" -gt 0
+          (cd release-assets && sha256sum $(find . -maxdepth 1 -type f ! -name 'SHA256SUMS' -printf '%f\n' | sort) > SHA256SUMS)
+          printf '# BibzCode IDE release\n\nCommit: `%s`\n\nAll assets were built and validated by GitHub Actions.\n' "$GITHUB_SHA" > release-assets/RELEASE_NOTES.md
+      - name: Publish release with all validated assets
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('ide-ci-{0}-{1}', github.run_number, github.sha) }}
+          target_commitish: ${{ github.sha }}
+          name: BibzCode IDE ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('CI {0}', github.run_number) }}
+          body_path: release-assets/RELEASE_NOTES.md
+          files: release-assets/*
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          prerelease: ${{ github.ref_type != 'tag' }}
+          make_latest: legacy

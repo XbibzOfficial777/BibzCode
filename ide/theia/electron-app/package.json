@@ -33,7 +33,7 @@
   },
   "scripts": {
     "bundle": "npm run rebuild && node esbuild.mjs --mode development",
-    "rebuild": "theia rebuild:electron --cacheRoot ..",
+    "rebuild": "node ../scripts/ci/rebuild-native.mjs",
     "start": "theia start --plugins=local-dir:../plugins",
     "watch": "npm run rebuild && theia build --watch --mode development"
   },

@@ -47,24 +47,14 @@ linux:
   description: BibzCode IDE with Theia workbench and VS Code extension compatibility.
   syncDesktopName: true
   target:
-    - target: deb
-      arch:
-        - x64
-    - target: rpm
-      arch:
-        - x64
-    - target: AppImage
-      arch:
-        - x64
+    - deb
+    - rpm
+    - AppImage
 
 win:
   target:
-    - target: nsis
-      arch:
-        - x64
-    - target: portable
-      arch:
-        - x64
+    - nsis
+    - portable
 
 nsis:
   oneClick: false
@@ -80,14 +70,8 @@ portable:
 mac:
   category: public.app-category.developer-tools
   target:
-    - target: dmg
-      arch:
-        - x64
-        - arm64
-    - target: zip
-      arch:
-        - x64
-        - arm64
+    - dmg
+    - zip
   hardenedRuntime: true
   gatekeeperAssess: false
 
