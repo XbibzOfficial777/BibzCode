@@ -19,7 +19,7 @@ const result = spawnSync(npxCommand, command, {
   cwd: resolve(projectRoot, 'electron-app'),
   stdio: 'inherit',
   shell: process.platform === 'win32',
-  env: process.env,
+  env: { ...process.env, npm_config_msvs_version: process.env.npm_config_msvs_version || '2026', GYP_MSVS_VERSION: process.env.GYP_MSVS_VERSION || '2026' },
 });
 if (result.status !== 0) {
   process.exit(result.status ?? 1);
@@ -29,7 +29,7 @@ if (process.platform === 'win32') {
     cwd: resolve(projectRoot, 'electron-app'),
     stdio: 'inherit',
     shell: true,
-    env: process.env,
+    env: { ...process.env, npm_config_msvs_version: process.env.npm_config_msvs_version || '2026', GYP_MSVS_VERSION: process.env.GYP_MSVS_VERSION || '2026' },
   });
   if (keymap.status !== 0) {
     process.exit(keymap.status ?? 1);

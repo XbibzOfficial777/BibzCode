@@ -226,6 +226,9 @@ jobs:
   windows:
     name: Windows x64 packages
     runs-on: windows-2025
+    env:
+      npm_config_msvs_version: '2026'
+      GYP_MSVS_VERSION: '2026'
     defaults:
       run:
         working-directory: ide/theia
@@ -253,7 +256,7 @@ jobs:
         shell: bash
         run: bash scripts/ci/retry.sh npx.cmd electron-rebuild --which-module native-keymap --version 42.3.0 --arch x64 --platform win32 --module-dir . --force --sequential
         env:
-          npm_config_msvs_version: '2022'
+          npm_config_msvs_version: '2026'
       - name: Build Windows installer and portable package
         shell: bash
         run: bash scripts/ci/retry.sh npm run package:windows
