@@ -166,10 +166,10 @@ jobs:
         with:
           arch: none
           distro: none
-          base_image: --platform=linux/arm/v7 arm32v7/node:20-bookworm-slim
+          base_image: --platform=linux/armv7 arm32v7/node:20-bookworm-slim
           githubToken: ${{ github.token }}
           setup: mkdir -p "${PWD}/armv7l-artifacts"
-          dockerRunArgs: --volume "${PWD}/armv7l-artifacts:/artifacts"
+          dockerRunArgs: --volume "${PWD}:/workspace" --volume "${PWD}/armv7l-artifacts:/artifacts"
           env: |
             CI: 'true'
             ELECTRON_BUILDER_CONCURRENCY: '1'
@@ -186,7 +186,7 @@ jobs:
             apt-get install -q -y git ca-certificates rpm build-essential pkg-config python3 libx11-dev libxkbfile-dev libsecret-1-dev file
           run: |
             set -Eeuo pipefail
-            cd /github/workspace/ide/theia
+            cd /workspace/ide/theia
             npm ci --ignore-scripts
             npx theia check:theia-version
             npm run package:linux:armv7l
