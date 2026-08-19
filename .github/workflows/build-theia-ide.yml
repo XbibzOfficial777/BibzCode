@@ -244,9 +244,16 @@ jobs:
       - name: Verify Theia dependency versions
         shell: bash
         run: npx theia check:theia-version
+      - name: Activate MSVC toolchain
+        uses: ilammy/msvc-dev-cmd@v1
       - name: Build browser bundle
         shell: bash
         run: bash scripts/ci/retry.sh npm run build:browser
+      - name: Rebuild Windows native-keymap for Electron
+        shell: bash
+        run: bash scripts/ci/retry.sh npx.cmd electron-rebuild --which-module native-keymap --version 42.3.0 --arch x64 --platform win32 --module-dir . --force --sequential
+        env:
+          npm_config_msvs_version: '2022'
       - name: Build Windows installer and portable package
         shell: bash
         run: bash scripts/ci/retry.sh npm run package:windows

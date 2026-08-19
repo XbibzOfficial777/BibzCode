@@ -24,7 +24,17 @@ const result = spawnSync(npxCommand, command, {
 if (result.status !== 0) {
   process.exit(result.status ?? 1);
 }
-
+if (process.platform === 'win32') {
+  const keymap = spawnSync(npxCommand, ['electron-rebuild', '--which-module', 'native-keymap', '--version', '42.3.0', '--arch', 'x64', '--platform', 'win32', '--module-dir', projectRoot, '--force', '--sequential'], {
+    cwd: resolve(projectRoot, 'electron-app'),
+    stdio: 'inherit',
+    shell: true,
+    env: process.env,
+  });
+  if (keymap.status !== 0) {
+    process.exit(keymap.status ?? 1);
+  }
+}
 const repair = spawnSync(process.execPath, [resolve(here, 'repair-native-modules.mjs')], {
   cwd: projectRoot,
   stdio: 'inherit',
