@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { CHANNELS, type ExitEvent, type ProcessEvent } from '../shared/contracts.js';
+import { CHANNELS, type AgentStreamEvent, type ExitEvent, type ProcessEvent } from '../shared/contracts.js';
 
 const on = <T>(channel: string, listener: (payload: T) => void): (() => void) => {
   const wrapped = (_event: Electron.IpcRendererEvent, payload: T) => listener(payload);
@@ -56,6 +56,20 @@ const api = {
   settings: {
     get: () => ipcRenderer.invoke(CHANNELS.settingsGet),
     set: (patch: Record<string, unknown>) => ipcRenderer.invoke(CHANNELS.settingsSet, patch),
+  },
+  secrets: {
+    status: () => ipcRenderer.invoke(CHANNELS.secretStatus) as Promise<{ configured: boolean }>,
+    set: (value: string) => ipcRenderer.invoke(CHANNELS.secretSet, { name: 'ai-api-key', value }) as Promise<{ configured: boolean }>,
+    clear: () => ipcRenderer.invoke(CHANNELS.secretClear, { name: 'ai-api-key' }) as Promise<{ configured: boolean }>,
+  },
+  agent: {
+    probe: () => ipcRenderer.invoke(CHANNELS.agentProbe),
+    models: () => ipcRenderer.invoke(CHANNELS.agentModels),
+    complete: (prompt: string, systemPrompt?: string) => ipcRenderer.invoke(CHANNELS.agentComplete, { prompt, systemPrompt }),
+    streamStart: (requestId: string, prompt: string, systemPrompt?: string) => ipcRenderer.invoke(CHANNELS.agentStreamStart, { requestId, request: { prompt, systemPrompt } }),
+    onStream: (listener: (event: AgentStreamEvent) => void) => on(CHANNELS.agentStreamEvent, listener),
+    streamCancel: (requestId: string) => ipcRenderer.invoke(CHANNELS.agentStreamCancel, requestId),
+    compress: (text: string, targetChars: number) => ipcRenderer.invoke(CHANNELS.compressionTest, { text, targetChars }),
   },
   menu: {
     onCommand: (listener: (command: string) => void) => on(CHANNELS.menuCommand, listener),

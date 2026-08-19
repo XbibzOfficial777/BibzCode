@@ -45,6 +45,18 @@ monaco.editor.defineTheme('bibz-dark', {
     'editorIndentGuide.activeBackground1': '#555555',
   },
 });
+monaco.editor.defineTheme('bibz-light', {
+  base: 'vs',
+  inherit: true,
+  rules: [{ token: 'comment', foreground: '6a737d', fontStyle: 'italic' }, { token: 'keyword', foreground: '005cc5', fontStyle: 'bold' }, { token: 'string', foreground: '032f62' }],
+  colors: { 'editor.background': '#ffffff', 'editor.foreground': '#24292f', 'editorCursor.foreground': '#111111', 'editor.selectionBackground': '#b6d7ff', 'editor.lineHighlightBackground': '#f6f8fa' },
+});
+monaco.editor.defineTheme('high-contrast', {
+  base: 'hc-black',
+  inherit: true,
+  rules: [{ token: 'comment', foreground: '7ee787', fontStyle: 'italic' }, { token: 'keyword', foreground: 'ff7b72', fontStyle: 'bold' }, { token: 'string', foreground: 'a5d6ff' }],
+  colors: { 'editor.background': '#000000', 'editor.foreground': '#ffffff', 'editorCursor.foreground': '#ffffff', 'editor.selectionBackground': '#264f78' },
+});
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode><App /></React.StrictMode>,

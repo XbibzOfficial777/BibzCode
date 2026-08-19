@@ -61,6 +61,20 @@ declare global {
         get(): Promise<IdeSettings>;
         set(patch: Partial<IdeSettings>): Promise<IdeSettings>;
       };
+      secrets: {
+        status(): Promise<{ configured: boolean }>;
+        set(value: string): Promise<{ configured: boolean }>;
+        clear(): Promise<{ configured: boolean }>;
+      };
+      agent: {
+        probe(): Promise<import('../shared/contracts').ProviderProbe>;
+        models(): Promise<string[]>;
+        complete(prompt: string, systemPrompt?: string): Promise<string>;
+        streamStart(requestId: string, prompt: string, systemPrompt?: string): Promise<{ requestId: string }>;
+        onStream(listener: (event: import('../shared/contracts').AgentStreamEvent) => void): () => void;
+        streamCancel(requestId: string): Promise<{ cancelled: boolean }>;
+        compress(text: string, targetChars: number): Promise<import('../shared/contracts').CompressionResult>;
+      };
       menu: { onCommand(listener: (command: string) => void): () => void };
     };
   }

@@ -157,7 +157,8 @@
     "linux": {
       "target": [
         "deb",
-        "rpm"
+        "rpm",
+        "AppImage"
       ],
       "icon": "build/icons",
       "category": "Development",

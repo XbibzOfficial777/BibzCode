@@ -48,15 +48,29 @@ export interface RuntimeStatus {
   message: string;
 }
 
+export type IdeTheme = 'bibz-dark' | 'bibz-light' | 'high-contrast';
+export type AiProvider = 'openai' | 'anthropic' | 'google' | 'deepseek' | 'openrouter' | 'ollama' | 'groq' | 'together' | 'huggingface' | 'mistral' | 'fireworks' | 'cerebras' | 'xai' | 'perplexity' | 'moonshot' | 'qwen' | 'siliconflow' | 'nvidia' | 'cohere' | 'sambanova' | 'novita' | 'hyperbolic' | 'deepinfra' | 'ai21' | 'minimax' | 'zhipu' | 'modelscope' | 'friendli' | 'replicate' | 'agnes' | 'lmstudio' | 'vllm' | 'litellm' | 'custom';
+export type ThinkingMode = 'off' | 'fast' | 'balanced' | 'deep' | 'adaptive';
+export type CompressionMode = 'off' | 'balanced' | 'ultra';
+
 export interface IdeSettings {
   pythonPath: string;
   shellPath: string;
   lastWorkspace: string;
   autoUpdate: boolean;
   confirmBeforeDelete: boolean;
-  theme: 'bibz-dark' | 'high-contrast';
+  theme: IdeTheme;
   editorFontSize: number;
   wordWrap: 'on' | 'off';
+  aiProvider: AiProvider;
+  aiBaseUrl: string;
+  aiModel: string;
+  thinkingEnabled: boolean;
+  thinkingMode: ThinkingMode;
+  thinkingBudget: number;
+  compressionMode: CompressionMode;
+  compressionContextWindow: number;
+  compressionPreserveCode: boolean;
 }
 
 export interface CommandResult {
@@ -75,6 +89,34 @@ export interface ExitEvent {
   sessionId: string;
   code: number | null;
   signal: string | null;
+}
+
+export interface ProviderProbe {
+  ok: boolean;
+  status: number;
+  message: string;
+  latencyMs: number;
+}
+
+export interface CompressionResult {
+  text: string;
+  originalChars: number;
+  compressedChars: number;
+  ratio: number;
+  preservedBlocks: number;
+}
+
+export interface AgentCompletionRequest {
+  prompt: string;
+  systemPrompt?: string;
+}
+
+export interface AgentStreamEvent {
+  requestId: string;
+  type: 'start' | 'delta' | 'done' | 'error';
+  delta?: string;
+  text?: string;
+  message?: string;
 }
 
 export const CHANNELS = {
@@ -110,6 +152,16 @@ export const CHANNELS = {
   gitCommit: 'git:commit',
   settingsGet: 'settings:get',
   settingsSet: 'settings:set',
+  secretSet: 'secret:set',
+  secretClear: 'secret:clear',
+  secretStatus: 'secret:status',
+  agentProbe: 'agent:probe',
+  agentModels: 'agent:models',
+  agentComplete: 'agent:complete',
+  agentStreamStart: 'agent:stream-start',
+  agentStreamEvent: 'agent:stream-event',
+  agentStreamCancel: 'agent:stream-cancel',
+  compressionTest: 'agent:compression-test',
   workspaceChanged: 'workspace:changed',
   menuCommand: 'menu:command',
 } as const;

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Bot, Boxes, Code2, Files, FolderOpen, GitBranch, Search, Settings, ShieldCheck, Sparkles, TerminalSquare } from 'lucide-react';
 import type { ActivityView, AppInfo, IdeSettings, OpenFile, RuntimeStatus } from '../shared/contracts';
 import { AssistantPanel } from './components/AssistantPanel';
+import { AgentPromptModal } from './components/AgentPromptModal';
 import { EditorArea } from './components/EditorArea';
 import { Explorer } from './components/Explorer';
 import { RuntimeSetup } from './components/RuntimeSetup';
@@ -34,6 +35,7 @@ export function App() {
   const [toast, setToast] = useState('');
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState('');
+  const [agentOpen, setAgentOpen] = useState(false);
 
   const notify = useCallback((message: string) => { setToast(message); window.setTimeout(() => setToast((value) => value === message ? '' : value), 5500); }, []);
   const refresh = useCallback(() => setRefreshToken((value) => value + 1), []);
@@ -103,6 +105,7 @@ export function App() {
     { id: 'view-source-control', label: 'View: Source Control', shortcut: 'Ctrl+Shift+G', run: () => setActivity('source-control') },
     { id: 'focus-terminal', label: 'View: Toggle Terminal', shortcut: 'Ctrl+`', run: () => setTerminalVisible((value) => !value) },
     { id: 'start-assistant', label: 'BibzCode: Start / Restart Full Assistant', shortcut: 'Ctrl+Shift+B', run: startAssistant },
+    { id: 'agent-prompt', label: 'BibzCode: Run Agent Prompt', shortcut: 'Ctrl+Shift+I', run: () => setAgentOpen(true) },
     { id: 'stop-assistant', label: 'BibzCode: Stop Assistant', run: () => setAssistantStop((value) => value + 1) },
     { id: 'runtime-setup', label: 'BibzCode: Managed Runtime Setup…', run: () => setRuntimeSetup(true) },
     { id: 'features', label: 'BibzCode: Show Feature Parity', run: () => setActivity('tools') },
@@ -124,7 +127,8 @@ export function App() {
       const mod = event.ctrlKey || event.metaKey;
       if (mod && event.key.toLowerCase() === 's') { event.preventDefault(); void saveActive(); }
       if (mod && event.shiftKey && event.key.toLowerCase() === 'p') { event.preventDefault(); setPaletteOpen(true); }
-      if (event.key === 'Escape') setPaletteOpen(false);
+      if (mod && event.shiftKey && event.key.toLowerCase() === 'i') { event.preventDefault(); setAgentOpen(true); }
+      if (event.key === 'Escape') { setPaletteOpen(false); setAgentOpen(false); }
     };
     window.addEventListener('keydown', keyboard); return () => window.removeEventListener('keydown', keyboard);
   }, [saveActive]);
@@ -140,7 +144,8 @@ export function App() {
   const filteredCommands = commands.filter((command) => command.label.toLowerCase().includes(paletteQuery.toLowerCase()));
   const runCommand = (command: PaletteCommand) => { setPaletteOpen(false); setPaletteQuery(''); command.run(); };
 
-  return <div className={`app ${settings?.theme === 'high-contrast' ? 'high-contrast' : ''}`}>
+  const themeClass = settings?.theme === 'high-contrast' ? 'high-contrast' : settings?.theme === 'bibz-light' ? 'light-theme' : '';
+  return <div className={`app ${themeClass}`}>
     <header className="titlebar"><div className="brand"><img src={logo} alt="" /><span>BibzCode IDE</span><small>{appInfo?.version ?? '7.8.0-r6'}</small></div><div className="title-workspace">{workspaceRoot || 'No workspace open'}</div><div className="title-actions"><button onClick={() => void openFolder()}><FolderOpen /> Open Folder</button><button onClick={startAssistant}><Sparkles /> BibzCode</button></div></header>
     <div className="workbench">
       <nav className="activity-bar" aria-label="Activity bar">
@@ -160,6 +165,7 @@ export function App() {
     <footer className="statusbar"><button onClick={() => setActivity('source-control')}><GitBranch /> source control</button><span><ShieldCheck /> local security policy</span><span className="status-spacer" /><button onClick={() => setRuntimeSetup(true)} className={`runtime-status state-${runtimeStatus?.state ?? 'checking'}`}><Code2 /> {runtimeStatus?.state === 'ready' ? `Python ${runtimeStatus.pythonVersion}` : 'Runtime setup'}</button><button onClick={() => setTerminalVisible((value) => !value)}><TerminalSquare /> Terminal</button><span>Ln {cursor.line}, Col {cursor.column}</span></footer>
     {paletteOpen && <div className="palette-backdrop" onMouseDown={() => setPaletteOpen(false)}><section className="command-palette" onMouseDown={(event) => event.stopPropagation()}><input autoFocus value={paletteQuery} onChange={(event) => setPaletteQuery(event.target.value)} placeholder="Type a command" /><div>{filteredCommands.map((command) => <button key={command.id} onClick={() => runCommand(command)}><span>{command.label}</span><kbd>{command.shortcut}</kbd></button>)}</div></section></div>}
     <RuntimeSetup open={runtimeSetup} onClose={() => { setRuntimeSetup(false); void window.bibzIDE.runtime.status().then(setRuntimeStatus); }} onError={notify} />
+    <AgentPromptModal open={agentOpen} activeFile={openFiles.find((file) => file.relativePath === activePath)} onClose={() => setAgentOpen(false)} onError={notify} />
     {toast && <div className="toast" role="status">{toast}</div>}
   </div>;
 }

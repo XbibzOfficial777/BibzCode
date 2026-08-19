@@ -40,7 +40,7 @@ export function EditorArea({ files, activePath, settings, targetLine, onActivate
         path={active.relativePath}
         value={active.content}
         language={active.language}
-        theme="bibz-dark"
+        theme={settings?.theme ?? 'bibz-dark'}
         onMount={mount}
         onChange={(value) => onChange(active.relativePath, value ?? '')}
         options={{

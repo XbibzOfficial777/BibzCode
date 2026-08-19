@@ -12,6 +12,9 @@ import { ProcessManager } from './process-manager.js';
 import { RuntimeService } from './runtime.js';
 import { isWithin, sanitizeError } from './security.js';
 import { SettingsStore } from './settings-store.js';
+import { SecretStore } from './secret-store.js';
+import { AgentService } from './agent-service.js';
+import { cleanAssistantText } from './response-cleaner.js';
 import { WorkspaceService } from './workspace.js';
 
 const { autoUpdater } = updater;
@@ -30,9 +33,12 @@ if (process.env.BIBZCODE_IDE_E2E_REPORT) writeFileSync(`${process.env.BIBZCODE_I
 
 let window: BrowserWindow | null = null;
 let settings: SettingsStore;
+let secrets: SecretStore;
+let agent: AgentService;
 let workspace: WorkspaceService;
 let processes: ProcessManager;
 let runtime: RuntimeService;
+const agentStreams = new Map<string, AbortController>();
 const git = new GitService();
 
 const send = (channel: string, payload: unknown): void => {
@@ -80,6 +86,49 @@ function registerIpc(): void {
 
   safeHandle(CHANNELS.settingsGet, () => settings.get());
   safeHandle(CHANNELS.settingsSet, (raw) => settings.set(z.record(z.string(), z.unknown()).parse(raw) as Partial<IdeSettings>));
+  safeHandle(CHANNELS.secretStatus, () => ({ configured: secrets.has('ai-api-key') }));
+  safeHandle(CHANNELS.secretSet, async (raw) => {
+    const input = z.object({ name: z.literal('ai-api-key'), value: z.string().max(16_384) }).parse(raw);
+    if (input.value.trim()) await secrets.set(input.name, input.value);
+    else await secrets.clear(input.name);
+    return { configured: secrets.has(input.name) };
+  });
+  safeHandle(CHANNELS.secretClear, async (raw) => {
+    const input = z.object({ name: z.literal('ai-api-key') }).parse(raw);
+    await secrets.clear(input.name);
+    return { configured: false };
+  });
+  safeHandle(CHANNELS.agentProbe, () => agent.testConnection());
+  safeHandle(CHANNELS.agentModels, () => agent.listModels());
+  safeHandle(CHANNELS.agentComplete, (raw) => agent.complete(z.object({ prompt: z.string().min(1).max(200_000), systemPrompt: z.string().max(16_384).optional() }).parse(raw)));
+  safeHandle(CHANNELS.agentStreamStart, (raw) => {
+    const input = z.object({ requestId: z.string().uuid(), request: z.object({ prompt: z.string().min(1).max(200_000), systemPrompt: z.string().max(16_384).optional() }) }).parse(raw);
+    if (agentStreams.has(input.requestId)) throw new Error('Agent request is already running.');
+    const controller = new AbortController(); agentStreams.set(input.requestId, controller);
+    void (async () => {
+      let rawText = '';
+      send(CHANNELS.agentStreamEvent, { requestId: input.requestId, type: 'start' });
+      try {
+        for await (const delta of agent.streamCompletion(input.request, controller.signal)) {
+          rawText += delta;
+          send(CHANNELS.agentStreamEvent, { requestId: input.requestId, type: 'delta', delta });
+        }
+        send(CHANNELS.agentStreamEvent, { requestId: input.requestId, type: 'done', text: cleanAssistantText(rawText) });
+      } catch (error) {
+        if (!controller.signal.aborted) send(CHANNELS.agentStreamEvent, { requestId: input.requestId, type: 'error', message: error instanceof Error ? error.message : String(error) });
+      } finally { agentStreams.delete(input.requestId); }
+    })();
+    return { requestId: input.requestId };
+  });
+  safeHandle(CHANNELS.agentStreamCancel, (raw) => {
+    const requestId = z.string().uuid().parse(raw); const controller = agentStreams.get(requestId);
+    if (controller) controller.abort();
+    return { cancelled: Boolean(controller) };
+  });
+  safeHandle(CHANNELS.compressionTest, (raw) => {
+    const input = z.object({ text: z.string().max(2_000_000), targetChars: z.number().int().min(2_048).max(4_000_000) }).parse(raw);
+    return agent.compressContext(input.text, input.targetChars);
+  });
 
   safeHandle(CHANNELS.workspaceCurrent, () => workspace.getRoot());
   safeHandle(CHANNELS.workspaceSelect, async () => {
@@ -179,6 +228,7 @@ function buildMenu(): void {
     },
     {
       label: 'BibzCode', submenu: [
+        { label: 'Run Agent Prompt…', accelerator: 'CmdOrCtrl+Shift+I', click: command('agent-prompt') },
         { label: 'Start / Restart Assistant', accelerator: 'CmdOrCtrl+Shift+B', click: command('start-assistant') },
         { label: 'Stop Assistant', click: command('stop-assistant') },
         { label: 'Runtime Setup…', click: command('runtime-setup') },
@@ -253,7 +303,7 @@ async function createWindow(): Promise<void> {
 
 app.on('second-instance', () => { if (window) { if (window.isMinimized()) window.restore(); window.focus(); } });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-app.on('before-quit', () => processes?.stopAll());
+app.on('before-quit', () => { processes?.stopAll(); for (const controller of agentStreams.values()) controller.abort(); });
 app.on('activate', () => { if (!window) void createWindow(); });
 
 async function bootstrap(): Promise<void> {
@@ -279,6 +329,9 @@ async function bootstrap(): Promise<void> {
 
   settings = new SettingsStore(app.getPath('userData'));
   const loadedSettings = await settings.load();
+  secrets = new SecretStore(app.getPath('userData'));
+  await secrets.load();
+  agent = new AgentService(secrets, () => settings.get());
   workspace = new WorkspaceService();
   let initialWorkspace = process.env.BIBZCODE_IDE_TEST_WORKSPACE || loadedSettings.lastWorkspace;
   if (initialWorkspace) {
