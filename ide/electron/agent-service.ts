@@ -231,8 +231,7 @@ export class AgentService {
     const config = this.config();
     if (config.aiProvider === 'anthropic') yield* this.anthropic(request, signal);
     else if (config.aiProvider === 'google') yield* this.google(request, signal);
-    else       yield* this.openAiCompatible(request, signal);
-    }
+    else yield* this.openAiCompatible(request, signal);
   }
 
   async complete(request: AgentCompletionRequest): Promise<string> {
