@@ -21,7 +21,7 @@ Each Linux job checks Debian metadata, RPM metadata, AppImage ELF output, native
 
 ## Error handling
 
-The workflow retries transient package/build commands up to three times and clears only npm's verifiable cache before retrying. It does not silently ignore compiler, test, packaging, architecture, or metadata failures. The native rebuild wrapper repairs only the deterministic `node-pty` prebuild layout when a valid compiled `pty.node` exists; it never fabricates a binary or changes application source automatically.
+The workflow retries transient package/build commands up to three times and clears only npm's verifiable cache before retrying. It does not silently ignore compiler, test, packaging, architecture, or metadata failures. The native rebuild wrapper repairs only the deterministic `node-pty` prebuild layout when a valid compiled `pty.node` exists; the build also aliases the optional Windows CA addon to a small fallback that preserves Node.js' default trust store. It never fabricates a native binary or changes application source automatically.
 
 A failed job uploads diagnostic logs when available. A release is never published from a failed or partially validated matrix.
 

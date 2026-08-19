@@ -70,7 +70,15 @@ jobs:
           set -Eeuo pipefail
           if [[ '${{ matrix.arch }}' == 'armv7l' ]]; then
             sudo dpkg --add-architecture armhf
-            sudo apt-get update
+            cat <<'SOURCES' | sudo tee /tmp/bibzcode-armhf.sources >/dev/null
+          Types: deb
+          URIs: http://ports.ubuntu.com/ubuntu-ports
+          Suites: jammy jammy-updates jammy-security
+          Components: main universe
+          Architectures: armhf
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+          SOURCES
+            sudo apt-get -o Dir::Etc::sourcelist=/tmp/bibzcode-armhf.sources -o Dir::Etc::sourceparts=- -o APT::Architectures=armhf update
             sudo apt-get install -y rpm build-essential pkg-config python3 g++-arm-linux-gnueabihf libx11-dev:armhf libxkbfile-dev:armhf libsecret-1-dev:armhf
           else
             sudo apt-get update
@@ -123,7 +131,7 @@ jobs:
             armv7l) grep -Eq 'Architecture: armhf|Architecture: arm' "validation/${{ matrix.arch }}-deb-metadata.txt" ;;
           esac
           file "$appimage" | grep -q 'ELF'
-          sha256sum dist/* > "validation/${{ matrix.arch }}-SHA256SUMS"
+          find dist -maxdepth 1 -type f -print0 | xargs -0 sha256sum > "validation/${{ matrix.arch }}-SHA256SUMS"
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v5
         with:
@@ -167,11 +175,6 @@ jobs:
       - name: Verify Theia dependency versions
         shell: bash
         run: npx theia check:theia-version
-      - name: Activate MSVC toolchain
-        uses: ilammy/msvc-dev-cmd@v1
-      - name: Restore Windows CA native helper
-        shell: bash
-        run: bash scripts/ci/retry.sh npm rebuild @vscode/windows-ca-certs --foreground-scripts
       - name: Build browser bundle
         shell: bash
         run: bash scripts/ci/retry.sh npm run build:browser

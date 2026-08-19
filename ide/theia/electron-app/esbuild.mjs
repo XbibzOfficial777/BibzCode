@@ -2,6 +2,13 @@ import { browserOptions, mode, watch } from './gen-esbuild.browser.mjs';
 import { nodeOptions } from './gen-esbuild.node.mjs';
 import { electronOptions } from './gen-esbuild.electron.mjs';
 import esbuild from 'esbuild';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const windowsCaShim = resolve(dirname(fileURLToPath(import.meta.url)), '../scripts/ci/windows-ca-certs-shim.cjs');
+for (const options of [nodeOptions, electronOptions]) {
+    options.alias = { ...(options.alias ?? {}), '@vscode/windows-ca-certs': windowsCaShim };
+}
 
 if (mode === 'development' && process.env.THEIA_DEV_SOURCEMAP !== '1') {
     browserOptions.sourcemap = false;

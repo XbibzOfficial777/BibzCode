@@ -1,6 +1,11 @@
 import { browserOptions, mode, watch } from './gen-esbuild.browser.mjs';
 import { nodeOptions } from './gen-esbuild.node.mjs';
 import esbuild from 'esbuild';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const windowsCaShim = resolve(dirname(fileURLToPath(import.meta.url)), '../scripts/ci/windows-ca-certs-shim.cjs');
+nodeOptions.alias = { ...(nodeOptions.alias ?? {}), '@vscode/windows-ca-certs': windowsCaShim };
 
 // Theia 1.74.1's linked source-map plugin can stop the shared esbuild service
 // in development mode after a rebuild. Keep development builds reliable in the
