@@ -12,7 +12,7 @@ Every push and pull request that changes `ide/theia/**` or this workflow runs va
 |---|---|---|
 | Linux amd64 | `ubuntu-24.04` | `.deb`, `.rpm`, `AppImage` |
 | Linux arm64 | `ubuntu-24.04-arm` | `.deb`, `.rpm`, `AppImage` |
-| Linux armv7l | `ubuntu-24.04` with explicit ARM rebuild | `.deb`, `.rpm`, `AppImage` |
+| Linux armv7l | `ubuntu-22.04` with explicit ARM rebuild | `.deb`, `.rpm`, `AppImage` |
 | Windows x64 | `windows-2025` | NSIS installer and portable `.exe` |
 | macOS x64 | `macos-13` | `.dmg`, `.zip` |
 | macOS arm64 | `macos-14` | `.dmg`, `.zip` |

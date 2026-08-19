@@ -48,7 +48,7 @@ jobs:
           - runner: ubuntu-24.04-arm
             arch: arm64
             electron_arch: arm64
-          - runner: ubuntu-24.04
+          - runner: ubuntu-22.04
             arch: armv7l
             electron_arch: arm
             cross_platform: linux
@@ -87,8 +87,9 @@ jobs:
         env:
           BIBZCODE_REBUILD_ARCH: ${{ matrix.electron_arch == 'arm' && 'arm' || '' }}
           BIBZCODE_REBUILD_PLATFORM: ${{ matrix.cross_platform || 'linux' }}
-          CC: ${{ matrix.arch == 'armv7l' && 'arm-linux-gnueabihf-gcc' || '' }}
-          CXX: ${{ matrix.arch == 'armv7l' && 'arm-linux-gnueabihf-g++' || '' }}
+          CC: ${{ matrix.arch == 'armv7l' && 'arm-linux-gnueabihf-gcc' || 'gcc' }}
+          CXX: ${{ matrix.arch == 'armv7l' && 'arm-linux-gnueabihf-g++' || 'g++' }}
+          AR: ${{ matrix.arch == 'armv7l' && 'arm-linux-gnueabihf-ar' || 'ar' }}
           npm_config_arch: ${{ matrix.electron_arch }}
       - name: Validate native module architecture
         shell: bash
@@ -166,6 +167,8 @@ jobs:
       - name: Verify Theia dependency versions
         shell: bash
         run: npx theia check:theia-version
+      - name: Activate MSVC toolchain
+        uses: ilammy/msvc-dev-cmd@v1
       - name: Restore Windows CA native helper
         shell: bash
         run: bash scripts/ci/retry.sh npm rebuild @vscode/windows-ca-certs --foreground-scripts
