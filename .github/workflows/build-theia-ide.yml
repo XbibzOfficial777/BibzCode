@@ -164,9 +164,8 @@ jobs:
       - name: Build on ARMv7 container
         uses: uraimo/run-on-arch-action@v3
         with:
-          arch: none
-          distro: none
-          base_image: --platform=linux/armv7 arm32v7/node:20-bullseye-slim
+          arch: armv7
+          distro: bullseye
           githubToken: ${{ github.token }}
           setup: mkdir -p "${PWD}/armv7l-artifacts"
           dockerRunArgs: --volume "${PWD}:/workspace" --volume "${PWD}/armv7l-artifacts:/artifacts"
@@ -183,9 +182,20 @@ jobs:
             AR: ar
           install: |
             apt-get update -q -y
-            apt-get install -q -y git ca-certificates rpm build-essential pkg-config python3 libx11-dev libxkbfile-dev libsecret-1-dev file
+            apt-get install -q -y git curl ca-certificates xz-utils rpm build-essential pkg-config python3 libx11-dev libxkbfile-dev libsecret-1-dev file
           run: |
             set -Eeuo pipefail
+            node_version=v20.20.2
+            node_dir=/opt/node-$node_version-armv7l
+            if [ ! -x "$node_dir/bin/node" ]; then
+              mkdir -p /opt
+              curl -fsSL "https://nodejs.org/dist/$node_version/node-$node_version-linux-armv7l.tar.xz" -o /tmp/node-armv7l.tar.xz
+              tar -xJf /tmp/node-armv7l.tar.xz -C /opt
+              mv "/opt/node-$node_version-linux-armv7l" "$node_dir"
+            fi
+            export PATH="$node_dir/bin:$PATH"
+            node --version
+            npm --version
             cd /workspace/ide/theia
             npm ci --ignore-scripts
             npx theia check:theia-version

@@ -18,6 +18,7 @@ const npxCommand = process.platform === 'win32' ? 'npx.cmd' : 'npx';
 const result = spawnSync(npxCommand, command, {
   cwd: resolve(projectRoot, 'electron-app'),
   stdio: 'inherit',
+  shell: process.platform === 'win32',
   env: process.env,
 });
 if (result.status !== 0) {
