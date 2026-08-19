@@ -1,4 +1,4 @@
-const LEADING_FILLER = /^(?:\s*(?:(?:sure|certainly|of course|absolutely|no problem|happy to help|i can help with that|let me help)(?:,?\s+here(?:'s| is) (?:the|a) (?:answer|solution|response))?|here(?:'s| is) (?:the|a) (?:answer|solution|response))[.!,:;\-]?\s*(?:\n|$))+/i;
+const LEADING_FILLER = /^(?:\s*(?:(?:sure|certainly|of course|absolutely|no problem|happy to help|i can help with that|let me help)(?:,?\s+here(?:'s| is) (?:the|a) (?:answer|solution|response))?|here(?:'s| is) (?:the|a) (?:answer|solution|response))[.!,:;-]?\s*(?:\n|$))+/i;
 const TRAILING_FILLER = /(?:\n|\s)+(?:hope this helps|let me know if you need anything else|feel free to ask|feel free to reach out|happy to help further)[.!]?\s*$/i;
 
 const cleanPlainSegment = (segment: string): string => {
