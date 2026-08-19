@@ -3,6 +3,7 @@ import type { AgentToolDefinition, AgentToolName } from '../shared/agent-tools.j
 import { AGENT_TOOL_DEFINITIONS, AGENT_TOOL_MAP } from '../shared/agent-tools.js';
 import { GitService } from './git-service.js';
 import { ProcessManager } from './process-manager.js';
+import { assertRelativePath } from './security.js';
 import { WorkspaceService } from './workspace.js';
 
 const schemas: Record<AgentToolName, z.ZodTypeAny> = {
@@ -48,9 +49,9 @@ export class ToolExecutor {
       case 'workspace_trash': await this.workspace.trash(args.path as string); value = `Moved ${args.path} to the operating system trash`; break;
       case 'terminal_run': value = await this.processes.executeCommand(args.command as string, root); break;
       case 'git_status': value = await this.git.status(root); break;
-      case 'git_diff': value = await this.git.diff(root, args.path as string, args.staged as boolean); break;
-      case 'git_stage': await this.git.stage(root, args.path as string); value = `Staged ${args.path}`; break;
-      case 'git_unstage': await this.git.unstage(root, args.path as string); value = `Unstaged ${args.path}`; break;
+      case 'git_diff': value = await this.git.diff(root, args.path ? assertRelativePath(args.path as string) : '', args.staged as boolean); break;
+      case 'git_stage': { const relative = assertRelativePath(args.path as string); await this.git.stage(root, relative); value = `Staged ${relative}`; break; }
+      case 'git_unstage': { const relative = assertRelativePath(args.path as string); await this.git.unstage(root, relative); value = `Unstaged ${relative}`; break; }
       case 'git_commit': value = await this.git.commit(root, args.message as string); break;
       case 'context_compress': value = this.compress(args.text as string, args.targetChars as number); break;
     }
