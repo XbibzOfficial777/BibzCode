@@ -1,13 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { spawn, type ChildProcessByStdio, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { stat } from 'node:fs/promises';
+import type { Readable } from 'node:stream';
 import path from 'node:path';
 import type { ExitEvent, ProcessEvent } from '../shared/contracts.js';
 import { MAX_COMMAND_CHARS, isWithin } from './security.js';
 
 export type ProcessEmitter = (channel: 'terminal:data' | 'terminal:exit', payload: ProcessEvent | ExitEvent) => void;
 
-type TerminableChild = ChildProcessWithoutNullStreams | ChildProcessByStdio<null, NodeJS.ReadableStream, NodeJS.ReadableStream>;
+type TerminableChild = ChildProcessWithoutNullStreams | ChildProcessByStdio<null, Readable, Readable>;
 
 function terminate(child: TerminableChild): void {
   if (child.killed) return;
