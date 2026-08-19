@@ -1,0 +1,373 @@
+name: BibzCode Theia IDE CI and Release
+
+on:
+  push:
+    branches:
+      - '**'
+    tags:
+      - 'ide-v*'
+    paths:
+      - 'ide/theia/**'
+      - '.github/workflows/build-theia-ide.yml'
+  pull_request:
+    paths:
+      - 'ide/theia/**'
+      - '.github/workflows/build-theia-ide.yml'
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: 'Publish a GitHub Release after a successful build'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: theia-ide-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '20'
+  ELECTRON_BUILDER_CONCURRENCY: '1'
+  CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+  BIBZCODE_RETRY_ATTEMPTS: '3'
+
+jobs:
+  linux:
+    name: Linux ${{ matrix.arch }} packages
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+            electron_arch: x64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+            electron_arch: arm64
+    defaults:
+      run:
+        working-directory: ide/theia
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: ide/theia/package-lock.json
+      - name: Install Linux packaging and native build tools
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [[ '${{ matrix.arch }}' == 'armv7l' ]]; then
+            sudo dpkg --add-architecture armhf
+            cat <<'SOURCES' | sudo tee /tmp/bibzcode-armhf.sources >/dev/null
+          Types: deb
+          URIs: http://ports.ubuntu.com/ubuntu-ports
+          Suites: jammy jammy-updates jammy-security
+          Components: main universe
+          Architectures: armhf
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+          SOURCES
+            sudo apt-get -o Dir::Etc::sourcelist=/tmp/bibzcode-armhf.sources -o Dir::Etc::sourceparts=- -o APT::Architectures=armhf update
+            sudo apt-get install -y rpm build-essential pkg-config python3 g++-arm-linux-gnueabihf libx11-dev:armhf libxkbfile-dev:armhf libsecret-1-dev:armhf
+          else
+            sudo apt-get update
+            sudo apt-get install -y rpm build-essential pkg-config python3 libx11-dev libxkbfile-dev libsecret-1-dev
+          fi
+      - name: Install dependencies without lifecycle deadlocks
+        run: bash scripts/ci/retry.sh npm ci --ignore-scripts
+      - name: Verify Theia dependency versions
+        run: npx theia check:theia-version
+      - name: Build browser bundle
+        run: bash scripts/ci/retry.sh npm run build:browser
+      - name: Build and package Linux targets
+        run: bash scripts/ci/retry.sh npm run package:linux:${{ matrix.arch }}
+        env:
+          BIBZCODE_REBUILD_ARCH: ''
+          BIBZCODE_REBUILD_PLATFORM: linux
+          CC: gcc
+          CXX: g++
+          AR: ar
+          npm_config_arch: ${{ matrix.electron_arch }}
+      - name: Validate native module architecture
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          expected=''
+          case '${{ matrix.arch }}' in
+            amd64) expected='x86-64' ;;
+            arm64) expected='ARM aarch64' ;;
+            armv7l) expected='ARM' ;;
+          esac
+          shopt -s nullglob
+          native_files=(electron-app/lib/backend/native/*.node electron-app/lib/prebuilds/*/pty.node)
+          test "${#native_files[@]}" -gt 0
+          file "${native_files[@]}" | tee native-architectures.txt
+          grep -q "$expected" native-architectures.txt
+      - name: Validate Debian and RPM metadata
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p validation
+          deb="$(find dist -maxdepth 1 -type f -name '*.deb' -print -quit)"
+          rpm_file="$(find dist -maxdepth 1 -type f -name '*.rpm' -print -quit)"
+          appimage="$(find dist -maxdepth 1 -type f -name '*.AppImage' -print -quit)"
+          test -n "$deb" && test -n "$rpm_file" && test -n "$appimage"
+          dpkg-deb --info "$deb" | tee "validation/${{ matrix.arch }}-deb-metadata.txt"
+          rpm -qip "$rpm_file" | tee "validation/${{ matrix.arch }}-rpm-metadata.txt"
+          case '${{ matrix.arch }}' in
+            amd64) grep -q 'Architecture: amd64' "validation/${{ matrix.arch }}-deb-metadata.txt" ;;
+            arm64) grep -q 'Architecture: arm64' "validation/${{ matrix.arch }}-deb-metadata.txt" ;;
+            armv7l) grep -Eq 'Architecture: armhf|Architecture: arm' "validation/${{ matrix.arch }}-deb-metadata.txt" ;;
+          esac
+          appimage_type="$(file "$appimage")"
+          printf '%s\n' "$appimage_type"
+          grep -q 'ELF' <<<"$appimage_type"
+          find dist -maxdepth 1 -type f -print0 | xargs -0 sha256sum > "validation/${{ matrix.arch }}-SHA256SUMS"
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v5
+        with:
+          name: bibzcode-theia-linux-${{ matrix.arch }}
+          retention-days: 14
+          path: |
+            ide/theia/dist/*
+            ide/theia/validation/*
+            ide/theia/native-architectures.txt
+          if-no-files-found: error
+      - name: Upload Linux diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: bibzcode-theia-linux-${{ matrix.arch }}-diagnostics
+          retention-days: 7
+          path: |
+            ide/theia/*.log
+            ide/theia/**/npm-debug.log*
+            ide/theia/native-architectures.txt
+          if-no-files-found: ignore
+
+  linux-armv7l:
+    name: Linux armv7l packages (ARMHF emulated)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Build on ARMv7 container
+        uses: uraimo/run-on-arch-action@v3
+        with:
+          arch: armv7
+          distro: bookworm
+          githubToken: ${{ github.token }}
+          setup: mkdir -p "${PWD}/armv7l-artifacts"
+          dockerRunArgs: --volume "${PWD}:/workspace" --volume "${PWD}/armv7l-artifacts:/artifacts"
+          env: |
+            CI: 'true'
+            ELECTRON_BUILDER_CONCURRENCY: '1'
+            CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+            BIBZCODE_RETRY_ATTEMPTS: '3'
+            BIBZCODE_REBUILD_ARCH: ''
+            BIBZCODE_REBUILD_PLATFORM: linux
+            npm_config_arch: arm
+            CC: gcc
+            CXX: g++
+            AR: ar
+            CXXFLAGS: -std=c++20
+          install: |
+            apt-get update -q -y
+            apt-get install -q -y git curl ca-certificates xz-utils rpm build-essential pkg-config python3 libx11-dev libxkbfile-dev libsecret-1-dev file
+          run: |
+            set -Eeuo pipefail
+            node_version=v20.20.2
+            node_dir=/opt/node-$node_version-armv7l
+            if [ ! -x "$node_dir/bin/node" ]; then
+              mkdir -p /opt
+              curl -fsSL "https://nodejs.org/dist/$node_version/node-$node_version-linux-armv7l.tar.xz" -o /tmp/node-armv7l.tar.xz
+              tar -xJf /tmp/node-armv7l.tar.xz -C /opt
+              mv "/opt/node-$node_version-linux-armv7l" "$node_dir"
+            fi
+            export PATH="$node_dir/bin:$PATH"
+            node --version
+            npm --version
+            cd /workspace/ide/theia
+            npm ci --ignore-scripts
+            npx theia check:theia-version
+            npm run package:linux:armv7l
+            mkdir -p /artifacts/validation
+            deb="$(find dist -maxdepth 1 -type f -name '*.deb' -print -quit)"
+            rpm_file="$(find dist -maxdepth 1 -type f -name '*.rpm' -print -quit)"
+            appimage="$(find dist -maxdepth 1 -type f -name '*.AppImage' -print -quit)"
+            test -n "$deb" && test -n "$rpm_file" && test -n "$appimage"
+            dpkg-deb --info "$deb" | tee /artifacts/validation/armv7l-deb-metadata.txt
+            grep -Eq 'Architecture: armhf|Architecture: arm' /artifacts/validation/armv7l-deb-metadata.txt
+            rpm -qip "$rpm_file" | tee /artifacts/validation/armv7l-rpm-metadata.txt
+            appimage_type="$(file "$appimage")"
+            printf '%s\n' "$appimage_type"
+            grep -q ELF <<<"$appimage_type"
+            file electron-app/lib/backend/native/*.node | tee /artifacts/validation/armv7l-native-architectures.txt
+            grep -q 'ARM' /artifacts/validation/armv7l-native-architectures.txt
+            find dist -maxdepth 1 -type f -print0 | xargs -0 sha256sum > /artifacts/validation/armv7l-SHA256SUMS
+            cp -a dist/. /artifacts/
+      - name: Upload ARMv7l artifacts
+        uses: actions/upload-artifact@v5
+        with:
+          name: bibzcode-theia-linux-armv7l
+          retention-days: 14
+          path: armv7l-artifacts/*
+          if-no-files-found: error
+
+  windows:
+    name: Windows x64 packages
+    runs-on: windows-2025
+    env:
+      npm_config_msvs_version: '2026'
+      GYP_MSVS_VERSION: '2026'
+    defaults:
+      run:
+        working-directory: ide/theia
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: ide/theia/package-lock.json
+      - name: Install dependencies without lifecycle deadlocks
+        shell: bash
+        run: bash scripts/ci/retry.sh npm ci --ignore-scripts
+      - name: Verify Theia dependency versions
+        shell: bash
+        run: npx theia check:theia-version
+      - name: Activate MSVC toolchain
+        uses: ilammy/msvc-dev-cmd@v1
+      - name: Build browser bundle
+        shell: bash
+        run: bash scripts/ci/retry.sh npm run build:browser
+      - name: Rebuild Windows native-keymap for Electron
+        shell: bash
+        run: bash scripts/ci/retry.sh npx.cmd electron-rebuild --which-module native-keymap --version 42.3.0 --arch x64 --platform win32 --module-dir . --force --sequential
+        env:
+          npm_config_msvs_version: '2026'
+      - name: Build Windows installer and portable package
+        shell: bash
+        run: bash scripts/ci/retry.sh npm run package:windows
+      - name: Validate Windows artifacts
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          find dist -maxdepth 1 -type f -name '*.exe' -print -quit | grep -q .
+          sha256sum dist/*.exe > SHA256SUMS-windows-x64
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v5
+        with:
+          name: bibzcode-theia-windows-x64
+          retention-days: 14
+          path: |
+            ide/theia/dist/*
+            ide/theia/SHA256SUMS-windows-x64
+          if-no-files-found: error
+
+  macos:
+    name: macOS ${{ matrix.arch }} packages
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-13
+            arch: x64
+          - runner: macos-14
+            arch: arm64
+    defaults:
+      run:
+        working-directory: ide/theia
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: ide/theia/package-lock.json
+      - name: Install dependencies without lifecycle deadlocks
+        run: bash scripts/ci/retry.sh npm ci --ignore-scripts
+      - name: Verify Theia dependency versions
+        run: npx theia check:theia-version
+      - name: Build browser bundle
+        run: bash scripts/ci/retry.sh npm run build:browser
+      - name: Build macOS package
+        run: bash scripts/ci/retry.sh npm run package:mac:${{ matrix.arch }}
+        env:
+          BIBZCODE_REBUILD_ARCH: ''
+          BIBZCODE_REBUILD_PLATFORM: darwin
+      - name: Validate macOS artifacts
+        run: |
+          set -Eeuo pipefail
+          test -n "$(find dist -maxdepth 1 -type f -name '*.dmg' -print -quit)"
+          test -n "$(find dist -maxdepth 1 -type f -name '*.zip' -print -quit)"
+          find dist -maxdepth 1 -type f -print -quit | grep -q .
+          find dist -maxdepth 1 -type f -print0 | xargs -0 shasum -a 256 > "SHA256SUMS-macos-${{ matrix.arch }}"
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v5
+        with:
+          name: bibzcode-theia-macos-${{ matrix.arch }}
+          retention-days: 14
+          path: |
+            ide/theia/dist/*
+            ide/theia/SHA256SUMS-macos-${{ matrix.arch }}
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    if: >-
+      (github.event_name == 'push' &&
+       (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/ide-v'))) ||
+      (github.event_name == 'workflow_dispatch' && inputs.publish_release == true)
+    needs: [linux, linux-armv7l, windows, macos]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download all validated build artifacts
+        uses: actions/download-artifact@v5
+        with:
+          pattern: bibzcode-theia-*
+          path: release-input
+          merge-multiple: false
+      - name: Assemble release assets and canonical checksums
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf release-assets
+          mkdir -p release-assets
+          find release-input -type f \( \
+            -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' -o \
+            -name '*.exe' -o -name '*.dmg' -o -name '*.zip' -o \
+            -name 'SHA256SUMS*' \
+          \) -exec cp -f {} release-assets/ \;
+          test "$(find release-assets -maxdepth 1 -type f | wc -l)" -gt 0
+          (cd release-assets && sha256sum $(find . -maxdepth 1 -type f ! -name 'SHA256SUMS' -printf '%f\n' | sort) > SHA256SUMS)
+          printf '# BibzCode IDE release\n\nCommit: `%s`\n\nAll assets were built and validated by GitHub Actions.\n' "$GITHUB_SHA" > release-assets/RELEASE_NOTES.md
+      - name: Publish release with all validated assets
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('ide-ci-{0}-{1}', github.run_number, github.sha) }}
+          target_commitish: ${{ github.sha }}
+          name: BibzCode IDE ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('CI {0}', github.run_number) }}
+          body_path: release-assets/RELEASE_NOTES.md
+          files: release-assets/*
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          prerelease: ${{ github.ref_type != 'tag' }}
+          make_latest: legacy
