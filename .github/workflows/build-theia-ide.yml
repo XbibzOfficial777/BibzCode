@@ -165,7 +165,7 @@ jobs:
         uses: uraimo/run-on-arch-action@v3
         with:
           arch: armv7
-          distro: bullseye
+          distro: bookworm
           githubToken: ${{ github.token }}
           setup: mkdir -p "${PWD}/armv7l-artifacts"
           dockerRunArgs: --volume "${PWD}:/workspace" --volume "${PWD}/armv7l-artifacts:/artifacts"
@@ -180,6 +180,7 @@ jobs:
             CC: gcc
             CXX: g++
             AR: ar
+            CXXFLAGS: -std=c++20
           install: |
             apt-get update -q -y
             apt-get install -q -y git curl ca-certificates xz-utils rpm build-essential pkg-config python3 libx11-dev libxkbfile-dev libsecret-1-dev file
