@@ -224,6 +224,7 @@ export class AgentService {
       }
     }
     throw new Error('Agent reached the maximum of 12 tool steps.');
+    }
   }
 
   async *streamCompletion(request: AgentCompletionRequest, signal?: AbortSignal): AsyncGenerator<string> {
