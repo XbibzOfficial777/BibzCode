@@ -5,6 +5,13 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const windowsCaShim = resolve(dirname(fileURLToPath(import.meta.url)), '../scripts/ci/windows-ca-certs-shim.cjs');
+const windowsCaShimPlugin = {
+    name: 'bibzcode-windows-ca-certs-shim',
+    setup(build) {
+        build.onResolve({ filter: /^@vscode\/windows-ca-certs$/ }, () => ({ path: windowsCaShim }));
+    },
+};
+nodeOptions.plugins = [windowsCaShimPlugin, ...(nodeOptions.plugins ?? [])];
 nodeOptions.alias = { ...(nodeOptions.alias ?? {}), '@vscode/windows-ca-certs': windowsCaShim };
 
 // Theia 1.74.1's linked source-map plugin can stop the shared esbuild service

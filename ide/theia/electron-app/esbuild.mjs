@@ -6,7 +6,14 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const windowsCaShim = resolve(dirname(fileURLToPath(import.meta.url)), '../scripts/ci/windows-ca-certs-shim.cjs');
+const windowsCaShimPlugin = {
+    name: 'bibzcode-windows-ca-certs-shim',
+    setup(build) {
+        build.onResolve({ filter: /^@vscode\/windows-ca-certs$/ }, () => ({ path: windowsCaShim }));
+    },
+};
 for (const options of [nodeOptions, electronOptions]) {
+    options.plugins = [windowsCaShimPlugin, ...(options.plugins ?? [])];
     options.alias = { ...(options.alias ?? {}), '@vscode/windows-ca-certs': windowsCaShim };
 }
 
