@@ -14,7 +14,8 @@ const command = directElectronRebuild
   : ['theia', 'rebuild:electron', '--cacheRoot', '..'];
 
 console.log(`[native-rebuild] ${directElectronRebuild ? 'direct' : 'theia'} rebuild: npx ${command.join(' ')}`);
-const result = spawnSync('npx', command, {
+const npxCommand = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+const result = spawnSync(npxCommand, command, {
   cwd: resolve(projectRoot, 'electron-app'),
   stdio: 'inherit',
   env: process.env,

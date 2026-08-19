@@ -166,7 +166,7 @@ jobs:
         with:
           arch: none
           distro: none
-          base_image: --platform=linux/armv7 arm32v7/node:20-bookworm-slim
+          base_image: --platform=linux/armv7 arm32v7/node:20-bullseye-slim
           githubToken: ${{ github.token }}
           setup: mkdir -p "${PWD}/armv7l-artifacts"
           dockerRunArgs: --volume "${PWD}:/workspace" --volume "${PWD}/armv7l-artifacts:/artifacts"
