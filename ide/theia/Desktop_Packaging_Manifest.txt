@@ -1,0 +1,27 @@
+BibzCode IDE Desktop Packaging Manifest
+Version: 7.8.0
+Builder: electron-builder 26.15.3
+
+VALID ARTIFACTS
+9f9bfc28f47ea226549df84308d7242581e0f16df95f3d050dac304a8e9a0d10  BibzCode-IDE-7.8.0-linux-amd64.deb
+998f7cca406d70a812ae19ad1160f05be6d90ea4ad53d32caef7b3303d196921  BibzCode-IDE-7.8.0-linux-x86_64.AppImage
+6dc7f99891f7f57b529cd9e613087be2162fceae0d19254abdb18f40f274b8cf  BibzCode-IDE-7.8.0-linux-x86_64.rpm
+d394605c6a87cc7bb938ec0e1573fae0c50379337269b2250427fd2e70e06aed  BibzCode-IDE-7.8.0-portable-x64.exe
+72b473b59ed5bb02a28e480b92f9f6867db8ddfc1c2ceb920e471913b43fe2d1  BibzCode-IDE-7.8.0-mac-x64.zip
+58fa0179f13b8028a81ccb70691bbcc0cbd0f2a99b291f36f42548f4d5f27cd4  BibzCode-IDE-7.8.0-mac-x64.zip.blockmap
+
+STATUS
+- Linux amd64 `.deb`: PASS; `dpkg-deb` metadata validated and native modules are x86-64.
+- Linux arm64 `.deb`: NOT BUILT in sandbox; native ARM64 CI job configured.
+- Linux armv7l/armhf `.deb`: NOT BUILT in sandbox; explicit CI target configured.
+- Linux .rpm: PASS; rpm metadata validated.
+- Linux AppImage: PASS; AppImage version probe passed.
+- Windows portable .exe: PASS; PE32 GUI artifact created.
+- macOS x64 .zip: CREATED; ZIP artifact created from Linux, but macOS runtime/signing not validated here.
+- macOS .dmg: NOT BUILT in Linux; failed at macOS-only `sips`; native macOS CI is configured.
+- Windows NSIS installer: NOT VALIDATED in Linux; Wine runtime failed to launch the generated installer; native Windows CI is configured.
+- `dist/BibzCode-IDE-7.8.0-win-x64.exe` was an incomplete NSIS stub from the failed cross-build and was removed; it must not be distributed.
+- A single universal `.deb` is intentionally not produced because Debian executable packages must match their native architecture.
+
+NATIVE DLL CONTRACT
+Windows DLLs belong under electron-app/native/windows/x64 or electron-app/native/windows/arm64 and are copied to resources/native/windows outside ASAR. A DLL must be built for Windows and the matching architecture; it is a runtime library, not an installer.

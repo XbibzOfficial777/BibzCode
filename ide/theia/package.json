@@ -1,0 +1,39 @@
+{
+  "name": "bibzcode-ide",
+  "version": "7.8.0",
+  "description": "BibzCode IDE with Theia workbench and VS Code extension compatibility.",
+  "homepage": "https://bibzcode.dev",
+  "author": {
+    "name": "BibzCode",
+    "email": "support@bibzcode.dev"
+  },
+  "private": true,
+  "engines": {
+    "node": ">=18",
+    "npm": ">=8"
+  },
+  "scripts": {
+    "build:browser": "npm --prefix browser-app run bundle",
+    "build:electron": "npm --prefix electron-app run bundle",
+    "package:linux": "npm run build:electron && electron-builder --config electron-builder.yml --linux deb rpm AppImage --publish never",
+    "package:linux:amd64": "npm run build:electron && electron-builder --config electron-builder.yml --linux deb --x64 --publish never",
+    "package:linux:arm64": "npm run build:electron && electron-builder --config electron-builder.yml --linux deb --arm64 --publish never",
+    "package:linux:armv7l": "npm run build:electron && electron-builder --config electron-builder.yml --linux deb --armv7l --publish never",
+    "package:windows": "npm run build:electron && electron-builder --config electron-builder.yml --win nsis portable --publish never",
+    "package:windows:portable": "npm run build:electron && electron-builder --config electron-builder.yml --win portable --publish never",
+    "package:windows:installer": "npm run build:electron && electron-builder --config electron-builder.yml --win nsis --publish never",
+    "package:mac": "npm run build:electron && electron-builder --config electron-builder.yml --mac dmg zip --publish never",
+    "prepare": "lerna run prepare",
+    "postinstall": "theia check:theia-version",
+    "start:browser": "npm --prefix browser-app start",
+    "start:electron": "npm --prefix electron-app start",
+    "watch:browser": "lerna run --parallel watch --ignore electron-app",
+    "watch:electron": "lerna run --parallel watch --ignore browser-app"
+  },
+  "devDependencies": {
+    "lerna": "^8.2.4"
+  },
+  "workspaces": [
+    "bibzcode-ide", "browser-app", "electron-app"
+  ]
+}
