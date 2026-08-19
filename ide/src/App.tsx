@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Bot, Boxes, Code2, Files, FolderOpen, GitBranch, Search, Settings, ShieldCheck, Sparkles, TerminalSquare } from 'lucide-react';
-import type { ActivityView, AppInfo, IdeSettings, OpenFile, RuntimeStatus } from '../shared/contracts';
+import { Bot, Boxes, Files, FolderOpen, GitBranch, Search, Settings, ShieldCheck, Sparkles, TerminalSquare } from 'lucide-react';
+import type { ActivityView, AppInfo, IdeSettings, OpenFile } from '../shared/contracts';
 import { AssistantPanel } from './components/AssistantPanel';
 import { AgentPromptModal } from './components/AgentPromptModal';
 import { EditorArea } from './components/EditorArea';
 import { Explorer } from './components/Explorer';
-import { RuntimeSetup } from './components/RuntimeSetup';
 import { SearchView } from './components/SearchView';
 import { SettingsPanel } from './components/SettingsPanel';
 import { SourceControl } from './components/SourceControl';
@@ -27,8 +26,6 @@ export function App() {
   const [assistantVisible, setAssistantVisible] = useState(true);
   const [assistantStart, setAssistantStart] = useState(0);
   const [assistantStop, setAssistantStop] = useState(0);
-  const [runtimeSetup, setRuntimeSetup] = useState(false);
-  const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus | null>(null);
   const [settings, setSettings] = useState<IdeSettings | null>(null);
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [cursor, setCursor] = useState({ line: 1, column: 1 });
@@ -44,7 +41,6 @@ export function App() {
     void window.bibzIDE.workspace.current().then(setWorkspaceRoot);
     void window.bibzIDE.settings.get().then(setSettings);
     void window.bibzIDE.app.info().then(setAppInfo);
-    void window.bibzIDE.runtime.status().then(setRuntimeStatus).catch(() => undefined);
     const off = window.bibzIDE.workspace.onChanged((root) => { setWorkspaceRoot(root); setOpenFiles([]); setActivePath(''); refresh(); });
     return off;
   }, [refresh]);
@@ -104,10 +100,9 @@ export function App() {
     { id: 'view-search', label: 'View: Search', shortcut: 'Ctrl+Shift+F', run: () => setActivity('search') },
     { id: 'view-source-control', label: 'View: Source Control', shortcut: 'Ctrl+Shift+G', run: () => setActivity('source-control') },
     { id: 'focus-terminal', label: 'View: Toggle Terminal', shortcut: 'Ctrl+`', run: () => setTerminalVisible((value) => !value) },
-    { id: 'start-assistant', label: 'BibzCode: Start / Restart Full Assistant', shortcut: 'Ctrl+Shift+B', run: startAssistant },
+    { id: 'start-assistant', label: 'BibzCode: Open Native AI Assistant', shortcut: 'Ctrl+Shift+B', run: startAssistant },
     { id: 'agent-prompt', label: 'BibzCode: Run Agent Prompt', shortcut: 'Ctrl+Shift+I', run: () => setAgentOpen(true) },
     { id: 'stop-assistant', label: 'BibzCode: Stop Assistant', run: () => setAssistantStop((value) => value + 1) },
-    { id: 'runtime-setup', label: 'BibzCode: Managed Runtime Setup…', run: () => setRuntimeSetup(true) },
     { id: 'features', label: 'BibzCode: Show Feature Parity', run: () => setActivity('tools') },
     { id: 'settings', label: 'Preferences: Open Settings', run: () => setActivity('settings') },
     { id: 'check-updates', label: 'Application: Check for Updates…', run: () => void checkUpdates() },
@@ -138,7 +133,7 @@ export function App() {
     if (activity === 'search') return <SearchView root={workspaceRoot} onOpen={(path, line) => void openFile(path, line)} onError={notify} />;
     if (activity === 'source-control') return <SourceControl root={workspaceRoot} refreshToken={refreshToken} onDiff={openVirtual} onError={notify} onRefresh={refresh} />;
     if (activity === 'tools') return <ToolsView onStartAssistant={startAssistant} />;
-    return <SettingsPanel onError={notify} onRuntimeSetup={() => setRuntimeSetup(true)} />;
+    return <SettingsPanel onError={notify} />;
   })();
 
   const filteredCommands = commands.filter((command) => command.label.toLowerCase().includes(paletteQuery.toLowerCase()));
@@ -160,11 +155,10 @@ export function App() {
         <EditorArea files={openFiles} activePath={activePath} settings={settings} targetLine={targetLine} onActivate={(path) => { setActivePath(path); setTargetLine(0); }} onChange={(path, content) => setOpenFiles((files) => files.map((file) => file.relativePath === path ? { ...file, content, dirty: true } : file))} onClose={closeFile} onSave={() => void saveActive()} onCursor={(line, column) => setCursor({ line, column })} />
         <TerminalPanel visible={terminalVisible} onClose={() => setTerminalVisible(false)} onError={notify} />
       </div>
-      <AssistantPanel visible={assistantVisible} root={workspaceRoot} startSignal={assistantStart} stopSignal={assistantStop} onClose={() => setAssistantVisible(false)} onError={notify} onNeedsRuntime={() => setRuntimeSetup(true)} />
+      <AssistantPanel visible={assistantVisible} activeFile={openFiles.find((file) => file.relativePath === activePath)} startSignal={assistantStart} stopSignal={assistantStop} onClose={() => setAssistantVisible(false)} onError={notify} />
     </div>
-    <footer className="statusbar"><button onClick={() => setActivity('source-control')}><GitBranch /> source control</button><span><ShieldCheck /> local security policy</span><span className="status-spacer" /><button onClick={() => setRuntimeSetup(true)} className={`runtime-status state-${runtimeStatus?.state ?? 'checking'}`}><Code2 /> {runtimeStatus?.state === 'ready' ? `Python ${runtimeStatus.pythonVersion}` : 'Runtime setup'}</button><button onClick={() => setTerminalVisible((value) => !value)}><TerminalSquare /> Terminal</button><span>Ln {cursor.line}, Col {cursor.column}</span></footer>
+      <footer className="statusbar"><button onClick={() => setActivity('source-control')}><GitBranch /> source control</button><span><ShieldCheck /> native security policy</span><span className="status-spacer" /><span className="ai-status"><Sparkles /> {settings?.aiProvider ?? 'AI'} · {settings?.aiModel ?? 'Configure provider'}</span><button onClick={() => setTerminalVisible((value) => !value)}><TerminalSquare /> Terminal</button><span>Ln {cursor.line}, Col {cursor.column}</span></footer>
     {paletteOpen && <div className="palette-backdrop" onMouseDown={() => setPaletteOpen(false)}><section className="command-palette" onMouseDown={(event) => event.stopPropagation()}><input autoFocus value={paletteQuery} onChange={(event) => setPaletteQuery(event.target.value)} placeholder="Type a command" /><div>{filteredCommands.map((command) => <button key={command.id} onClick={() => runCommand(command)}><span>{command.label}</span><kbd>{command.shortcut}</kbd></button>)}</div></section></div>}
-    <RuntimeSetup open={runtimeSetup} onClose={() => { setRuntimeSetup(false); void window.bibzIDE.runtime.status().then(setRuntimeStatus); }} onError={notify} />
     <AgentPromptModal open={agentOpen} activeFile={openFiles.find((file) => file.relativePath === activePath)} onClose={() => setAgentOpen(false)} onError={notify} />
     {toast && <div className="toast" role="status">{toast}</div>}
   </div>;

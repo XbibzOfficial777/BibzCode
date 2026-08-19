@@ -9,11 +9,11 @@ import { z } from 'zod';
 import { CHANNELS, type IdeSettings } from '../shared/contracts.js';
 import { GitService } from './git-service.js';
 import { ProcessManager } from './process-manager.js';
-import { RuntimeService } from './runtime.js';
 import { isWithin, sanitizeError } from './security.js';
 import { SettingsStore } from './settings-store.js';
 import { SecretStore } from './secret-store.js';
 import { AgentService } from './agent-service.js';
+import { ToolExecutor } from './tool-executor.js';
 import { cleanAssistantText } from './response-cleaner.js';
 import { WorkspaceService } from './workspace.js';
 
@@ -35,10 +35,11 @@ let window: BrowserWindow | null = null;
 let settings: SettingsStore;
 let secrets: SecretStore;
 let agent: AgentService;
+let tools: ToolExecutor;
 let workspace: WorkspaceService;
 let processes: ProcessManager;
-let runtime: RuntimeService;
 const agentStreams = new Map<string, AbortController>();
+const approvalWaiters = new Map<string, (approved: boolean) => void>();
 const git = new GitService();
 
 const send = (channel: string, payload: unknown): void => {
@@ -72,7 +73,7 @@ function registerIpc(): void {
   safeHandle(CHANNELS.appOpenExternal, async (raw) => {
     const value = z.string().url().max(2048).parse(raw);
     const url = new URL(value);
-    const allowedHosts = new Set(['github.com', 'docs.python.org', 'bibzcode.bibzflow.workers.dev']);
+    const allowedHosts = new Set(['github.com']);
     if (url.protocol !== 'https:' || !allowedHosts.has(url.hostname)) throw new Error('External URL is not on the allowlist');
     await shell.openExternal(url.toString());
   });
@@ -109,9 +110,15 @@ function registerIpc(): void {
       let rawText = '';
       send(CHANNELS.agentStreamEvent, { requestId: input.requestId, type: 'start' });
       try {
-        for await (const delta of agent.streamCompletion(input.request, controller.signal)) {
-          rawText += delta;
-          send(CHANNELS.agentStreamEvent, { requestId: input.requestId, type: 'delta', delta });
+        for await (const event of agent.streamAgent(input.request, controller.signal, (call, risk) => new Promise<boolean>((resolve) => {
+          const key = `${input.requestId}:${call.id}`;
+          approvalWaiters.set(key, resolve);
+          send(CHANNELS.agentStreamEvent, { requestId: input.requestId, type: 'approval_request', callId: call.id, tool: call.name, arguments: call.arguments, risk });
+        }))) {
+          if (event.type === 'delta') { rawText += event.delta; send(CHANNELS.agentStreamEvent, { requestId: input.requestId, type: 'delta', delta: event.delta }); }
+          else if (event.type === 'tool_call') send(CHANNELS.agentStreamEvent, { requestId: input.requestId, type: 'tool_call', callId: event.callId, tool: event.tool, arguments: event.arguments, risk: event.risk });
+          else if (event.type === 'tool_result') send(CHANNELS.agentStreamEvent, { requestId: input.requestId, type: 'tool_result', callId: event.callId, tool: event.tool, result: event.result, risk: event.risk });
+          else if (event.type === 'approval_request') { /* callback above already emitted the request before awaiting the decision */ }
         }
         send(CHANNELS.agentStreamEvent, { requestId: input.requestId, type: 'done', text: cleanAssistantText(rawText) });
       } catch (error) {
@@ -123,7 +130,14 @@ function registerIpc(): void {
   safeHandle(CHANNELS.agentStreamCancel, (raw) => {
     const requestId = z.string().uuid().parse(raw); const controller = agentStreams.get(requestId);
     if (controller) controller.abort();
+    for (const [key, resolve] of approvalWaiters) if (key.startsWith(`${requestId}:`)) { resolve(false); approvalWaiters.delete(key); }
     return { cancelled: Boolean(controller) };
+  });
+  safeHandle(CHANNELS.agentApprove, (raw) => {
+    const input = z.object({ requestId: z.string().uuid(), callId: z.string().min(1).max(256), approved: z.boolean() }).parse(raw);
+    const key = `${input.requestId}:${input.callId}`; const resolve = approvalWaiters.get(key);
+    if (!resolve) return { accepted: false };
+    approvalWaiters.delete(key); resolve(input.approved); return { accepted: true };
   });
   safeHandle(CHANNELS.compressionTest, (raw) => {
     const input = z.object({ text: z.string().max(2_000_000), targetChars: z.number().int().min(2_048).max(4_000_000) }).parse(raw);
@@ -168,21 +182,6 @@ function registerIpc(): void {
     return processes.runTerminal(input.command, workspace.requireRoot(), settings.get().shellPath);
   });
   safeHandle(CHANNELS.terminalStop, (raw) => processes.stop(z.string().uuid().parse(raw)));
-
-  safeHandle(CHANNELS.runtimeStatus, () => runtime.status(settings.get().pythonPath));
-  safeHandle(CHANNELS.runtimeSetup, (raw) => runtime.setup(z.object({ full: z.boolean() }).parse(raw).full, settings.get().pythonPath));
-  safeHandle(CHANNELS.cliStart, async () => {
-    const root = workspace.requireRoot();
-    const status = await runtime.status(settings.get().pythonPath);
-    if (status.state !== 'ready' || !status.python) throw new Error(status.message);
-    const invocation = runtime.cliInvocation(status.python);
-    return processes.startCli(invocation.executable, invocation.args, root, invocation.env);
-  });
-  safeHandle(CHANNELS.cliInput, (raw) => {
-    const input = z.object({ sessionId: z.string().uuid(), data: z.string().max(65_536) }).parse(raw);
-    processes.inputCli(input.sessionId, input.data);
-  });
-  safeHandle(CHANNELS.cliStop, (raw) => processes.stop(z.string().uuid().parse(raw)));
 
   safeHandle(CHANNELS.gitStatus, () => git.status(workspace.requireRoot()));
   safeHandle(CHANNELS.gitDiff, (raw) => {
@@ -229,9 +228,8 @@ function buildMenu(): void {
     {
       label: 'BibzCode', submenu: [
         { label: 'Run Agent Prompt…', accelerator: 'CmdOrCtrl+Shift+I', click: command('agent-prompt') },
-        { label: 'Start / Restart Assistant', accelerator: 'CmdOrCtrl+Shift+B', click: command('start-assistant') },
-        { label: 'Stop Assistant', click: command('stop-assistant') },
-        { label: 'Runtime Setup…', click: command('runtime-setup') },
+        { label: 'Open Native AI Assistant', accelerator: 'CmdOrCtrl+Shift+B', click: command('start-assistant') },
+        { label: 'Stop AI Response', click: command('stop-assistant') },
       ],
     },
     {
@@ -303,7 +301,7 @@ async function createWindow(): Promise<void> {
 
 app.on('second-instance', () => { if (window) { if (window.isMinimized()) window.restore(); window.focus(); } });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-app.on('before-quit', () => { processes?.stopAll(); for (const controller of agentStreams.values()) controller.abort(); });
+app.on('before-quit', () => { processes?.stopAll(); for (const controller of agentStreams.values()) controller.abort(); for (const resolve of approvalWaiters.values()) resolve(false); approvalWaiters.clear(); });
 app.on('activate', () => { if (!window) void createWindow(); });
 
 async function bootstrap(): Promise<void> {
@@ -331,7 +329,6 @@ async function bootstrap(): Promise<void> {
   const loadedSettings = await settings.load();
   secrets = new SecretStore(app.getPath('userData'));
   await secrets.load();
-  agent = new AgentService(secrets, () => settings.get());
   workspace = new WorkspaceService();
   let initialWorkspace = process.env.BIBZCODE_IDE_TEST_WORKSPACE || loadedSettings.lastWorkspace;
   if (initialWorkspace) {
@@ -341,7 +338,8 @@ async function bootstrap(): Promise<void> {
   }
   processes = new ProcessManager((channel, payload) => send(channel, payload));
   if (initialWorkspace) processes.setWorkspace(initialWorkspace);
-  runtime = new RuntimeService(process.resourcesPath, app.getPath('userData'), app.isPackaged, (channel, payload) => send(channel, payload));
+  tools = new ToolExecutor(workspace, processes, git, (text, targetChars) => agent.compressContext(text, targetChars));
+  agent = new AgentService(secrets, () => settings.get(), tools);
   registerIpc();
   buildMenu();
   await createWindow();

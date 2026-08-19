@@ -33,19 +33,6 @@ const api = {
     onData: (listener: (event: ProcessEvent) => void) => on(CHANNELS.terminalData, listener),
     onExit: (listener: (event: ExitEvent) => void) => on(CHANNELS.terminalExit, listener),
   },
-  cli: {
-    start: () => ipcRenderer.invoke(CHANNELS.cliStart),
-    input: (sessionId: string, data: string) => ipcRenderer.invoke(CHANNELS.cliInput, { sessionId, data }),
-    stop: (sessionId: string) => ipcRenderer.invoke(CHANNELS.cliStop, sessionId),
-    onData: (listener: (event: ProcessEvent) => void) => on(CHANNELS.cliData, listener),
-    onExit: (listener: (event: ExitEvent) => void) => on(CHANNELS.cliExit, listener),
-  },
-  runtime: {
-    status: () => ipcRenderer.invoke(CHANNELS.runtimeStatus),
-    setup: (full: boolean) => ipcRenderer.invoke(CHANNELS.runtimeSetup, { full }),
-    onData: (listener: (event: ProcessEvent) => void) => on(CHANNELS.runtimeData, listener),
-    onExit: (listener: (event: ExitEvent) => void) => on(CHANNELS.runtimeExit, listener),
-  },
   git: {
     status: () => ipcRenderer.invoke(CHANNELS.gitStatus),
     diff: (relativePath = '', staged = false) => ipcRenderer.invoke(CHANNELS.gitDiff, { relativePath, staged }),
@@ -69,6 +56,7 @@ const api = {
     streamStart: (requestId: string, prompt: string, systemPrompt?: string) => ipcRenderer.invoke(CHANNELS.agentStreamStart, { requestId, request: { prompt, systemPrompt } }),
     onStream: (listener: (event: AgentStreamEvent) => void) => on(CHANNELS.agentStreamEvent, listener),
     streamCancel: (requestId: string) => ipcRenderer.invoke(CHANNELS.agentStreamCancel, requestId),
+    approve: (requestId: string, callId: string, approved: boolean) => ipcRenderer.invoke(CHANNELS.agentApprove, { requestId, callId, approved }),
     compress: (text: string, targetChars: number) => ipcRenderer.invoke(CHANNELS.compressionTest, { text, targetChars }),
   },
   menu: {

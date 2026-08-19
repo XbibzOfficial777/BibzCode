@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Check, KeyRound, RefreshCw, Server, ShieldCheck, Sparkles, TestTube2 } from 'lucide-react';
-import type { AiProvider, IdeSettings, RuntimeStatus } from '../../shared/contracts';
+import type { AiProvider, IdeSettings } from '../../shared/contracts';
 import { PROVIDER_PRESETS, providerPreset } from '../../shared/provider-catalog';
 import { friendlyError } from '../lib';
 
-export function SettingsPanel({ onError, onRuntimeSetup }: { onError: (message: string) => void; onRuntimeSetup: () => void }) {
+export function SettingsPanel({ onError }: { onError: (message: string) => void }) {
   const [settings, setSettings] = useState<IdeSettings | null>(null);
-  const [runtime, setRuntime] = useState<RuntimeStatus | null>(null);
   const [apiKey, setApiKey] = useState('');
   const [secretConfigured, setSecretConfigured] = useState(false);
   const [secretDirty, setSecretDirty] = useState(false);
@@ -18,7 +17,6 @@ export function SettingsPanel({ onError, onRuntimeSetup }: { onError: (message: 
 
   const load = useCallback(() => {
     void window.bibzIDE.settings.get().then(setSettings).catch((error) => onError(friendlyError(error)));
-    void window.bibzIDE.runtime.status().then(setRuntime).catch((error) => onError(friendlyError(error)));
     void window.bibzIDE.secrets.status().then((status) => setSecretConfigured(status.configured)).catch((error) => onError(friendlyError(error)));
   }, [onError]);
   useEffect(() => { load(); }, [load]);
@@ -80,8 +78,7 @@ export function SettingsPanel({ onError, onRuntimeSetup }: { onError: (message: 
       <button className="secondary-button" onClick={() => void testCompression()} disabled={!compressionInput || Boolean(busy)}><TestTube2 /> {busy === 'compress' ? 'Compressing…' : 'Run compression test'}</button>
       {compressionReport && <p className="inline-status">{compressionReport}</p>}
     </div>
-    <div className="settings-section"><div className="section-title"><KeyRound /> Editor and native runtime</div>
-      <label>Python executable<input value={settings.pythonPath} onChange={(e) => update('pythonPath', e.target.value)} placeholder="Auto-detect" /></label>
+    <div className="settings-section"><div className="section-title"><KeyRound /> Editor and application</div>
       <label>Shell executable<input value={settings.shellPath} onChange={(e) => update('shellPath', e.target.value)} placeholder="System default" /></label>
       <label>Editor font size<input type="number" min={10} max={32} value={settings.editorFontSize} onChange={(e) => update('editorFontSize', Number(e.target.value))} /></label>
       <label>Word wrap<select value={settings.wordWrap} onChange={(e) => update('wordWrap', e.target.value as 'on' | 'off')}><option value="off">Off</option><option value="on">On</option></select></label>
@@ -89,7 +86,7 @@ export function SettingsPanel({ onError, onRuntimeSetup }: { onError: (message: 
       <label className="check-label"><input type="checkbox" checked={settings.autoUpdate} onChange={(e) => update('autoUpdate', e.target.checked)} /> Check for updates</label>
       <label className="check-label"><input type="checkbox" checked={settings.confirmBeforeDelete} onChange={(e) => update('confirmBeforeDelete', e.target.checked)} /> Confirm before trash</label>
       <button className="primary-button" onClick={() => void save()} disabled={Boolean(busy)}><Check /> {busy === 'save' ? 'Saving…' : 'Save settings'}</button>
-      <div className={`runtime-card state-${runtime?.state ?? 'checking'}`}><strong>BibzCode runtime</strong><span>{runtime?.message ?? 'Checking…'}</span><code>{runtime?.pythonVersion ? `Python ${runtime.pythonVersion}` : ''}</code><button onClick={onRuntimeSetup}>Managed setup…</button></div>
+      <div className="secure-note"><ShieldCheck /> The IDE runs natively with Electron and the configured provider; Python is not required for AI features.</div>
     </div>
   </section>;
 }

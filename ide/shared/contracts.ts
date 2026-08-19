@@ -39,22 +39,12 @@ export interface GitFileStatus {
   relativePath: string;
 }
 
-export interface RuntimeStatus {
-  state: 'ready' | 'missing-python' | 'not-configured' | 'checking' | 'error';
-  python?: string;
-  pythonVersion?: string;
-  managed: boolean;
-  cliRoot: string;
-  message: string;
-}
-
 export type IdeTheme = 'bibz-dark' | 'bibz-light' | 'high-contrast';
 export type AiProvider = 'openai' | 'anthropic' | 'google' | 'deepseek' | 'openrouter' | 'ollama' | 'groq' | 'together' | 'huggingface' | 'mistral' | 'fireworks' | 'cerebras' | 'xai' | 'perplexity' | 'moonshot' | 'qwen' | 'siliconflow' | 'nvidia' | 'cohere' | 'sambanova' | 'novita' | 'hyperbolic' | 'deepinfra' | 'ai21' | 'minimax' | 'zhipu' | 'modelscope' | 'friendli' | 'replicate' | 'agnes' | 'lmstudio' | 'vllm' | 'litellm' | 'custom';
 export type ThinkingMode = 'off' | 'fast' | 'balanced' | 'deep' | 'adaptive';
 export type CompressionMode = 'off' | 'balanced' | 'ultra';
 
 export interface IdeSettings {
-  pythonPath: string;
   shellPath: string;
   lastWorkspace: string;
   autoUpdate: boolean;
@@ -113,10 +103,15 @@ export interface AgentCompletionRequest {
 
 export interface AgentStreamEvent {
   requestId: string;
-  type: 'start' | 'delta' | 'done' | 'error';
+  type: 'start' | 'delta' | 'tool_call' | 'tool_result' | 'approval_request' | 'done' | 'error';
   delta?: string;
   text?: string;
   message?: string;
+  callId?: string;
+  tool?: string;
+  arguments?: Record<string, unknown>;
+  result?: string;
+  risk?: 'read' | 'write' | 'terminal' | 'git';
 }
 
 export const CHANNELS = {
@@ -136,15 +131,6 @@ export const CHANNELS = {
   terminalStop: 'terminal:stop',
   terminalData: 'terminal:data',
   terminalExit: 'terminal:exit',
-  cliStart: 'cli:start',
-  cliInput: 'cli:input',
-  cliStop: 'cli:stop',
-  cliData: 'cli:data',
-  cliExit: 'cli:exit',
-  runtimeStatus: 'runtime:status',
-  runtimeSetup: 'runtime:setup',
-  runtimeData: 'runtime:data',
-  runtimeExit: 'runtime:exit',
   gitStatus: 'git:status',
   gitDiff: 'git:diff',
   gitStage: 'git:stage',
@@ -161,6 +147,7 @@ export const CHANNELS = {
   agentStreamStart: 'agent:stream-start',
   agentStreamEvent: 'agent:stream-event',
   agentStreamCancel: 'agent:stream-cancel',
+  agentApprove: 'agent:approve',
   compressionTest: 'agent:compression-test',
   workspaceChanged: 'workspace:changed',
   menuCommand: 'menu:command',

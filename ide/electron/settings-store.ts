@@ -4,7 +4,7 @@ import type { IdeSettings } from '../shared/contracts.js';
 import { isAiProvider, providerPreset } from '../shared/provider-catalog.js';
 
 const DEFAULTS: IdeSettings = {
-  pythonPath: '', shellPath: '', lastWorkspace: '', autoUpdate: true, confirmBeforeDelete: true,
+  shellPath: '', lastWorkspace: '', autoUpdate: true, confirmBeforeDelete: true,
   theme: 'bibz-dark', editorFontSize: 14, wordWrap: 'off',
   aiProvider: 'openai', aiBaseUrl: providerPreset('openai').baseUrl, aiModel: providerPreset('openai').defaultModel,
   thinkingEnabled: true, thinkingMode: 'adaptive', thinkingBudget: 8192,
@@ -37,7 +37,6 @@ export class SettingsStore {
     const aiProvider = isAiProvider(value.aiProvider) ? value.aiProvider : 'openai';
     const preset = providerPreset(aiProvider);
     return {
-      pythonPath: typeof value.pythonPath === 'string' ? value.pythonPath.slice(0, 4096) : '',
       shellPath: typeof value.shellPath === 'string' ? value.shellPath.slice(0, 4096) : '',
       lastWorkspace: typeof value.lastWorkspace === 'string' ? value.lastWorkspace.slice(0, 4096) : '',
       autoUpdate: Boolean(value.autoUpdate), confirmBeforeDelete: Boolean(value.confirmBeforeDelete),
