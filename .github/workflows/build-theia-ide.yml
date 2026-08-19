@@ -57,17 +57,25 @@ jobs:
         working-directory: ide/theia
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
           cache-dependency-path: ide/theia/package-lock.json
-      - name: Install Linux packaging tools
+      - name: Install Linux packaging and native build tools
+        shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install -y rpm
+          set -Eeuo pipefail
+          if [[ '${{ matrix.arch }}' == 'armv7l' ]]; then
+            sudo dpkg --add-architecture armhf
+            sudo apt-get update
+            sudo apt-get install -y rpm build-essential pkg-config python3 g++-arm-linux-gnueabihf libx11-dev:armhf libxkbfile-dev:armhf libsecret-1-dev:armhf
+          else
+            sudo apt-get update
+            sudo apt-get install -y rpm build-essential pkg-config python3 libx11-dev libxkbfile-dev libsecret-1-dev
+          fi
       - name: Install dependencies without lifecycle deadlocks
         run: bash scripts/ci/retry.sh npm ci --ignore-scripts
       - name: Verify Theia dependency versions
@@ -79,6 +87,9 @@ jobs:
         env:
           BIBZCODE_REBUILD_ARCH: ${{ matrix.electron_arch == 'arm' && 'arm' || '' }}
           BIBZCODE_REBUILD_PLATFORM: ${{ matrix.cross_platform || 'linux' }}
+          CC: ${{ matrix.arch == 'armv7l' && 'arm-linux-gnueabihf-gcc' || '' }}
+          CXX: ${{ matrix.arch == 'armv7l' && 'arm-linux-gnueabihf-g++' || '' }}
+          npm_config_arch: ${{ matrix.electron_arch }}
       - name: Validate native module architecture
         shell: bash
         run: |
@@ -113,7 +124,7 @@ jobs:
           file "$appimage" | grep -q 'ELF'
           sha256sum dist/* > "validation/${{ matrix.arch }}-SHA256SUMS"
       - name: Upload Linux artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: bibzcode-theia-linux-${{ matrix.arch }}
           retention-days: 14
@@ -124,7 +135,7 @@ jobs:
           if-no-files-found: error
       - name: Upload Linux diagnostics on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: bibzcode-theia-linux-${{ matrix.arch }}-diagnostics
           retention-days: 7
@@ -142,9 +153,9 @@ jobs:
         working-directory: ide/theia
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -155,6 +166,9 @@ jobs:
       - name: Verify Theia dependency versions
         shell: bash
         run: npx theia check:theia-version
+      - name: Restore Windows CA native helper
+        shell: bash
+        run: bash scripts/ci/retry.sh npm rebuild @vscode/windows-ca-certs --foreground-scripts
       - name: Build browser bundle
         shell: bash
         run: bash scripts/ci/retry.sh npm run build:browser
@@ -168,7 +182,7 @@ jobs:
           find dist -maxdepth 1 -type f -name '*.exe' -print -quit | grep -q .
           sha256sum dist/*.exe > SHA256SUMS-windows-x64
       - name: Upload Windows artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: bibzcode-theia-windows-x64
           retention-days: 14
@@ -193,9 +207,9 @@ jobs:
         working-directory: ide/theia
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -216,9 +230,10 @@ jobs:
           set -Eeuo pipefail
           test -n "$(find dist -maxdepth 1 -type f -name '*.dmg' -print -quit)"
           test -n "$(find dist -maxdepth 1 -type f -name '*.zip' -print -quit)"
-          shasum -a 256 dist/* > "SHA256SUMS-macos-${{ matrix.arch }}"
+          find dist -maxdepth 1 -type f -print -quit | grep -q .
+          find dist -maxdepth 1 -type f -print0 | xargs -0 shasum -a 256 > "SHA256SUMS-macos-${{ matrix.arch }}"
       - name: Upload macOS artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: bibzcode-theia-macos-${{ matrix.arch }}
           retention-days: 14
@@ -239,7 +254,7 @@ jobs:
       contents: write
     steps:
       - name: Download all validated build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           pattern: bibzcode-theia-*
           path: release-input
