@@ -39,7 +39,7 @@ export function Explorer({ root, refreshToken, onOpen, onError, onRefresh }: Exp
     if (!root) { setEntries([]); return; }
     void window.bibzIDE.workspace.list('').then(setEntries).catch((error) => onError(friendlyError(error)));
   }, [onError, root]);
-  useEffect(() => { load(); }, [load, refreshToken]);
+  useEffect(() => { const timer = window.setTimeout(load, 0); return () => window.clearTimeout(timer); }, [load, refreshToken]);
 
   const openCreate = (kind: CreateKind) => { if (!root) { onError('Open a workspace folder before creating files.'); return; } setCreateKind(kind); setCreateName(''); };
   const closeCreate = () => { if (!creating) { setCreateKind(null); setCreateName(''); } };

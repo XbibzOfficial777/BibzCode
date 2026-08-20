@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -15,11 +15,6 @@ const MAX_SEARCH_RESULTS = 40;
 interface OpenVsxItem { namespace?: string; name?: string; version?: string; displayName?: string; description?: string; files?: { download?: string; icon?: string; readme?: string }; engines?: { vscode?: string }; categories?: string[]; downloadCount?: number; averageRating?: number }
 interface MarketplaceExtension { extensionId?: string; extensionName?: string; displayName?: string; publisher?: { publisherName?: string }; versions?: Array<{ version?: string; properties?: Array<{ key?: string; value?: string }>; assetUri?: string }>; shortDescription?: string; categories?: string[]; statistics?: Array<{ statisticName?: string; value?: number }>; publisherDisplayName?: string }
 
-function parseId(id: string): { publisher: string; name: string } {
-  const parts = id.trim().split('.');
-  if (parts.length < 2 || parts.some((part) => !/^[A-Za-z0-9_-]+$/.test(part))) throw new Error('Extension ID must use publisher.extension format');
-  return { publisher: parts.shift()!, name: parts.join('.') };
-}
 function versionTuple(value: string): [number, number, number] {
   const match = value.match(/(\d+)\.(\d+)(?:\.(\d+))?/); return [Number(match?.[1] ?? 0), Number(match?.[2] ?? 0), Number(match?.[3] ?? 0)];
 }
@@ -71,7 +66,7 @@ export class ExtensionService {
     return this.decorate({ id: extensionId(publisher, name), publisher, name, displayName: safeText(item.displayName || name, 200), version, description: safeText(item.shortDescription), source: 'vscode-marketplace', downloadUrl: `${base}/Microsoft.VisualStudio.Services.VSIXPackage`, enginesVscode: safeText(enginesVscode, 100), categories: Array.isArray(item.categories) ? item.categories.slice(0, 12).map((value) => safeText(value, 80)) : [], downloadCount: installs, ...compatibility });
   }
   async search(query: string, registry: ExtensionRegistry): Promise<ExtensionGalleryItem[]> {
-    const needle = query.trim().slice(0, 200); let items: ExtensionGalleryItem[] = [];
+    const needle = query.trim().slice(0, 200); let items: ExtensionGalleryItem[];
     if (registry === 'open-vsx') {
       const url = `${OPEN_VSX}/api/-/search?query=${encodeURIComponent(needle)}&size=${MAX_SEARCH_RESULTS}`;
       const response = await fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(15_000) }); if (!response.ok) throw new Error(`Open VSX search failed (${response.status})`);
@@ -89,7 +84,7 @@ export class ExtensionService {
     const args = process.platform === 'win32' ? ['-xOf', archive, 'extension/package.json'] : ['-p', archive, 'extension/package.json'];
     const result = await execFileAsync(command, args, { maxBuffer: 2 * 1024 * 1024, windowsHide: true }).catch((error) => { throw new Error(`Invalid VSIX archive: ${error instanceof Error ? error.message : String(error)}`); });
     try { const manifest = JSON.parse(result.stdout) as Record<string, unknown>; if (!manifest.name || !manifest.publisher || !manifest.version || !manifest.engines || typeof manifest.engines !== 'object') throw new Error('VSIX manifest is missing name, publisher, version, or engines.vscode'); return manifest; }
-    catch (error) { throw new Error(`Invalid VS Code extension manifest: ${error instanceof Error ? error.message : String(error)}`); }
+    catch (error) { throw new Error(`Invalid VS Code extension manifest: ${error instanceof Error ? error.message : String(error)}`, { cause: error }); }
   }
   private async validateArchiveEntries(archive: string): Promise<void> {
     const command = process.platform === 'win32' ? 'tar' : 'unzip';

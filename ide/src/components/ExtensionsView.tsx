@@ -26,7 +26,7 @@ export function ExtensionsView({ onError }: { onError: (message: string) => void
     catch (error) { onError(friendlyError(error)); }
     finally { setLoading(false); }
   }, [mode, onError, query, registry]);
-  useEffect(() => { void loadInstalled(); }, [loadInstalled]);
+  useEffect(() => { const timer = window.setTimeout(() => void loadInstalled(), 0); return () => window.clearTimeout(timer); }, [loadInstalled]);
   useEffect(() => { const timer = window.setTimeout(() => void search(), 350); return () => window.clearTimeout(timer); }, [search]);
 
   const installedMap = useMemo(() => new Map(installed.map((item) => [item.id, item])), [installed]);
