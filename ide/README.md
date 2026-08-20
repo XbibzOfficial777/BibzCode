@@ -32,15 +32,16 @@ Native capabilities include:
 - live model discovery, thinking modes and budgets, and deterministic ultra context compression;
 - real-time streaming Agent Prompt and Assistant responses with cancellation;
 - Monaco Editor language workers, themes, minimap, tabs, search, diff, terminal, Git, and workspace operations;
-- VS Code-compatible extension foundation under the native Electron security boundary;
+- VS Code-compatible Extensions view with Open VSX/VS Code Marketplace search, VSIX installation, compatibility checks, enable/disable, and uninstall lifecycle under the native Electron security boundary;
+- live theme, editor, provider, thinking, compression, and secure API-key settings without closing the IDE;
 - CSP, context isolation, sandbox, path restrictions, denied remote navigation, and validated IPC.
 
-The original BibzCode CLI remains a separate repository capability. It is not launched by the IDE and is not required for startup, AI responses, editor use, or packaging.
+The original BibzCode CLI remains a separate repository capability. It is not launched by the IDE and is not required for startup, AI responses, editor use, or packaging. Extensions are installed and persisted natively; extensions that require proprietary/proposed VS Code APIs or native hosts are shown with compatibility warnings until the controlled extension host supports them.
 
 ## IDE capabilities
 
 - Offline code editing and language support—no editor code is fetched from a CDN.
-- Lazy workspace explorer with create, rename, atomic save, and system-trash deletion.
+- Lazy workspace explorer with native create-file/create-folder dialog, rename, atomic save, and system-trash deletion.
 - Workspace search with binary, size, symlink, and generated-directory boundaries.
 - Integrated command terminal restricted to the selected workspace.
 - Git status, diff, stage, unstage, and commit with repository hooks preserved.

@@ -4,6 +4,8 @@ import type {
   FileEntry,
   GitFileStatus,
   IdeSettings,
+  ExtensionGalleryItem,
+  InstalledExtension,
   ProcessEvent,
   SearchMatch,
 } from '../shared/contracts';
@@ -46,6 +48,14 @@ declare global {
       settings: {
         get(): Promise<IdeSettings>;
         set(patch: Partial<IdeSettings>): Promise<IdeSettings>;
+      };
+      extensions: {
+        search(query: string, registry: 'open-vsx' | 'vscode-marketplace'): Promise<ExtensionGalleryItem[]>;
+        installed(): Promise<InstalledExtension[]>;
+        install(item: ExtensionGalleryItem): Promise<InstalledExtension>;
+        installVsix(): Promise<InstalledExtension | null>;
+        uninstall(id: string): Promise<void>;
+        setEnabled(id: string, enabled: boolean): Promise<InstalledExtension>;
       };
       secrets: {
         status(): Promise<{ configured: boolean }>;

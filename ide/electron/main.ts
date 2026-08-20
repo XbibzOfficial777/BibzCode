@@ -16,6 +16,7 @@ import { AgentService } from './agent-service.js';
 import { ToolExecutor } from './tool-executor.js';
 import { cleanAssistantText } from './response-cleaner.js';
 import { WorkspaceService } from './workspace.js';
+import { ExtensionService } from './extension-service.js';
 
 const { autoUpdater } = updater;
 
@@ -38,6 +39,7 @@ let agent: AgentService;
 let tools: ToolExecutor;
 let workspace: WorkspaceService;
 let processes: ProcessManager;
+let extensions: ExtensionService;
 const agentStreams = new Map<string, AbortController>();
 const approvalWaiters = new Map<string, (approved: boolean) => void>();
 const git = new GitService();
@@ -73,7 +75,7 @@ function registerIpc(): void {
   safeHandle(CHANNELS.appOpenExternal, async (raw) => {
     const value = z.string().url().max(2048).parse(raw);
     const url = new URL(value);
-    const allowedHosts = new Set(['github.com']);
+    const allowedHosts = new Set(['github.com', 'open-vsx.org', 'marketplace.visualstudio.com']);
     if (url.protocol !== 'https:' || !allowedHosts.has(url.hostname)) throw new Error('External URL is not on the allowlist');
     await shell.openExternal(url.toString());
   });
@@ -86,6 +88,19 @@ function registerIpc(): void {
   });
 
   safeHandle(CHANNELS.settingsGet, () => settings.get());
+  safeHandle(CHANNELS.extensionSearch, async (raw) => {
+    const input = z.object({ query: z.string().max(200).default(''), registry: z.enum(['open-vsx', 'vscode-marketplace']) }).parse(raw ?? {});
+    return extensions.search(input.query, input.registry);
+  });
+  safeHandle(CHANNELS.extensionInstalled, () => extensions.installedList());
+  safeHandle(CHANNELS.extensionInstall, (raw) => extensions.install(z.object({ id: z.string().min(3).max(256), publisher: z.string().min(1).max(128), name: z.string().min(1).max(128), displayName: z.string().max(256), version: z.string().max(64), description: z.string().max(5000), source: z.enum(['open-vsx', 'vscode-marketplace']), downloadUrl: z.string().url().max(4096), iconUrl: z.string().url().max(4096).optional(), readmeUrl: z.string().url().max(4096).optional(), enginesVscode: z.string().max(100).optional(), categories: z.array(z.string().max(80)).max(12), downloadCount: z.number().finite().optional(), rating: z.number().finite().optional(), compatible: z.boolean(), compatibilityMessage: z.string().max(500).optional() }).parse(raw)));
+  safeHandle(CHANNELS.extensionInstallVsix, async () => {
+    const selected = await dialog.showOpenDialog(window!, { title: 'Install VSIX Extension', properties: ['openFile'], filters: [{ name: 'VS Code Extension', extensions: ['vsix'] }] });
+    if (selected.canceled || !selected.filePaths[0]) return null;
+    return extensions.installVsix(path.resolve(selected.filePaths[0]));
+  });
+  safeHandle(CHANNELS.extensionUninstall, (raw) => extensions.uninstall(z.string().min(3).max(256).parse(raw)));
+  safeHandle(CHANNELS.extensionSetEnabled, (raw) => { const input = z.object({ id: z.string().min(3).max(256), enabled: z.boolean() }).parse(raw); return extensions.setEnabled(input.id, input.enabled); });
   safeHandle(CHANNELS.settingsSet, (raw) => settings.set(z.record(z.string(), z.unknown()).parse(raw) as Partial<IdeSettings>));
   safeHandle(CHANNELS.secretStatus, () => ({ configured: secrets.has('ai-api-key') }));
   safeHandle(CHANNELS.secretSet, async (raw) => {
@@ -329,6 +344,8 @@ async function bootstrap(): Promise<void> {
   const loadedSettings = await settings.load();
   secrets = new SecretStore(app.getPath('userData'));
   await secrets.load();
+  extensions = new ExtensionService(app.getPath('userData'));
+  await extensions.load();
   workspace = new WorkspaceService();
   let initialWorkspace = process.env.BIBZCODE_IDE_TEST_WORKSPACE || loadedSettings.lastWorkspace;
   if (initialWorkspace) {

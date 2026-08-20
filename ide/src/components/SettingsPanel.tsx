@@ -4,7 +4,7 @@ import type { AiProvider, IdeSettings } from '../../shared/contracts';
 import { PROVIDER_PRESETS, providerPreset } from '../../shared/provider-catalog';
 import { friendlyError } from '../lib';
 
-export function SettingsPanel({ onError }: { onError: (message: string) => void }) {
+export function SettingsPanel({ onError, onSettingsChange }: { onError: (message: string) => void; onSettingsChange: (settings: IdeSettings) => void }) {
   const [settings, setSettings] = useState<IdeSettings | null>(null);
   const [apiKey, setApiKey] = useState('');
   const [secretConfigured, setSecretConfigured] = useState(false);
@@ -20,9 +20,19 @@ export function SettingsPanel({ onError }: { onError: (message: string) => void 
     void window.bibzIDE.secrets.status().then((status) => setSecretConfigured(status.configured)).catch((error) => onError(friendlyError(error)));
   }, [onError]);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    if (!secretDirty) return undefined;
+    const timer = window.setTimeout(() => {
+      void (apiKey.trim() ? window.bibzIDE.secrets.set(apiKey) : window.bibzIDE.secrets.clear())
+        .then((result) => { setSecretConfigured(result.configured); setSecretDirty(false); })
+        .catch((error) => onError(friendlyError(error)));
+    }, 600);
+    return () => window.clearTimeout(timer);
+  }, [apiKey, onError, secretDirty]);
   if (!settings) return <section className="side-view"><div className="side-heading">SETTINGS</div><p className="empty-copy">Loading…</p></section>;
 
-  const update = <K extends keyof IdeSettings>(key: K, value: IdeSettings[K]) => setSettings({ ...settings, [key]: value });
+  const apply = (next: IdeSettings) => { setSettings(next); onSettingsChange(next); void window.bibzIDE.settings.set(next).catch((error) => onError(friendlyError(error))); };
+  const update = <K extends keyof IdeSettings>(key: K, value: IdeSettings[K]) => apply({ ...settings, [key]: value });
   const persistSecret = async () => {
     if (!secretDirty) return;
     const result = apiKey.trim() ? await window.bibzIDE.secrets.set(apiKey) : await window.bibzIDE.secrets.clear();
@@ -53,7 +63,7 @@ export function SettingsPanel({ onError }: { onError: (message: string) => void 
     catch (error) { setCompressionReport(`Compression failed — ${friendlyError(error)}`); }
     finally { setBusy(''); }
   };
-  const changeProvider = (provider: AiProvider) => { const preset = providerPreset(provider); setSettings({ ...settings, aiProvider: provider, aiBaseUrl: provider === 'custom' ? settings.aiBaseUrl : preset.baseUrl, aiModel: provider === 'custom' ? settings.aiModel : preset.defaultModel }); };
+  const changeProvider = (provider: AiProvider) => { const preset = providerPreset(provider); apply({ ...settings, aiProvider: provider, aiBaseUrl: provider === 'custom' ? settings.aiBaseUrl : preset.baseUrl, aiModel: provider === 'custom' ? settings.aiModel : preset.defaultModel }); };
   const knownModels = [...new Set([...providerPreset(settings.aiProvider).models, ...models])];
 
   return <section className="side-view settings-view">
@@ -82,7 +92,7 @@ export function SettingsPanel({ onError }: { onError: (message: string) => void 
       <label>Shell executable<input value={settings.shellPath} onChange={(e) => update('shellPath', e.target.value)} placeholder="System default" /></label>
       <label>Editor font size<input type="number" min={10} max={32} value={settings.editorFontSize} onChange={(e) => update('editorFontSize', Number(e.target.value))} /></label>
       <label>Word wrap<select value={settings.wordWrap} onChange={(e) => update('wordWrap', e.target.value as 'on' | 'off')}><option value="off">Off</option><option value="on">On</option></select></label>
-      <label>Theme<select value={settings.theme} onChange={(e) => update('theme', e.target.value as IdeSettings['theme'])}><option value="bibz-dark">Bibz Dark</option><option value="bibz-light">Bibz Light</option><option value="high-contrast">High Contrast</option></select></label>
+      <label>Theme<select value={settings.theme} onChange={(e) => update('theme', e.target.value as IdeSettings['theme'])}><option value="bibz-dark">Bibz Dark</option><option value="bibz-light">Bibz Light</option><option value="high-contrast">High Contrast</option><option value="system">System</option></select></label>
       <label className="check-label"><input type="checkbox" checked={settings.autoUpdate} onChange={(e) => update('autoUpdate', e.target.checked)} /> Check for updates</label>
       <label className="check-label"><input type="checkbox" checked={settings.confirmBeforeDelete} onChange={(e) => update('confirmBeforeDelete', e.target.checked)} /> Confirm before trash</label>
       <button className="primary-button" onClick={() => void save()} disabled={Boolean(busy)}><Check /> {busy === 'save' ? 'Saving…' : 'Save settings'}</button>

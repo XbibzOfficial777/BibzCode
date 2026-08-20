@@ -76,6 +76,14 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .tree-action { opacity: 0; width: 22px; height: 22px; }
 .tree-row:hover .tree-action { opacity: 1; }
 .empty-copy { padding: 16px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.create-backdrop { position: fixed; inset: 0; z-index: 120; display: grid; place-items: center; background: rgba(0, 0, 0, .58); }
+.create-dialog { width: min(430px, calc(100vw - 32px)); display: grid; gap: 14px; padding: 16px; border: 1px solid var(--border-bright); border-radius: 8px; background: var(--bg-raised); box-shadow: 0 18px 60px rgba(0,0,0,.45); }
+.create-dialog header, .create-dialog footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.create-dialog header strong { font-size: 13px; }
+.create-dialog label { display: grid; gap: 6px; color: var(--muted); font-size: 11px; }
+.create-dialog input { width: 100%; height: 32px; padding: 0 9px; border: 1px solid var(--border-bright); border-radius: 5px; outline: none; background: var(--bg-soft); color: var(--text); font: 12px 'Cascadia Mono', monospace; }
+.create-dialog input:focus { border-color: #c7c7c7; box-shadow: 0 0 0 2px rgba(255,255,255,.1); }
+.create-dialog footer { justify-content: flex-end; }
 
 .search-form { display: flex; margin: 0 10px 8px; border: 1px solid var(--border-bright); border-radius: 5px; background: #090909; }
 .search-form:focus-within { border-color: #aaa; }
@@ -112,6 +120,40 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .feature-list strong { font-size: 11px; }
 .feature-list span { color: var(--muted); font-size: 10px; line-height: 1.4; }
 
+.extensions-view { min-height: 0; }
+.extensions-toolbar { display: grid; gap: 7px; padding: 0 10px 9px; border-bottom: 1px solid var(--border); }
+.extensions-tabs { display: flex; gap: 3px; }
+.extensions-tabs button { flex: 1; height: 27px; border: 1px solid transparent; border-radius: 4px; background: transparent; color: var(--muted); font-size: 10px; cursor: pointer; }
+.extensions-tabs button:hover, .extensions-tabs button.active { border-color: var(--border-bright); background: var(--bg-hover); color: var(--text); }
+.extension-search { display: flex; align-items: center; gap: 5px; height: 31px; padding: 0 6px; border: 1px solid var(--border-bright); border-radius: 5px; background: var(--bg-soft); }
+.extension-search > svg { width: 14px; color: var(--muted); }
+.extension-search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); font-size: 11px; }
+.extension-search .icon-button { width: 21px; height: 21px; }
+.extension-registry { height: 27px; padding: 0 6px; border: 1px solid var(--border-bright); border-radius: 4px; background: var(--bg-soft); color: var(--text); font-size: 10px; }
+.extensions-body { min-height: 0; display: flex; flex-direction: column; overflow: auto; }
+.extension-list { min-height: 0; overflow: auto; }
+.extension-card { width: 100%; display: grid; grid-template-columns: 28px 1fr auto; align-items: start; gap: 8px; padding: 9px 10px; border: 0; border-bottom: 1px solid var(--border); background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+.extension-card:hover, .extension-card.selected { background: var(--bg-hover); }
+.extension-card-icon { display: grid; place-items: center; width: 27px; height: 27px; border: 1px solid var(--border-bright); border-radius: 5px; color: #c8c8c8; }
+.extension-card-icon svg { width: 16px; height: 16px; }
+.extension-card-copy { min-width: 0; display: grid; gap: 2px; }
+.extension-card-copy strong, .extension-card-copy small, .extension-card-copy > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.extension-card-copy strong { font-size: 11px; }
+.extension-card-copy small { color: var(--muted); font: 9px 'Cascadia Mono', monospace; }
+.extension-card-copy > span { color: var(--muted); font-size: 10px; }
+.extension-state { color: var(--muted); font-size: 9px; white-space: nowrap; }
+.extension-state.installed { color: var(--success); }
+.extension-detail { display: grid; gap: 10px; margin: 10px; padding: 12px; border: 1px solid var(--border-bright); border-radius: 7px; background: var(--bg-soft); }
+.extension-detail header { display: flex; justify-content: space-between; gap: 8px; }
+.extension-detail h3 { margin: 0; font-size: 13px; }
+.extension-detail header p, .extension-description, .extension-meta { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.45; }
+.extension-description { color: var(--text); }
+.extension-meta { display: grid; gap: 3px; }
+.extension-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.extension-tags span { padding: 3px 5px; border: 1px solid var(--border); border-radius: 4px; color: var(--muted); font-size: 9px; }
+.extension-detail-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.extension-detail-actions button { min-height: 27px; font-size: 10px; }
+.danger-button { border-color: #683838 !important; color: #ffaaa5 !important; }
 .settings-view { overflow: auto; padding-bottom: 18px; }
 .settings-view label { display: grid; gap: 5px; margin: 0 12px 11px; color: #c9c9c9; font-size: 11px; }
 .settings-view input, .settings-view select, .settings-view textarea { width: 100%; padding: 0 8px; border: 1px solid var(--border-bright); border-radius: 5px; background: #090909; color: var(--text); }

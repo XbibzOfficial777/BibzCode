@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { CHANNELS, type AgentStreamEvent, type ExitEvent, type ProcessEvent } from '../shared/contracts.js';
+import { CHANNELS, type AgentStreamEvent, type ExtensionGalleryItem, type ExitEvent, type InstalledExtension, type ProcessEvent } from '../shared/contracts.js';
 
 const on = <T>(channel: string, listener: (payload: T) => void): (() => void) => {
   const wrapped = (_event: Electron.IpcRendererEvent, payload: T) => listener(payload);
@@ -43,6 +43,14 @@ const api = {
   settings: {
     get: () => ipcRenderer.invoke(CHANNELS.settingsGet),
     set: (patch: Record<string, unknown>) => ipcRenderer.invoke(CHANNELS.settingsSet, patch),
+  },
+  extensions: {
+    search: (query: string, registry: 'open-vsx' | 'vscode-marketplace') => ipcRenderer.invoke(CHANNELS.extensionSearch, { query, registry }) as Promise<ExtensionGalleryItem[]>,
+    installed: () => ipcRenderer.invoke(CHANNELS.extensionInstalled) as Promise<InstalledExtension[]>,
+    install: (item: ExtensionGalleryItem) => ipcRenderer.invoke(CHANNELS.extensionInstall, item) as Promise<InstalledExtension>,
+    installVsix: () => ipcRenderer.invoke(CHANNELS.extensionInstallVsix) as Promise<InstalledExtension | null>,
+    uninstall: (id: string) => ipcRenderer.invoke(CHANNELS.extensionUninstall, id) as Promise<void>,
+    setEnabled: (id: string, enabled: boolean) => ipcRenderer.invoke(CHANNELS.extensionSetEnabled, { id, enabled }) as Promise<InstalledExtension>,
   },
   secrets: {
     status: () => ipcRenderer.invoke(CHANNELS.secretStatus) as Promise<{ configured: boolean }>,
