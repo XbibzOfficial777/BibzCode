@@ -22,6 +22,26 @@ export interface ExtensionGalleryItem {
   enabled?: boolean;
 }
 
+export type ExtensionTrust = 'untrusted' | 'trusted';
+export type ExtensionRuntimeState = 'stopped' | 'starting' | 'running' | 'failed';
+
+export interface ExtensionRiskAssessment {
+  trust: ExtensionTrust;
+  reasons: string[];
+  nativeBinaries: string[];
+  proposedApi: boolean;
+  activationEvents: string[];
+  hasMainEntry: boolean;
+}
+
+export interface ExtensionRuntimeStatus {
+  id: string;
+  state: ExtensionRuntimeState;
+  message: string;
+  commands: string[];
+  activatedAt?: string;
+}
+
 export interface InstalledExtension {
   id: string;
   publisher: string;
@@ -32,8 +52,79 @@ export interface InstalledExtension {
   source: ExtensionRegistry | 'vsix';
   enginesVscode?: string;
   enabled: boolean;
+  trust: ExtensionTrust;
+  risk: ExtensionRiskAssessment;
   installedAt: string;
   manifest: Record<string, unknown>;
+}
+
+export interface ExtensionRuntimeEvent {
+  type: 'status' | 'command' | 'message';
+  id: string;
+  status?: ExtensionRuntimeStatus;
+  command?: string;
+  arguments?: unknown[];
+  message?: string;
+}
+
+export type ArtifactOperation = 'write' | 'create' | 'rename' | 'trash';
+export type ArtifactStatus = 'applied' | 'kept' | 'reverted' | 'rejected';
+
+export interface AgentArtifact {
+  id: string;
+  requestId: string;
+  operation: ArtifactOperation;
+  status: ArtifactStatus;
+  relativePath: string;
+  fromPath?: string;
+  toPath?: string;
+  kind?: 'file' | 'directory';
+  beforeExists: boolean;
+  afterExists: boolean;
+  beforeContent?: string;
+  afterContent?: string;
+  createdAt: string;
+  summary: string;
+}
+
+export type OrchestrationEventType = 'started' | 'task-start' | 'task-done' | 'task-error' | 'done' | 'cancelled';
+
+export interface AgentOrchestrationTask {
+  id: string;
+  label: string;
+  prompt: string;
+  systemPrompt?: string;
+  dependsOn?: string[];
+}
+
+export interface AgentOrchestrationRequest {
+  tasks: AgentOrchestrationTask[];
+  maxConcurrency?: number;
+  allowMutations?: boolean;
+}
+
+export interface AgentOrchestrationEvent {
+  orchestrationId: string;
+  type: OrchestrationEventType;
+  taskId?: string;
+  requestId?: string;
+  label?: string;
+  message?: string;
+}
+
+export interface AgentStreamEvent {
+  requestId: string;
+  orchestrationId?: string;
+  taskId?: string;
+  type: 'start' | 'delta' | 'tool_call' | 'tool_result' | 'approval_request' | 'done' | 'error';
+  delta?: string;
+  text?: string;
+  message?: string;
+  callId?: string;
+  tool?: string;
+  arguments?: Record<string, unknown>;
+  result?: string;
+  risk?: 'read' | 'write' | 'terminal' | 'git';
 }
 
 export interface AppInfo {
@@ -135,19 +226,9 @@ export interface CompressionResult {
 export interface AgentCompletionRequest {
   prompt: string;
   systemPrompt?: string;
-}
-
-export interface AgentStreamEvent {
-  requestId: string;
-  type: 'start' | 'delta' | 'tool_call' | 'tool_result' | 'approval_request' | 'done' | 'error';
-  delta?: string;
-  text?: string;
-  message?: string;
-  callId?: string;
-  tool?: string;
-  arguments?: Record<string, unknown>;
-  result?: string;
-  risk?: 'read' | 'write' | 'terminal' | 'git';
+  requestId?: string;
+  taskId?: string;
+  allowMutations?: boolean;
 }
 
 export const CHANNELS = {
@@ -193,4 +274,17 @@ export const CHANNELS = {
   extensionInstallVsix: 'extension:install-vsix',
   extensionUninstall: 'extension:uninstall',
   extensionSetEnabled: 'extension:set-enabled',
+  extensionSetTrust: 'extension:set-trust',
+  extensionRuntimeStart: 'extension:runtime-start',
+  extensionRuntimeStop: 'extension:runtime-stop',
+  extensionRuntimeStatus: 'extension:runtime-status',
+  extensionRuntimeCommand: 'extension:runtime-command',
+  extensionRuntimeEvent: 'extension:runtime-event',
+  artifactList: 'agent:artifact-list',
+  artifactKeep: 'agent:artifact-keep',
+  artifactReject: 'agent:artifact-reject',
+  artifactRevert: 'agent:artifact-revert',
+  agentOrchestrate: 'agent:orchestrate',
+  agentOrchestrationCancel: 'agent:orchestration-cancel',
+  agentOrchestrationEvent: 'agent:orchestration-event',
 } as const;

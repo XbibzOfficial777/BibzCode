@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url';
 import log from 'electron-log/main.js';
 import updater from 'electron-updater';
 import { z } from 'zod';
-import { CHANNELS, type IdeSettings } from '../shared/contracts.js';
+import { CHANNELS, type AgentOrchestrationRequest, type IdeSettings } from '../shared/contracts.js';
 import { GitService } from './git-service.js';
 import { ProcessManager } from './process-manager.js';
 import { isWithin, sanitizeError } from './security.js';
@@ -17,6 +17,9 @@ import { ToolExecutor } from './tool-executor.js';
 import { cleanAssistantText } from './response-cleaner.js';
 import { WorkspaceService } from './workspace.js';
 import { ExtensionService } from './extension-service.js';
+import { ArtifactService } from './artifact-service.js';
+import { ExtensionHostManager } from './extension-host-manager.js';
+import { AgentOrchestrator } from './agent-orchestrator.js';
 
 const { autoUpdater } = updater;
 
@@ -40,7 +43,11 @@ let tools: ToolExecutor;
 let workspace: WorkspaceService;
 let processes: ProcessManager;
 let extensions: ExtensionService;
+let artifacts: ArtifactService;
+let extensionHost: ExtensionHostManager;
+let orchestrator: AgentOrchestrator;
 const agentStreams = new Map<string, AbortController>();
+const orchestrationStreams = new Map<string, AbortController>();
 const approvalWaiters = new Map<string, (approved: boolean) => void>();
 const git = new GitService();
 
@@ -99,8 +106,13 @@ function registerIpc(): void {
     if (selected.canceled || !selected.filePaths[0]) return null;
     return extensions.installVsix(path.resolve(selected.filePaths[0]));
   });
-  safeHandle(CHANNELS.extensionUninstall, (raw) => extensions.uninstall(z.string().min(3).max(256).parse(raw)));
-  safeHandle(CHANNELS.extensionSetEnabled, (raw) => { const input = z.object({ id: z.string().min(3).max(256), enabled: z.boolean() }).parse(raw); return extensions.setEnabled(input.id, input.enabled); });
+  safeHandle(CHANNELS.extensionUninstall, async (raw) => { const id = z.string().min(3).max(256).parse(raw); await extensionHost.stop(id); return extensions.uninstall(id); });
+  safeHandle(CHANNELS.extensionSetEnabled, async (raw) => { const input = z.object({ id: z.string().min(3).max(256), enabled: z.boolean() }).parse(raw); const result = await extensions.setEnabled(input.id, input.enabled); if (!input.enabled) await extensionHost.stop(input.id); else if (result.trust === 'trusted' && result.risk.activationEvents.includes('*')) await extensionHost.start(result); return result; });
+  safeHandle(CHANNELS.extensionSetTrust, async (raw) => { const input = z.object({ id: z.string().min(3).max(256), trust: z.enum(['trusted', 'untrusted']) }).parse(raw); if (input.trust === 'untrusted') await extensionHost.stop(input.id); const result = await extensions.setTrust(input.id, input.trust); if (result.trust === 'trusted' && result.enabled && result.risk.activationEvents.includes('*')) await extensionHost.start(result); return result; });
+  safeHandle(CHANNELS.extensionRuntimeStart, async (raw) => { const id = z.string().min(3).max(256).parse(raw); const item = (await extensions.installedList()).find((value) => value.id === id); if (!item) throw new Error('Extension is not installed.'); return extensionHost.start(item); });
+  safeHandle(CHANNELS.extensionRuntimeStop, (raw) => extensionHost.stop(z.string().min(3).max(256).parse(raw)));
+  safeHandle(CHANNELS.extensionRuntimeStatus, () => extensionHost.status());
+  safeHandle(CHANNELS.extensionRuntimeCommand, async (raw) => { const input = z.object({ id: z.string().min(3).max(256), command: z.string().min(1).max(160), arguments: z.array(z.unknown()).max(32).default([]) }).parse(raw); return extensionHost.executeCommand(input.id, input.command, input.arguments); });
   safeHandle(CHANNELS.settingsSet, (raw) => settings.set(z.record(z.string(), z.unknown()).parse(raw) as Partial<IdeSettings>));
   safeHandle(CHANNELS.secretStatus, () => ({ configured: secrets.has('ai-api-key') }));
   safeHandle(CHANNELS.secretSet, async (raw) => {
@@ -118,14 +130,14 @@ function registerIpc(): void {
   safeHandle(CHANNELS.agentModels, () => agent.listModels());
   safeHandle(CHANNELS.agentComplete, (raw) => agent.complete(z.object({ prompt: z.string().min(1).max(200_000), systemPrompt: z.string().max(16_384).optional() }).parse(raw)));
   safeHandle(CHANNELS.agentStreamStart, (raw) => {
-    const input = z.object({ requestId: z.string().uuid(), request: z.object({ prompt: z.string().min(1).max(200_000), systemPrompt: z.string().max(16_384).optional() }) }).parse(raw);
+    const input = z.object({ requestId: z.string().uuid(), request: z.object({ prompt: z.string().min(1).max(200_000), systemPrompt: z.string().max(16_384).optional(), taskId: z.string().max(128).optional(), allowMutations: z.boolean().optional() }) }).parse(raw);
     if (agentStreams.has(input.requestId)) throw new Error('Agent request is already running.');
     const controller = new AbortController(); agentStreams.set(input.requestId, controller);
     void (async () => {
       let rawText = '';
       send(CHANNELS.agentStreamEvent, { requestId: input.requestId, type: 'start' });
       try {
-        for await (const event of agent.streamAgent(input.request, controller.signal, (call, risk) => new Promise<boolean>((resolve) => {
+        for await (const event of agent.streamAgent({ ...input.request, requestId: input.requestId }, controller.signal, (call, risk) => new Promise<boolean>((resolve) => {
           const key = `${input.requestId}:${call.id}`;
           approvalWaiters.set(key, resolve);
           send(CHANNELS.agentStreamEvent, { requestId: input.requestId, type: 'approval_request', callId: call.id, tool: call.name, arguments: call.arguments, risk });
@@ -150,10 +162,21 @@ function registerIpc(): void {
   });
   safeHandle(CHANNELS.agentApprove, (raw) => {
     const input = z.object({ requestId: z.string().uuid(), callId: z.string().min(1).max(256), approved: z.boolean() }).parse(raw);
-    const key = `${input.requestId}:${input.callId}`; const resolve = approvalWaiters.get(key);
+    const key = `${input.requestId}:${input.callId}`; const orchestrationKey = `${input.callId}:${input.requestId}`; const resolve = approvalWaiters.get(key) ?? approvalWaiters.get(orchestrationKey);
     if (!resolve) return { accepted: false };
-    approvalWaiters.delete(key); resolve(input.approved); return { accepted: true };
+    approvalWaiters.delete(key); approvalWaiters.delete(orchestrationKey); resolve(input.approved); return { accepted: true };
   });
+  safeHandle(CHANNELS.artifactList, (raw) => artifacts.list(raw ? z.string().uuid().parse(raw) : undefined));
+  safeHandle(CHANNELS.artifactKeep, (raw) => artifacts.setStatus(z.string().min(1).max(256).parse(raw), 'kept'));
+  safeHandle(CHANNELS.artifactReject, (raw) => artifacts.reject(z.string().min(1).max(256).parse(raw)));
+  safeHandle(CHANNELS.artifactRevert, (raw) => artifacts.revert(z.string().min(1).max(256).parse(raw)));
+  safeHandle(CHANNELS.agentOrchestrate, (raw) => {
+    const input = z.object({ tasks: z.array(z.object({ id: z.string().min(1).max(128), label: z.string().min(1).max(200), prompt: z.string().min(1).max(100_000), systemPrompt: z.string().max(16_384).optional(), dependsOn: z.array(z.string().min(1).max(128)).max(16).optional() }).strict()).min(1).max(16), maxConcurrency: z.number().int().min(1).max(4).optional(), allowMutations: z.boolean().default(false) }).parse(raw) as AgentOrchestrationRequest;
+    const orchestrationId = crypto.randomUUID(); const controller = new AbortController(); orchestrationStreams.set(orchestrationId, controller);
+    void orchestrator.run(orchestrationId, input, controller.signal, (event) => send(CHANNELS.agentOrchestrationEvent, event), (task, requestId, event) => send(CHANNELS.agentStreamEvent, { requestId, orchestrationId, taskId: task.id, ...event }), async (call, risk, requestId) => new Promise<boolean>((resolve) => { const key = `${requestId}:${call.id}`; approvalWaiters.set(key, resolve); send(CHANNELS.agentStreamEvent, { requestId, orchestrationId, type: 'approval_request', callId: call.id, tool: call.name, arguments: call.arguments, risk }); })).finally(() => orchestrationStreams.delete(orchestrationId));
+    return { orchestrationId };
+  });
+  safeHandle(CHANNELS.agentOrchestrationCancel, (raw) => { const id = z.string().uuid().parse(raw); const controller = orchestrationStreams.get(id); if (controller) controller.abort(); return { cancelled: Boolean(controller) }; });
   safeHandle(CHANNELS.compressionTest, (raw) => {
     const input = z.object({ text: z.string().max(2_000_000), targetChars: z.number().int().min(2_048).max(4_000_000) }).parse(raw);
     return agent.compressContext(input.text, input.targetChars);
@@ -316,7 +339,7 @@ async function createWindow(): Promise<void> {
 
 app.on('second-instance', () => { if (window) { if (window.isMinimized()) window.restore(); window.focus(); } });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-app.on('before-quit', () => { processes?.stopAll(); for (const controller of agentStreams.values()) controller.abort(); for (const resolve of approvalWaiters.values()) resolve(false); approvalWaiters.clear(); });
+app.on('before-quit', () => { processes?.stopAll(); extensionHost?.stopAll(); for (const controller of agentStreams.values()) controller.abort(); for (const controller of orchestrationStreams.values()) controller.abort(); for (const resolve of approvalWaiters.values()) resolve(false); approvalWaiters.clear(); });
 app.on('activate', () => { if (!window) void createWindow(); });
 
 async function bootstrap(): Promise<void> {
@@ -355,8 +378,13 @@ async function bootstrap(): Promise<void> {
   }
   processes = new ProcessManager((channel, payload) => send(channel, payload));
   if (initialWorkspace) processes.setWorkspace(initialWorkspace);
-  tools = new ToolExecutor(workspace, processes, git, (text, targetChars) => agent.compressContext(text, targetChars));
+  artifacts = new ArtifactService(workspace, app.getPath('userData'));
+  await artifacts.load();
+  extensionHost = new ExtensionHostManager((event) => send(CHANNELS.extensionRuntimeEvent, event), () => ({ theme: settings.get().theme, locale: 'en' }));
+  for (const installed of await extensions.installedList()) if (installed.enabled && installed.trust === 'trusted' && installed.risk.activationEvents.includes('*')) void extensionHost.start(installed);
+  tools = new ToolExecutor(workspace, processes, git, (text, targetChars) => agent.compressContext(text, targetChars), (requestId, operation, relativePath, action, extra) => artifacts.around(requestId, operation, relativePath, action, extra), (requestId, fromPath, toPath, action) => artifacts.aroundRename(requestId, fromPath, toPath, action));
   agent = new AgentService(secrets, () => settings.get(), tools);
+  orchestrator = new AgentOrchestrator(agent);
   registerIpc();
   buildMenu();
   await createWindow();

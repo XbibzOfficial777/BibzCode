@@ -7,6 +7,7 @@ import { cleanAssistantText } from './response-cleaner.js';
 interface OpenAiToolCall { id: string; type: 'function'; function: { name: AgentToolName; arguments: string } }
 interface OpenAiChunk { choices?: Array<{ finish_reason?: string | null; delta?: { content?: string; reasoning_content?: string; tool_calls?: Array<{ index?: number; id?: string; type?: 'function'; function?: { name?: string; arguments?: string } }> }; message?: { content?: string; tool_calls?: OpenAiToolCall[] }; text?: string }> }
 interface AgentToolCall { id: string; name: AgentToolName; arguments: Record<string, unknown> }
+function deniedByPolicy(request: AgentCompletionRequest, tool: AgentToolName): boolean { return request.allowMutations === false && ['workspace_write', 'workspace_create', 'workspace_rename', 'workspace_trash', 'terminal_run', 'git_stage', 'git_unstage', 'git_commit'].includes(tool); }
 export type ToolAgentEvent =
   | { type: 'delta'; delta: string }
   | { type: 'tool_call'; callId: string; tool: AgentToolName; arguments: Record<string, unknown>; risk: 'read' | 'write' | 'terminal' | 'git' }
@@ -143,8 +144,8 @@ export class AgentService {
       messages.push({ role: 'assistant', content: [{ type: 'text', text }, ...parsedCalls.map((call) => ({ type: 'tool_use', id: call.id, name: call.name, input: call.arguments }))] });
       for (const call of parsedCalls) {
         const definition = this.tools.definitions().find((tool) => tool.name === call.name)!; yield { type: 'tool_call', callId: call.id, tool: call.name, arguments: call.arguments, risk: definition.risk };
-        let result = 'Tool call denied by the user.';
-        if (!this.tools.requiresApproval(call.name) || (yield { type: 'approval_request', callId: call.id, tool: call.name, arguments: call.arguments, risk: definition.risk }, await approve(call, definition.risk))) result = (await this.tools.execute(call.name, call.arguments)).output;
+        let result = 'Tool call denied by policy.';
+        if (!deniedByPolicy(request, call.name) && (!this.tools.requiresApproval(call.name) || (yield { type: 'approval_request', callId: call.id, tool: call.name, arguments: call.arguments, risk: definition.risk }, await approve(call, definition.risk)))) result = (await this.tools.execute(call.name, call.arguments, request.requestId)).output;
         messages.push({ role: 'user', content: [{ type: 'tool_result', tool_use_id: call.id, content: result }] }); yield { type: 'tool_result', callId: call.id, tool: call.name, result, risk: definition.risk };
       }
     }
@@ -171,8 +172,8 @@ export class AgentService {
       for (const call of calls) {
         if (!this.tools.has(call.name)) throw new Error(`Google requested unknown agent tool: ${call.name}`);
         const definition = this.tools.definitions().find((tool) => tool.name === call.name)!; yield { type: 'tool_call', callId: call.id, tool: call.name, arguments: call.arguments, risk: definition.risk };
-        let result = 'Tool call denied by the user.';
-        if (!this.tools.requiresApproval(call.name) || (yield { type: 'approval_request', callId: call.id, tool: call.name, arguments: call.arguments, risk: definition.risk }, await approve(call, definition.risk))) result = (await this.tools.execute(call.name, call.arguments)).output;
+        let result = 'Tool call denied by policy.';
+        if (!deniedByPolicy(request, call.name) && (!this.tools.requiresApproval(call.name) || (yield { type: 'approval_request', callId: call.id, tool: call.name, arguments: call.arguments, risk: definition.risk }, await approve(call, definition.risk)))) result = (await this.tools.execute(call.name, call.arguments, request.requestId)).output;
         contents.push({ role: 'user', parts: [{ functionResponse: { name: call.name, response: { result } } }] });
         yield { type: 'tool_result', callId: call.id, tool: call.name, result, risk: definition.risk };
       }
@@ -214,13 +215,16 @@ export class AgentService {
         const definition = this.tools.definitions().find((tool) => tool.name === call.name);
         if (!definition) continue;
         yield { type: 'tool_call', callId: call.id, tool: call.name, arguments: call.arguments, risk: definition.risk };
+        if (deniedByPolicy(request, call.name)) {
+          const denied = 'Tool call denied by orchestration policy.'; messages.push({ role: 'tool', tool_call_id: call.id, name: call.name, content: denied }); yield { type: 'tool_result', callId: call.id, tool: call.name, result: denied, risk: definition.risk }; continue;
+        }
         if (this.tools.requiresApproval(call.name)) {
           yield { type: 'approval_request', callId: call.id, tool: call.name, arguments: call.arguments, risk: definition.risk };
           if (!await approve(call, definition.risk)) {
             const denied = 'Tool call denied by the user.'; messages.push({ role: 'tool', tool_call_id: call.id, name: call.name, content: denied }); yield { type: 'tool_result', callId: call.id, tool: call.name, result: denied, risk: definition.risk }; continue;
           }
         }
-        const result = await this.tools.execute(call.name, call.arguments); messages.push({ role: 'tool', tool_call_id: call.id, name: call.name, content: result.output }); yield { type: 'tool_result', callId: call.id, tool: call.name, result: result.output, risk: definition.risk };
+        const result = await this.tools.execute(call.name, call.arguments, request.requestId); messages.push({ role: 'tool', tool_call_id: call.id, name: call.name, content: result.output }); yield { type: 'tool_result', callId: call.id, tool: call.name, result: result.output, risk: definition.risk };
       }
     }
     throw new Error('Agent reached the maximum of 12 tool steps.');
