@@ -1,9 +1,9 @@
 import { execFile } from 'node:child_process';
-import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import type { ExtensionGalleryItem, ExtensionRegistry, InstalledExtension } from '../shared/contracts.js';
+import type { ExtensionGalleryItem, ExtensionRegistry, ExtensionRiskAssessment, ExtensionTrust, InstalledExtension } from '../shared/contracts.js';
 
 const execFileAsync = promisify(execFile);
 const CURRENT_VSCODE_API = [1, 100, 0] as const;
@@ -30,6 +30,38 @@ function asNumber(value: unknown): number | undefined { return typeof value === 
 function safeText(value: unknown, max = 5000): string { return typeof value === 'string' ? value.slice(0, max) : ''; }
 function extensionId(publisher: string, name: string): string { return `${publisher}.${name}`; }
 
+function stringArray(value: unknown): string[] { return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string').slice(0, 100) : []; }
+
+async function nativeFiles(root: string): Promise<string[]> {
+  const found: string[] = [];
+  const walk = async (current: string): Promise<void> => {
+    if (found.length >= 32) return;
+    const entries = await readdir(current, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      if (found.length >= 32) break;
+      const absolute = path.join(current, entry.name);
+      if (entry.isDirectory()) await walk(absolute);
+      else if (/\.(node|dll|dylib|so|exe)$/i.test(entry.name)) found.push(path.relative(root, absolute));
+    }
+  };
+  await walk(root); return found;
+}
+
+export async function assessExtension(manifest: Record<string, unknown>, installPath?: string): Promise<ExtensionRiskAssessment> {
+  const activationEvents = stringArray(manifest.activationEvents);
+  const mainEntry = typeof manifest.main === 'string' ? manifest.main : '';
+  const proposedApi = JSON.stringify(manifest).includes('enableProposedApi') || JSON.stringify(manifest).includes('proposedApi');
+  const binaries = installPath ? await nativeFiles(installPath) : [];
+  const reasons: string[] = [];
+  if (mainEntry) reasons.push('Contains a Node.js extension host entry point.');
+  if (proposedApi) reasons.push('Requests or references proposed VS Code APIs.');
+  if (binaries.length) reasons.push(`Contains native binaries (${binaries.length}).`);
+  if (activationEvents.includes('*')) reasons.push('Activates at startup.');
+  if (!mainEntry && !binaries.length && !proposedApi) reasons.push('Static contribution only; no executable entry point detected.');
+  const trust: ExtensionTrust = mainEntry || binaries.length || proposedApi ? 'untrusted' : 'trusted';
+  return { trust, reasons, nativeBinaries: binaries, proposedApi, activationEvents, hasMainEntry: Boolean(mainEntry) };
+}
+
 export class ExtensionService {
   private installed = new Map<string, InstalledExtension>();
   private readonly root: string;
@@ -42,7 +74,11 @@ export class ExtensionService {
     const raw = await readFile(this.stateFile, 'utf8').catch(() => '[]');
     try {
       const items = JSON.parse(raw) as InstalledExtension[];
-      this.installed = new Map(items.filter((item) => item && typeof item.id === 'string').map((item) => [item.id, item]));
+      this.installed = new Map(items.filter((item) => item && typeof item.id === 'string').map((item) => {
+        const legacy = item as InstalledExtension & { trust?: ExtensionTrust; risk?: ExtensionRiskAssessment };
+        const risk = legacy.risk ?? { trust: legacy.trust ?? 'untrusted', reasons: ['Installed before trust policy was added; review before activation.'], nativeBinaries: [], proposedApi: false, activationEvents: [], hasMainEntry: Boolean(legacy.manifest?.main) };
+        return [item.id, { ...item, trust: legacy.trust ?? risk.trust, risk } satisfies InstalledExtension] as [string, InstalledExtension];
+      }));
     } catch { this.installed.clear(); }
   }
   private async persist(): Promise<void> {
@@ -99,6 +135,13 @@ export class ExtensionService {
     if (process.platform === 'win32') await execFileAsync('tar', ['-xf', archive, '-C', destination], { windowsHide: true, maxBuffer: 2 * 1024 * 1024 });
     else await execFileAsync('unzip', ['-q', '-o', archive, '-d', destination], { maxBuffer: 2 * 1024 * 1024 });
   }
+  async setTrust(id: string, trust: ExtensionTrust): Promise<InstalledExtension> {
+    const current = this.installed.get(id); if (!current) throw new Error('Extension is not installed.');
+    const risk = { ...current.risk, trust }; const updated = { ...current, trust, risk }; this.installed.set(id, updated); await this.persist(); return updated;
+  }
+
+  async risk(id: string): Promise<ExtensionRiskAssessment> { const current = this.installed.get(id); if (!current) throw new Error('Extension is not installed.'); return current.risk; }
+
   async install(item: ExtensionGalleryItem): Promise<InstalledExtension> {
     if (!item.compatible) throw new Error(item.compatibilityMessage || 'Extension is not compatible with the current BibzCode VS Code API target.');
     const response = await fetch(item.downloadUrl, { headers: { Accept: 'application/octet-stream' }, signal: AbortSignal.timeout(60_000) }); if (!response.ok) throw new Error(`Extension download failed (${response.status})`);
@@ -109,7 +152,7 @@ export class ExtensionService {
       const manifest = await this.readVsixManifest(tempArchive); const publisher = safeText(manifest.publisher, 200); const name = safeText(manifest.name, 200); const version = safeText(manifest.version, 100); if (extensionId(publisher, name) !== item.id || version !== item.version) throw new Error('VSIX metadata does not match the selected registry item.');
       const engines = manifest.engines as Record<string, unknown>; const compatibility = compatibleWithVscode(safeText(engines.vscode, 100)); if (!compatibility.compatible) throw new Error(compatibility.message || 'VSIX engine is incompatible.');
       await this.extractVsix(tempArchive, staging); await rm(installPath, { recursive: true, force: true }); await mkdir(this.root, { recursive: true, mode: 0o700 }); await rename(path.join(staging, 'extension'), installPath);
-      const installed: InstalledExtension = { id: item.id, publisher, name, displayName: safeText(manifest.displayName || item.displayName, 200), version, installPath, source: item.source, enginesVscode: safeText(engines.vscode, 100), enabled: true, installedAt: new Date().toISOString(), manifest };
+      const risk = await assessExtension(manifest, installPath); const installed: InstalledExtension = { id: item.id, publisher, name, displayName: safeText(manifest.displayName || item.displayName, 200), version, installPath, source: item.source, enginesVscode: safeText(engines.vscode, 100), enabled: true, trust: risk.trust, risk, installedAt: new Date().toISOString(), manifest };
       this.installed.set(item.id, installed); await this.persist(); return installed;
     } finally { await rm(tempArchive, { force: true }); await rm(staging, { recursive: true, force: true }); }
   }
@@ -120,7 +163,7 @@ export class ExtensionService {
     const id = extensionId(publisher, name); const staging = path.join(os.tmpdir(), `bibzcode-vsix-${Date.now()}`); const installPath = path.join(this.root, `${publisher}.${name}-${version}`);
     try {
       await this.extractVsix(archive, staging); await rm(installPath, { recursive: true, force: true }); await mkdir(this.root, { recursive: true, mode: 0o700 }); await rename(path.join(staging, 'extension'), installPath);
-      const installed: InstalledExtension = { id, publisher, name, displayName: safeText(manifest.displayName || name, 200), version, installPath, source: 'vsix', enginesVscode: safeText(engines.vscode, 100), enabled: true, installedAt: new Date().toISOString(), manifest };
+      const risk = await assessExtension(manifest, installPath); const installed: InstalledExtension = { id, publisher, name, displayName: safeText(manifest.displayName || name, 200), version, installPath, source: 'vsix', enginesVscode: safeText(engines.vscode, 100), enabled: true, trust: risk.trust, risk, installedAt: new Date().toISOString(), manifest };
       this.installed.set(id, installed); await this.persist(); return installed;
     } finally { await rm(staging, { recursive: true, force: true }); }
   }

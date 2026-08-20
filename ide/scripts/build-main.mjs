@@ -22,4 +22,10 @@ await Promise.all([
     format: 'cjs',
     outfile: 'dist-electron/preload.cjs',
   }),
+  build({
+    ...common,
+    entryPoints: ['electron/extension-host.ts'],
+    format: 'cjs',
+    outfile: 'dist-electron/extension-host.cjs',
+  }),
 ]);

@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { CHANNELS, type AgentStreamEvent, type ExtensionGalleryItem, type ExitEvent, type InstalledExtension, type ProcessEvent } from '../shared/contracts.js';
+import { CHANNELS, type AgentArtifact, type AgentOrchestrationEvent, type AgentStreamEvent, type ExtensionGalleryItem, type ExtensionRuntimeEvent, type ExtensionRuntimeStatus, type ExitEvent, type InstalledExtension, type ProcessEvent } from '../shared/contracts.js';
 
 const on = <T>(channel: string, listener: (payload: T) => void): (() => void) => {
   const wrapped = (_event: Electron.IpcRendererEvent, payload: T) => listener(payload);
@@ -51,6 +51,12 @@ const api = {
     installVsix: () => ipcRenderer.invoke(CHANNELS.extensionInstallVsix) as Promise<InstalledExtension | null>,
     uninstall: (id: string) => ipcRenderer.invoke(CHANNELS.extensionUninstall, id) as Promise<void>,
     setEnabled: (id: string, enabled: boolean) => ipcRenderer.invoke(CHANNELS.extensionSetEnabled, { id, enabled }) as Promise<InstalledExtension>,
+    setTrust: (id: string, trust: 'trusted' | 'untrusted') => ipcRenderer.invoke(CHANNELS.extensionSetTrust, { id, trust }) as Promise<InstalledExtension>,
+    runtimeStart: (id: string) => ipcRenderer.invoke(CHANNELS.extensionRuntimeStart, id) as Promise<ExtensionRuntimeStatus>,
+    runtimeStop: (id: string) => ipcRenderer.invoke(CHANNELS.extensionRuntimeStop, id) as Promise<void>,
+    runtimeStatus: () => ipcRenderer.invoke(CHANNELS.extensionRuntimeStatus) as Promise<ExtensionRuntimeStatus[]>,
+    runtimeCommand: (id: string, command: string, args: unknown[] = []) => ipcRenderer.invoke(CHANNELS.extensionRuntimeCommand, { id, command, arguments: args }) as Promise<void>,
+    onRuntimeEvent: (listener: (event: ExtensionRuntimeEvent) => void) => on(CHANNELS.extensionRuntimeEvent, listener),
   },
   secrets: {
     status: () => ipcRenderer.invoke(CHANNELS.secretStatus) as Promise<{ configured: boolean }>,
@@ -66,6 +72,13 @@ const api = {
     streamCancel: (requestId: string) => ipcRenderer.invoke(CHANNELS.agentStreamCancel, requestId),
     approve: (requestId: string, callId: string, approved: boolean) => ipcRenderer.invoke(CHANNELS.agentApprove, { requestId, callId, approved }),
     compress: (text: string, targetChars: number) => ipcRenderer.invoke(CHANNELS.compressionTest, { text, targetChars }),
+    artifacts: (requestId?: string) => ipcRenderer.invoke(CHANNELS.artifactList, requestId) as Promise<AgentArtifact[]>,
+    keepArtifact: (id: string) => ipcRenderer.invoke(CHANNELS.artifactKeep, id) as Promise<AgentArtifact>,
+    rejectArtifact: (id: string) => ipcRenderer.invoke(CHANNELS.artifactReject, id) as Promise<AgentArtifact>,
+    revertArtifact: (id: string) => ipcRenderer.invoke(CHANNELS.artifactRevert, id) as Promise<AgentArtifact>,
+    orchestrate: (request: { tasks: Array<{ id: string; label: string; prompt: string; systemPrompt?: string; dependsOn?: string[] }>; maxConcurrency?: number; allowMutations?: boolean }) => ipcRenderer.invoke(CHANNELS.agentOrchestrate, request) as Promise<{ orchestrationId: string }>,
+    cancelOrchestration: (id: string) => ipcRenderer.invoke(CHANNELS.agentOrchestrationCancel, id),
+    onOrchestration: (listener: (event: AgentOrchestrationEvent) => void) => on(CHANNELS.agentOrchestrationEvent, listener),
   },
   menu: {
     onCommand: (listener: (command: string) => void) => on(CHANNELS.menuCommand, listener),

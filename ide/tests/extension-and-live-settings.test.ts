@@ -2,7 +2,7 @@ import { readFile, rm, mkdtemp } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { compatibleWithVscode } from '../electron/extension-service';
+import { assessExtension, compatibleWithVscode } from '../electron/extension-service';
 import { SettingsStore } from '../electron/settings-store';
 
 describe('VS Code extension compatibility', () => {
@@ -11,6 +11,18 @@ describe('VS Code extension compatibility', () => {
     expect(compatibleWithVscode('>=1.90.0 <2.0.0').compatible).toBe(true);
     expect(compatibleWithVscode('*').compatible).toBe(false);
     expect(compatibleWithVscode('^2.0.0').compatible).toBe(false);
+  });
+});
+
+describe('extension trust policy', () => {
+  it('trusts static contributions but blocks executable/proposed activation by default', async () => {
+    const staticRisk = await assessExtension({ name: 'theme-pack', contributes: { themes: [] } });
+    expect(staticRisk.trust).toBe('trusted');
+    const executableRisk = await assessExtension({ main: './dist/extension.js', activationEvents: ['*'], enableProposedApi: true });
+    expect(executableRisk.trust).toBe('untrusted');
+    expect(executableRisk.hasMainEntry).toBe(true);
+    expect(executableRisk.proposedApi).toBe(true);
+    expect(executableRisk.activationEvents).toContain('*');
   });
 });
 
