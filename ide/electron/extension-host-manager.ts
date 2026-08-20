@@ -23,7 +23,7 @@ export class ExtensionHostManager {
 
   private ensureProcess(): ChildProcess {
     if (this.process && !this.process.killed) return this.process;
-    const child = fork(this.hostPath, [], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'], detached: false, windowsHide: true, execArgv: [], env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', BIBZCODE_EXTENSION_HOST: '1' } });
+    const child = fork(this.hostPath, [], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'], detached: false, execArgv: [], env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', BIBZCODE_EXTENSION_HOST: '1' } });
     child.on('message', (message: HostEvent) => this.handle(message));
     child.on('exit', (_code, signal) => {
       for (const status of this.statuses.values()) {
