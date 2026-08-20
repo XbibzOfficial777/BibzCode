@@ -56,6 +56,8 @@ export function AssistantPanel({ visible, startSignal, stopSignal, activeFile, o
     if (event.type === 'done' || event.type === 'cancelled') setTimeout(() => setOrchestrationId(''), 800);
   }), [orchestrationId]);
 
+  // Native menu signals intentionally synchronize the agent lifecycle.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { if (startSignal > 0) setState('ready'); }, [startSignal]);
 
   const stop = useCallback(async () => {
@@ -64,6 +66,8 @@ export function AssistantPanel({ visible, startSignal, stopSignal, activeFile, o
     try { await window.bibzIDE.agent.streamCancel(requestId.current); } catch (error) { onError(friendlyError(error)); }
     setPendingApproval(null); setState('stopped');
   }, [onError, orchestrationId, state]);
+  // Native menu signals intentionally synchronize the agent lifecycle.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { if (stopSignal > 0) void stop(); }, [stop, stopSignal]);
 
   const approve = async (approved: boolean) => {
