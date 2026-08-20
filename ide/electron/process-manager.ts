@@ -1,13 +1,16 @@
 import { randomUUID } from 'node:crypto';
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn, type ChildProcessByStdio, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { stat } from 'node:fs/promises';
+import type { Readable } from 'node:stream';
 import path from 'node:path';
 import type { ExitEvent, ProcessEvent } from '../shared/contracts.js';
 import { MAX_COMMAND_CHARS, isWithin } from './security.js';
 
-export type ProcessEmitter = (channel: 'terminal:data' | 'terminal:exit' | 'cli:data' | 'cli:exit', payload: ProcessEvent | ExitEvent) => void;
+export type ProcessEmitter = (channel: 'terminal:data' | 'terminal:exit', payload: ProcessEvent | ExitEvent) => void;
 
-function terminate(child: ChildProcessWithoutNullStreams): void {
+type TerminableChild = ChildProcessWithoutNullStreams | ChildProcessByStdio<null, Readable, Readable>;
+
+function terminate(child: TerminableChild): void {
   if (child.killed) return;
   if (process.platform === 'win32') {
     const killer = spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true });
@@ -25,7 +28,6 @@ function terminate(child: ChildProcessWithoutNullStreams): void {
 export class ProcessManager {
   private readonly children = new Map<string, ChildProcessWithoutNullStreams>();
   private terminalCwd = '';
-  private cliId = '';
 
   constructor(private readonly emit: ProcessEmitter) {}
 
@@ -79,35 +81,20 @@ export class ProcessManager {
     return { sessionId, cwd };
   }
 
-  startCli(executable: string, args: string[], cwd: string, env: NodeJS.ProcessEnv): string {
-    if (this.cliId) this.stop(this.cliId);
-    const sessionId = randomUUID();
-    const child = spawn(executable, args, {
-      cwd,
-      env: { ...process.env, ...env, TERM: 'xterm-256color', FORCE_COLOR: '1', PYTHONUNBUFFERED: '1' },
-      windowsHide: true,
-      detached: process.platform !== 'win32',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    this.cliId = sessionId;
-    this.children.set(sessionId, child);
-    child.stdout.on('data', (chunk: Buffer) => this.emit('cli:data', { sessionId, stream: 'stdout', data: chunk.toString() }));
-    child.stderr.on('data', (chunk: Buffer) => this.emit('cli:data', { sessionId, stream: 'stderr', data: chunk.toString() }));
-    child.once('error', (error) => this.emit('cli:data', { sessionId, stream: 'system', data: `Unable to start BibzCode: ${error.message}\r\n` }));
-    child.once('close', (code, signal) => {
-      this.children.delete(sessionId);
-      if (this.cliId === sessionId) this.cliId = '';
-      this.emit('cli:exit', { sessionId, code, signal });
-    });
-    return sessionId;
-  }
-
-  inputCli(sessionId: string, data: string): void {
-    if (sessionId !== this.cliId) throw new Error('BibzCode session is not active');
-    if (typeof data !== 'string' || data.length > 65_536) throw new Error('CLI input is invalid');
-    const child = this.children.get(sessionId);
-    if (!child?.stdin.writable) throw new Error('BibzCode input stream is closed');
-    child.stdin.write(data);
+  async executeCommand(command: string, workspace: string, shellOverride = ''): Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean }> {
+    const trimmed = command.trim();
+    if (!trimmed) throw new Error('Command is empty');
+    if (trimmed.length > MAX_COMMAND_CHARS) throw new Error('Command exceeds 8192 characters');
+    const cwd = this.terminalCwd && isWithin(workspace, this.terminalCwd) ? this.terminalCwd : workspace;
+    const { executable, args } = this.shellCommand(trimmed, shellOverride);
+    const child = spawn(executable, args, { cwd, env: { ...process.env, BIBZCODE_WORKSPACE: workspace, TERM: 'xterm-256color', FORCE_COLOR: '1' }, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
+    const limit = 1_000_000; let stdout = ''; let stderr = ''; let timedOut = false;
+    child.stdout.on('data', (chunk: Buffer) => { stdout = `${stdout}${chunk.toString()}`.slice(-limit); });
+    child.stderr.on('data', (chunk: Buffer) => { stderr = `${stderr}${chunk.toString()}`.slice(-limit); });
+    const timeout = setTimeout(() => { timedOut = true; terminate(child); }, 120_000);
+    const code = await new Promise<number | null>((resolve, reject) => { child.once('error', reject); child.once('close', (exitCode) => resolve(exitCode)); });
+    clearTimeout(timeout);
+    return { code, stdout, stderr, timedOut };
   }
 
   stop(sessionId: string): void {
@@ -118,7 +105,6 @@ export class ProcessManager {
   stopAll(): void {
     for (const child of this.children.values()) terminate(child);
     this.children.clear();
-    this.cliId = '';
   }
 
   private shellCommand(command: string, shellOverride: string): { executable: string; args: string[] } {

@@ -5,7 +5,6 @@ import type {
   GitFileStatus,
   IdeSettings,
   ProcessEvent,
-  RuntimeStatus,
   SearchMatch,
 } from '../shared/contracts';
 
@@ -37,19 +36,6 @@ declare global {
         onData(listener: (event: ProcessEvent) => void): () => void;
         onExit(listener: (event: ExitEvent) => void): () => void;
       };
-      cli: {
-        start(): Promise<string>;
-        input(sessionId: string, data: string): Promise<void>;
-        stop(sessionId: string): Promise<void>;
-        onData(listener: (event: ProcessEvent) => void): () => void;
-        onExit(listener: (event: ExitEvent) => void): () => void;
-      };
-      runtime: {
-        status(): Promise<RuntimeStatus>;
-        setup(full: boolean): Promise<string>;
-        onData(listener: (event: ProcessEvent) => void): () => void;
-        onExit(listener: (event: ExitEvent) => void): () => void;
-      };
       git: {
         status(): Promise<GitFileStatus[]>;
         diff(relativePath?: string, staged?: boolean): Promise<string>;
@@ -60,6 +46,21 @@ declare global {
       settings: {
         get(): Promise<IdeSettings>;
         set(patch: Partial<IdeSettings>): Promise<IdeSettings>;
+      };
+      secrets: {
+        status(): Promise<{ configured: boolean }>;
+        set(value: string): Promise<{ configured: boolean }>;
+        clear(): Promise<{ configured: boolean }>;
+      };
+      agent: {
+        probe(): Promise<import('../shared/contracts').ProviderProbe>;
+        models(): Promise<string[]>;
+        complete(prompt: string, systemPrompt?: string): Promise<string>;
+        streamStart(requestId: string, prompt: string, systemPrompt?: string): Promise<{ requestId: string }>;
+        onStream(listener: (event: import('../shared/contracts').AgentStreamEvent) => void): () => void;
+        streamCancel(requestId: string): Promise<{ cancelled: boolean }>;
+        approve(requestId: string, callId: string, approved: boolean): Promise<{ accepted: boolean }>;
+        compress(text: string, targetChars: number): Promise<import('../shared/contracts').CompressionResult>;
       };
       menu: { onCommand(listener: (command: string) => void): () => void };
     };

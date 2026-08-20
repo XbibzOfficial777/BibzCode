@@ -23,27 +23,19 @@ signing/notarization without placing credentials in source.
 
 ## Feature parity
 
-The IDE packages the canonical `bibzcode` and temporary `deepseek` compatibility
-modules as application resources. The Assistant panel runs `python -m bibzcode`, so it
-retains the same:
+The IDE is a standalone Electron application. Its Assistant panel uses the configured provider directly from the native main process and streams responses through the typed preload bridge. The IDE does not package `bibzcode`, `deepseek`, Python, a virtual environment, or a web dashboard.
 
-- eight LLM providers and provider/model/key controls;
-- 86 core and 29 optional tools (115 maximum);
-- tool approval gates, path/network policy, redaction, and bounded execution;
-- MCP server management and dynamically discovered MCP tools;
-- sessions, resume/export, lossless archives, context inspection, and auto-compaction;
-- document, PDF, Office, spreadsheet, OCR, image, audio/video, and APK utilities;
-- HTTP/browser and optional Selenium automation;
-- multi-agent planning and approval-preserving delegation;
-- identity-isolated Telegram and Discord connectors;
-- Firebase login, account synchronization, usage events, and release checks;
-- every canonical slash command (`/provider`, `/model`, `/key`, `/tools`, `/mcp`,
-  `/session`, `/compact`, `/context`, `/telegram`, `/discord`, and others).
+Native capabilities include:
 
-The managed runtime dialog installs hash-locked core or full dependencies into an
-isolated venv in the IDE data directory. Python 3.10 or newer is required. The initial
-runtime installation needs access to the configured Python package index; subsequent
-launches reuse the managed environment.
+- 34 provider presets, including OpenAI-compatible gateways, Anthropic, Google Gemini, local Ollama/LM Studio/vLLM, Agnes AI, and custom endpoints;
+- secure API-key storage through Electron safeStorage;
+- live model discovery, thinking modes and budgets, and deterministic ultra context compression;
+- real-time streaming Agent Prompt and Assistant responses with cancellation;
+- Monaco Editor language workers, themes, minimap, tabs, search, diff, terminal, Git, and workspace operations;
+- VS Code-compatible extension foundation under the native Electron security boundary;
+- CSP, context isolation, sandbox, path restrictions, denied remote navigation, and validated IPC.
+
+The original BibzCode CLI remains a separate repository capability. It is not launched by the IDE and is not required for startup, AI responses, editor use, or packaging.
 
 ## IDE capabilities
 
@@ -52,7 +44,7 @@ launches reuse the managed environment.
 - Workspace search with binary, size, symlink, and generated-directory boundaries.
 - Integrated command terminal restricted to the selected workspace.
 - Git status, diff, stage, unstage, and commit with repository hooks preserved.
-- Full BibzCode assistant stream with approval prompts and quick slash commands.
+- Native multi-provider Agent and Assistant streaming with cancelable responses.
 - Command palette, native menus, editor tabs, dirty-state protection, and settings.
 - Local-only logs, opt-in update checks, no telemetry, and no remote UI scripts.
 
@@ -75,7 +67,7 @@ or generic IPC access. Main-process handlers validate payloads and enforce:
 
 ## Development
 
-Node.js **22.22.2+** and Python **3.10+** are required.
+Node.js **22.22.2+** is required for development. Python is not required by the IDE.
 
 ```bash
 cd ide

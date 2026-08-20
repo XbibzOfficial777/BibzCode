@@ -13,8 +13,13 @@ on:
         type: boolean
         default: true
   push:
+    branches:
+      - main
     tags:
-      - 'ide-v*'
+      - 'ide-*'
+    paths:
+      - 'ide/**'
+      - '.github/workflows/ide-release.yml'
 
 permissions:
   contents: write
@@ -23,7 +28,7 @@ permissions:
 
 jobs:
   linux:
-    name: Linux ${{ matrix.arch }} (.deb + .rpm)
+    name: Linux ${{ matrix.arch }} (.deb + .rpm + AppImage)
     strategy:
       fail-fast: false
       matrix:
@@ -46,7 +51,7 @@ jobs:
       - name: Install native package tooling
         run: |
           sudo apt-get update
-          sudo apt-get install -y rpm
+          sudo apt-get install -y rpm libfuse2t64
           mkdir -p "$HOME/.rpmdb"
           printf '%%_dbpath %s/.rpmdb\n' "$HOME" > "$HOME/.rpmmacros"
           rpm --initdb
@@ -58,12 +63,14 @@ jobs:
           subject-path: |
             ide/release/*.deb
             ide/release/*.rpm
+            ide/release/*.AppImage
       - uses: actions/upload-artifact@v4
         with:
           name: ide-linux-${{ matrix.arch }}
           path: |
             ide/release/*.deb
             ide/release/*.rpm
+            ide/release/*.AppImage
             ide/release/SHA256SUMS
           if-no-files-found: error
 
@@ -172,9 +179,9 @@ jobs:
           fi
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.release_tag || github.ref_name }}
-          name: BibzCode IDE ${{ inputs.release_tag || github.ref_name }}
-          draft: ${{ inputs.draft == true }}
+          tag_name: ${{ inputs.release_tag || (startsWith(github.ref, 'refs/tags/') && github.ref_name) || format('ide-auto-{0}', github.sha) }}
+          name: BibzCode IDE ${{ inputs.release_tag || (startsWith(github.ref, 'refs/tags/') && github.ref_name) || format('ide-auto-{0}', github.sha) }}
+          draft: false
           generate_release_notes: true
           files: artifacts/*
           fail_on_unmatched_files: true

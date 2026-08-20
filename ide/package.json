@@ -104,44 +104,6 @@
     ],
     "extraResources": [
       {
-        "from": "../bibzcode",
-        "to": "cli/bibzcode",
-        "filter": [
-          "**/*.py"
-        ]
-      },
-      {
-        "from": "../deepseek",
-        "to": "cli/deepseek",
-        "filter": [
-          "**/*.py"
-        ]
-      },
-      {
-        "from": "../requirements.txt",
-        "to": "cli/requirements.txt"
-      },
-      {
-        "from": "../requirements-lock.txt",
-        "to": "cli/requirements-lock.txt"
-      },
-      {
-        "from": "../requirements-optional.txt",
-        "to": "cli/requirements-optional.txt"
-      },
-      {
-        "from": "../requirements-optional-lock.txt",
-        "to": "cli/requirements-optional-lock.txt"
-      },
-      {
-        "from": "../pyproject.toml",
-        "to": "cli/pyproject.toml"
-      },
-      {
-        "from": "../LICENSE",
-        "to": "cli/LICENSE"
-      },
-      {
         "from": "build/icon.png",
         "to": "app-icon.png"
       }
@@ -157,7 +119,8 @@
     "linux": {
       "target": [
         "deb",
-        "rpm"
+        "rpm",
+        "AppImage"
       ],
       "icon": "build/icons",
       "category": "Development",
@@ -165,11 +128,10 @@
       "maintainer": "XbibzOfficial777",
       "vendor": "BibzCode",
       "synopsis": "BibzCode AI-powered development environment",
-      "description": "Secure cross-platform IDE with workspace tools, Git integration, terminal, and complete BibzCode CLI feature access."
+      "description": "Secure cross-platform native AI IDE with Monaco Editor, multi-provider streaming, workspace tools, Git integration, and terminal."
     },
     "deb": {
       "depends": [
-        "python3 (>= 3.10)",
         "libgtk-3-0",
         "libnss3"
       ],
@@ -177,7 +139,6 @@
     },
     "rpm": {
       "depends": [
-        "python3 >= 3.10",
         "gtk3",
         "nss"
       ],

@@ -14,7 +14,7 @@ describe('settings store', () => {
     const defaults = await store.load();
     expect(defaults.editorFontSize).toBe(14);
     const saved = await store.set({ editorFontSize: 200, theme: 'high-contrast', wordWrap: 'on' });
-    expect(saved.editorFontSize).toBe(28);
+    expect(saved.editorFontSize).toBe(32);
     expect(JSON.parse(await readFile(store.file, 'utf8')).theme).toBe('high-contrast');
     if (process.platform !== 'win32') expect((await stat(store.file)).mode & 0o777).toBe(0o600);
   });

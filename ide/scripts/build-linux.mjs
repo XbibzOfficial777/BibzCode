@@ -6,7 +6,7 @@ const temporary = path.resolve('.tmp-package');
 await rm(temporary, { recursive: true, force: true });
 await mkdir(temporary, { recursive: true });
 const cli = path.resolve('node_modules/electron-builder/out/cli/cli.js');
-const args = [cli, '--linux', 'deb', 'rpm', '--publish', 'never', ...process.argv.slice(2)];
+const args = [cli, '--linux', 'deb', 'rpm', 'AppImage', '--publish', 'never', ...process.argv.slice(2)];
 const code = await new Promise((resolve, reject) => {
   const child = spawn(process.execPath, args, {
     cwd: process.cwd(),
