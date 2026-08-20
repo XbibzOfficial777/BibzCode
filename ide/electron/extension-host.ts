@@ -28,7 +28,7 @@ function installVscodeShim(id: string, settings: Record<string, unknown>): void 
         return { dispose: () => commandHandlers.delete(`${id}:${command}`) };
       },
       executeCommand: async (command: string, ...args: unknown[]) => {
-        if (command === 'setContext') return undefined;
+        if (command === 'setContext') { if (args.length > 32) throw new Error('setContext received too many arguments.'); return undefined; }
         throw new Error(`Command execution is restricted in BibzCode host: ${command}`);
       },
     },
