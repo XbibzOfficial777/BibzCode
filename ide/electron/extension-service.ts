@@ -23,7 +23,7 @@ function parseId(id: string): { publisher: string; name: string } {
 function versionTuple(value: string): [number, number, number] {
   const match = value.match(/(\d+)\.(\d+)(?:\.(\d+))?/); return [Number(match?.[1] ?? 0), Number(match?.[2] ?? 0), Number(match?.[3] ?? 0)];
 }
-function compareVersion(a: [number, number, number], b: [number, number, number]): number { return a[0] - b[0] || a[1] - b[1] || a[2] - b[2]; }
+function compareVersion(a: readonly [number, number, number], b: readonly [number, number, number]): number { return a[0] - b[0] || a[1] - b[1] || a[2] - b[2]; }
 export function compatibleWithVscode(range?: string): { compatible: boolean; message?: string } {
   if (!range || range === '*') return { compatible: false, message: 'The extension does not declare a concrete VS Code engine range.' };
   const minimum = versionTuple(range); const current = CURRENT_VSCODE_API;
