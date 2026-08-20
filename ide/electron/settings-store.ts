@@ -14,6 +14,7 @@ const DEFAULTS: IdeSettings = {
 export class SettingsStore {
   readonly file: string;
   private data: IdeSettings = { ...DEFAULTS };
+  private writeQueue: Promise<void> = Promise.resolve();
   constructor(userData: string) { this.file = path.join(userData, 'settings.json'); }
 
   async load(): Promise<IdeSettings> {
@@ -26,11 +27,15 @@ export class SettingsStore {
   get(): IdeSettings { return { ...this.data }; }
   async set(patch: Partial<IdeSettings>): Promise<IdeSettings> {
     this.data = this.validate({ ...this.data, ...patch });
-    await mkdir(path.dirname(this.file), { recursive: true, mode: 0o700 });
-    const temporary = `${this.file}.tmp-${process.pid}`;
-    await writeFile(temporary, `${JSON.stringify(this.data, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
-    await rename(temporary, this.file);
-    return this.get();
+    const snapshot = this.get();
+    this.writeQueue = this.writeQueue.then(async () => {
+      await mkdir(path.dirname(this.file), { recursive: true, mode: 0o700 });
+      const temporary = `${this.file}.tmp-${process.pid}`;
+      await writeFile(temporary, `${JSON.stringify(snapshot, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+      await rename(temporary, this.file);
+    });
+    await this.writeQueue;
+    return snapshot;
   }
 
   private validate(value: IdeSettings): IdeSettings {
@@ -40,7 +45,7 @@ export class SettingsStore {
       shellPath: typeof value.shellPath === 'string' ? value.shellPath.slice(0, 4096) : '',
       lastWorkspace: typeof value.lastWorkspace === 'string' ? value.lastWorkspace.slice(0, 4096) : '',
       autoUpdate: Boolean(value.autoUpdate), confirmBeforeDelete: Boolean(value.confirmBeforeDelete),
-      theme: value.theme === 'high-contrast' ? 'high-contrast' : value.theme === 'bibz-light' ? 'bibz-light' : 'bibz-dark',
+      theme: value.theme === 'high-contrast' ? 'high-contrast' : value.theme === 'bibz-light' ? 'bibz-light' : value.theme === 'system' ? 'system' : 'bibz-dark',
       editorFontSize: Math.max(10, Math.min(32, Number(value.editorFontSize) || 14)), wordWrap: value.wordWrap === 'on' ? 'on' : 'off',
       aiProvider,
       aiBaseUrl: typeof value.aiBaseUrl === 'string' && value.aiBaseUrl.trim() ? value.aiBaseUrl.slice(0, 2048) : preset.baseUrl,

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Bot, Boxes, Files, FolderOpen, GitBranch, Search, Settings, ShieldCheck, Sparkles, TerminalSquare } from 'lucide-react';
-import type { ActivityView, AppInfo, IdeSettings, OpenFile } from '../shared/contracts';
+import type { ActivityView, AppInfo, IdeSettings, IdeTheme, OpenFile } from '../shared/contracts';
 import { AssistantPanel } from './components/AssistantPanel';
 import { AgentPromptModal } from './components/AgentPromptModal';
 import { EditorArea } from './components/EditorArea';
+import { ExtensionsView } from './components/ExtensionsView';
 import { Explorer } from './components/Explorer';
 import { SearchView } from './components/SearchView';
 import { SettingsPanel } from './components/SettingsPanel';
@@ -30,6 +31,7 @@ export function App() {
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [cursor, setCursor] = useState({ line: 1, column: 1 });
   const [toast, setToast] = useState('');
+  const [systemLight, setSystemLight] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState('');
   const [agentOpen, setAgentOpen] = useState(false);
@@ -46,6 +48,12 @@ export function App() {
   }, [refresh]);
 
   useEffect(() => { document.title = workspaceRoot ? `${workspaceRoot.split(/[\\/]/).pop()} — BibzCode IDE` : 'BibzCode IDE'; }, [workspaceRoot]);
+  useEffect(() => {
+    const media = window.matchMedia('(prefers-color-scheme: light)');
+    const sync = () => setSystemLight(media.matches);
+    sync(); media.addEventListener('change', sync);
+    return () => media.removeEventListener('change', sync);
+  }, []);
 
   const openFolder = useCallback(async () => {
     try { const root = await window.bibzIDE.workspace.select(); if (root) { setWorkspaceRoot(root); refresh(); } }
@@ -99,6 +107,7 @@ export function App() {
     { id: 'view-explorer', label: 'View: Explorer', shortcut: 'Ctrl+Shift+E', run: () => setActivity('explorer') },
     { id: 'view-search', label: 'View: Search', shortcut: 'Ctrl+Shift+F', run: () => setActivity('search') },
     { id: 'view-source-control', label: 'View: Source Control', shortcut: 'Ctrl+Shift+G', run: () => setActivity('source-control') },
+    { id: 'view-extensions', label: 'View: Extensions', shortcut: 'Ctrl+Shift+X', run: () => setActivity('extensions') },
     { id: 'focus-terminal', label: 'View: Toggle Terminal', shortcut: 'Ctrl+`', run: () => setTerminalVisible((value) => !value) },
     { id: 'start-assistant', label: 'BibzCode: Open Native AI Assistant', shortcut: 'Ctrl+Shift+B', run: startAssistant },
     { id: 'agent-prompt', label: 'BibzCode: Run Agent Prompt', shortcut: 'Ctrl+Shift+I', run: () => setAgentOpen(true) },
@@ -128,31 +137,34 @@ export function App() {
     window.addEventListener('keydown', keyboard); return () => window.removeEventListener('keydown', keyboard);
   }, [saveActive]);
 
+  const resolvedTheme: IdeTheme = settings?.theme === 'system' ? systemLight ? 'bibz-light' : 'bibz-dark' : settings?.theme ?? 'bibz-dark';
+  const editorSettings = settings ? { ...settings, theme: resolvedTheme } : settings;
   const sideContent = (() => {
     if (activity === 'explorer') return <Explorer root={workspaceRoot} refreshToken={refreshToken} onOpen={(path) => void openFile(path)} onError={notify} onRefresh={refresh} />;
     if (activity === 'search') return <SearchView root={workspaceRoot} onOpen={(path, line) => void openFile(path, line)} onError={notify} />;
     if (activity === 'source-control') return <SourceControl root={workspaceRoot} refreshToken={refreshToken} onDiff={openVirtual} onError={notify} onRefresh={refresh} />;
+    if (activity === 'extensions') return <ExtensionsView onError={notify} />;
     if (activity === 'tools') return <ToolsView onStartAssistant={startAssistant} />;
-    return <SettingsPanel onError={notify} />;
+    return <SettingsPanel onError={notify} onSettingsChange={setSettings} />;
   })();
 
   const filteredCommands = commands.filter((command) => command.label.toLowerCase().includes(paletteQuery.toLowerCase()));
   const runCommand = (command: PaletteCommand) => { setPaletteOpen(false); setPaletteQuery(''); command.run(); };
 
-  const themeClass = settings?.theme === 'high-contrast' ? 'high-contrast' : settings?.theme === 'bibz-light' ? 'light-theme' : '';
+  const themeClass = resolvedTheme === 'high-contrast' ? 'high-contrast' : resolvedTheme === 'bibz-light' ? 'light-theme' : '';
   return <div className={`app ${themeClass}`}>
     <header className="titlebar"><div className="brand"><img src={logo} alt="" /><span>BibzCode IDE</span><small>{appInfo?.version ?? '7.8.0-r6'}</small></div><div className="title-workspace">{workspaceRoot || 'No workspace open'}</div><div className="title-actions"><button onClick={() => void openFolder()}><FolderOpen /> Open Folder</button><button onClick={startAssistant}><Sparkles /> BibzCode</button></div></header>
     <div className="workbench">
       <nav className="activity-bar" aria-label="Activity bar">
         {([
-          ['explorer', Files, 'Explorer'], ['search', Search, 'Search'], ['source-control', GitBranch, 'Source Control'], ['tools', Boxes, 'Feature Parity'], ['settings', Settings, 'Settings'],
+          ['explorer', Files, 'Explorer'], ['search', Search, 'Search'], ['source-control', GitBranch, 'Source Control'], ['extensions', Boxes, 'Extensions'], ['tools', Boxes, 'Feature Parity'], ['settings', Settings, 'Settings'],
         ] as const).map(([view, Icon, label]) => <button key={view} className={activity === view ? 'active' : ''} onClick={() => setActivity(view)} title={label}><Icon /><span>{label}</span></button>)}
         <div className="activity-spacer" />
         <button className={assistantVisible ? 'active' : ''} title="BibzCode Assistant" onClick={() => setAssistantVisible((value) => !value)}><Bot /><span>Assistant</span></button>
       </nav>
       <aside className="sidebar">{sideContent}</aside>
       <div className="center-column">
-        <EditorArea files={openFiles} activePath={activePath} settings={settings} targetLine={targetLine} onActivate={(path) => { setActivePath(path); setTargetLine(0); }} onChange={(path, content) => setOpenFiles((files) => files.map((file) => file.relativePath === path ? { ...file, content, dirty: true } : file))} onClose={closeFile} onSave={() => void saveActive()} onCursor={(line, column) => setCursor({ line, column })} />
+        <EditorArea files={openFiles} activePath={activePath} settings={editorSettings} targetLine={targetLine} onActivate={(path) => { setActivePath(path); setTargetLine(0); }} onChange={(path, content) => setOpenFiles((files) => files.map((file) => file.relativePath === path ? { ...file, content, dirty: true } : file))} onClose={closeFile} onSave={() => void saveActive()} onCursor={(line, column) => setCursor({ line, column })} />
         <TerminalPanel visible={terminalVisible} onClose={() => setTerminalVisible(false)} onError={notify} />
       </div>
       <AssistantPanel visible={assistantVisible} activeFile={openFiles.find((file) => file.relativePath === activePath)} startSignal={assistantStart} stopSignal={assistantStop} onClose={() => setAssistantVisible(false)} onError={notify} />

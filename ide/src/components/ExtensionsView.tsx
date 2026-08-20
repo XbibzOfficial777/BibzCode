@@ -1,0 +1,71 @@
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Check, Download, ExternalLink, PackageOpen, Power, RefreshCw, Search, Trash2, Upload, X } from 'lucide-react';
+import type { ExtensionGalleryItem, InstalledExtension } from '../../shared/contracts';
+import { friendlyError } from '../lib';
+
+type Registry = 'open-vsx' | 'vscode-marketplace';
+type Mode = 'browse' | 'installed';
+
+export function ExtensionsView({ onError }: { onError: (message: string) => void }) {
+  const [registry, setRegistry] = useState<Registry>('open-vsx');
+  const [mode, setMode] = useState<Mode>('browse');
+  const [query, setQuery] = useState('');
+  const [items, setItems] = useState<ExtensionGalleryItem[]>([]);
+  const [installed, setInstalled] = useState<InstalledExtension[]>([]);
+  const [selected, setSelected] = useState<ExtensionGalleryItem | null>(null);
+  const [busy, setBusy] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const loadInstalled = useCallback(async () => {
+    try { setInstalled(await window.bibzIDE.extensions.installed()); } catch (error) { onError(friendlyError(error)); }
+  }, [onError]);
+  const search = useCallback(async () => {
+    if (mode === 'installed') return;
+    setLoading(true);
+    try { setItems(await window.bibzIDE.extensions.search(query, registry)); }
+    catch (error) { onError(friendlyError(error)); }
+    finally { setLoading(false); }
+  }, [mode, onError, query, registry]);
+  useEffect(() => { void loadInstalled(); }, [loadInstalled]);
+  useEffect(() => { const timer = window.setTimeout(() => void search(), 350); return () => window.clearTimeout(timer); }, [search]);
+
+  const installedMap = useMemo(() => new Map(installed.map((item) => [item.id, item])), [installed]);
+  const install = async (item: ExtensionGalleryItem) => {
+    if (!item.compatible) { onError(item.compatibilityMessage || 'This extension is not compatible with the current BibzCode API target.'); return; }
+    setBusy(`install:${item.id}`);
+    try { const result = await window.bibzIDE.extensions.install(item); setInstalled((current) => [...current.filter((value) => value.id !== result.id), result]); setSelected({ ...item, installedVersion: result.version, enabled: result.enabled }); }
+    catch (error) { onError(friendlyError(error)); }
+    finally { setBusy(''); }
+  };
+  const installVsix = async () => {
+    setBusy('vsix');
+    try { const result = await window.bibzIDE.extensions.installVsix(); if (result) { setInstalled((current) => [...current.filter((value) => value.id !== result.id), result]); setMode('installed'); setSelected(null); } }
+    catch (error) { onError(friendlyError(error)); }
+    finally { setBusy(''); }
+  };
+  const uninstall = async (id: string) => {
+    if (!confirm(`Uninstall ${id}?`)) return;
+    setBusy(`uninstall:${id}`);
+    try { await window.bibzIDE.extensions.uninstall(id); setInstalled((current) => current.filter((value) => value.id !== id)); setSelected(null); }
+    catch (error) { onError(friendlyError(error)); }
+    finally { setBusy(''); }
+  };
+  const toggle = async (item: InstalledExtension) => {
+    setBusy(`toggle:${item.id}`);
+    try { const updated = await window.bibzIDE.extensions.setEnabled(item.id, !item.enabled); setInstalled((current) => current.map((value) => value.id === updated.id ? updated : value)); }
+    catch (error) { onError(friendlyError(error)); }
+    finally { setBusy(''); }
+  };
+
+  const browseItems = mode === 'installed' ? installed.map((item) => ({ id: item.id, publisher: item.publisher, name: item.name, displayName: item.displayName, version: item.version, description: String(item.manifest.description ?? ''), source: item.source === 'vsix' ? 'open-vsx' as const : item.source, downloadUrl: '', enginesVscode: item.enginesVscode, categories: Array.isArray(item.manifest.categories) ? item.manifest.categories.filter((value): value is string => typeof value === 'string') : [], compatible: true, installedVersion: item.version, enabled: item.enabled })) : items;
+  const currentInstalled = selected ? installedMap.get(selected.id) : undefined;
+
+  return <section className="side-view extensions-view">
+    <div className="side-heading"><span>EXTENSIONS</span><div className="side-actions"><button className="icon-button" title="Install from VSIX" aria-label="Install from VSIX" onClick={() => void installVsix()} disabled={Boolean(busy)}><Upload /></button><button className="icon-button" title="Refresh extensions" aria-label="Refresh extensions" onClick={() => { void loadInstalled(); void search(); }}><RefreshCw /></button></div></div>
+    <div className="extensions-toolbar"><div className="extensions-tabs"><button className={mode === 'browse' ? 'active' : ''} onClick={() => setMode('browse')}>Marketplace</button><button className={mode === 'installed' ? 'active' : ''} onClick={() => setMode('installed')}>Installed ({installed.length})</button></div><div className="extension-search"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search extensions" aria-label="Search extensions" /><button className="icon-button" title="Clear search" onClick={() => setQuery('')} disabled={!query}><X /></button></div>{mode === 'browse' && <select className="extension-registry" value={registry} onChange={(event) => setRegistry(event.target.value as Registry)} aria-label="Extension registry"><option value="open-vsx">Open VSX</option><option value="vscode-marketplace">VS Code Marketplace</option></select>}</div>
+    <div className="extensions-body">
+      <div className="extension-list">{loading && <p className="inline-status">Loading extensions…</p>}{!loading && browseItems.length === 0 && <p className="empty-copy">{mode === 'installed' ? 'No extensions installed.' : 'No extensions found.'}</p>}{browseItems.map((item) => { const isInstalled = Boolean(installedMap.get(item.id)); const installedValue = installedMap.get(item.id); return <button className={`extension-card ${selected?.id === item.id ? 'selected' : ''}`} key={item.id} onClick={() => setSelected(item)}><span className="extension-card-icon"><PackageOpen /></span><span className="extension-card-copy"><strong>{item.displayName}</strong><small>{item.publisher}.{item.name}</small><span>{item.description || 'VS Code-compatible extension'}</span></span><span className={`extension-state ${isInstalled ? 'installed' : ''}`}>{isInstalled ? installedValue?.enabled === false ? 'Disabled' : 'Installed' : item.version}</span></button>; })}</div>
+      {selected && <article className="extension-detail"><header><div><h3>{selected.displayName}</h3><p>{selected.publisher}.{selected.name} · v{selected.version}</p></div><button className="icon-button" title="Close details" onClick={() => setSelected(null)}><X /></button></header><p className="extension-description">{selected.description || 'No description provided.'}</p><div className="extension-meta"><span>Registry: {selected.source}</span><span>VS Code engine: {selected.enginesVscode || 'not declared'}</span><span>Compatibility: {selected.compatible ? 'supported target' : selected.compatibilityMessage || 'unsupported'}</span></div>{selected.categories.length > 0 && <div className="extension-tags">{selected.categories.map((category) => <span key={category}>{category}</span>)}</div>}<div className="extension-detail-actions">{currentInstalled ? <><button className="secondary-button" onClick={() => void toggle(currentInstalled)} disabled={Boolean(busy)}><Power /> {currentInstalled.enabled ? 'Disable' : 'Enable'}</button><button className="secondary-button danger-button" onClick={() => void uninstall(currentInstalled.id)} disabled={Boolean(busy)}><Trash2 /> Uninstall</button></> : <button className="primary-button" onClick={() => void install(selected)} disabled={Boolean(busy) || !selected.compatible}><Download /> {busy === `install:${selected.id}` ? 'Installing…' : 'Install'}</button>}{selected.readmeUrl && <button className="secondary-button" onClick={() => void window.bibzIDE.app.openExternal(selected.readmeUrl!)}><ExternalLink /> Readme</button>}</div>{currentInstalled && <p className="secure-note"><Check /> Installed in the native BibzCode extension directory. Extension host reload support is reported separately when required.</p>}</article>}
+    </div>
+  </section>;
+}

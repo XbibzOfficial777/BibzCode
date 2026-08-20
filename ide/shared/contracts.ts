@@ -1,4 +1,40 @@
-export type ActivityView = 'explorer' | 'search' | 'source-control' | 'tools' | 'settings';
+export type ActivityView = 'explorer' | 'search' | 'source-control' | 'tools' | 'settings' | 'extensions';
+export type ExtensionRegistry = 'open-vsx' | 'vscode-marketplace';
+
+export interface ExtensionGalleryItem {
+  id: string;
+  publisher: string;
+  name: string;
+  displayName: string;
+  version: string;
+  description: string;
+  source: ExtensionRegistry;
+  downloadUrl: string;
+  iconUrl?: string;
+  readmeUrl?: string;
+  enginesVscode?: string;
+  categories: string[];
+  downloadCount?: number;
+  rating?: number;
+  compatible: boolean;
+  compatibilityMessage?: string;
+  installedVersion?: string;
+  enabled?: boolean;
+}
+
+export interface InstalledExtension {
+  id: string;
+  publisher: string;
+  name: string;
+  displayName: string;
+  version: string;
+  installPath: string;
+  source: ExtensionRegistry | 'vsix';
+  enginesVscode?: string;
+  enabled: boolean;
+  installedAt: string;
+  manifest: Record<string, unknown>;
+}
 
 export interface AppInfo {
   name: string;
@@ -39,7 +75,7 @@ export interface GitFileStatus {
   relativePath: string;
 }
 
-export type IdeTheme = 'bibz-dark' | 'bibz-light' | 'high-contrast';
+export type IdeTheme = 'bibz-dark' | 'bibz-light' | 'high-contrast' | 'system';
 export type AiProvider = 'openai' | 'anthropic' | 'google' | 'deepseek' | 'openrouter' | 'ollama' | 'groq' | 'together' | 'huggingface' | 'mistral' | 'fireworks' | 'cerebras' | 'xai' | 'perplexity' | 'moonshot' | 'qwen' | 'siliconflow' | 'nvidia' | 'cohere' | 'sambanova' | 'novita' | 'hyperbolic' | 'deepinfra' | 'ai21' | 'minimax' | 'zhipu' | 'modelscope' | 'friendli' | 'replicate' | 'agnes' | 'lmstudio' | 'vllm' | 'litellm' | 'custom';
 export type ThinkingMode = 'off' | 'fast' | 'balanced' | 'deep' | 'adaptive';
 export type CompressionMode = 'off' | 'balanced' | 'ultra';
@@ -151,4 +187,10 @@ export const CHANNELS = {
   compressionTest: 'agent:compression-test',
   workspaceChanged: 'workspace:changed',
   menuCommand: 'menu:command',
+  extensionSearch: 'extension:search',
+  extensionInstalled: 'extension:installed',
+  extensionInstall: 'extension:install',
+  extensionInstallVsix: 'extension:install-vsix',
+  extensionUninstall: 'extension:uninstall',
+  extensionSetEnabled: 'extension:set-enabled',
 } as const;
