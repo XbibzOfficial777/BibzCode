@@ -19,7 +19,7 @@ interface GoogleChunk { candidates?: Array<{ content?: { role?: string; parts?: 
 export class AgentService {
   constructor(private readonly secrets: SecretStore, private readonly getSettings: () => IdeSettings, private readonly tools: ToolExecutor) {}
   private config(): IdeSettings { return this.getSettings(); }
-  private apiKey(): string { return this.secrets.get('ai-api-key') || process.env.BIBZCODE_API_KEY || ''; }
+  private apiKey(): string { try { return this.secrets.get('ai-api-key') || process.env.BIBZCODE_API_KEY || ''; } catch { return process.env.BIBZCODE_API_KEY || ''; } }
   private endpoint(path: string): string { return `${this.config().aiBaseUrl.replace(/\/$/, '')}/${path.replace(/^\//, '')}`; }
   private headers(extra: Record<string, string> = {}): Record<string, string> {
     const config = this.config(); const key = this.apiKey();
@@ -29,22 +29,25 @@ export class AgentService {
     return headers;
   }
   private async responseError(response: Response): Promise<string> {
-    const body = await response.text().catch(() => '');
-    return body.slice(0, 600) || response.statusText || `HTTP ${response.status}`;
+    const body = await response.text().catch(() => ''); const key = this.apiKey();
+    const redacted = key.length > 3 ? body.split(key).join('[REDACTED]') : body;
+    return redacted.slice(0, 600) || response.statusText || `HTTP ${response.status}`;
   }
 
   async testConnection(): Promise<ProviderProbe> {
     const started = Date.now(); const config = this.config();
     try {
-      const url = config.aiProvider === 'google' ? `${this.endpoint('/models')}?key=${encodeURIComponent(this.apiKey())}` : this.endpoint('/models');
-      const response = await fetch(url, { headers: this.headers(), signal: AbortSignal.timeout(12_000) });
+      const url = this.endpoint('/models');
+      const headers = config.aiProvider === 'google' ? { ...this.headers(), 'x-goog-api-key': this.apiKey() } : this.headers();
+      const response = await fetch(url, { headers, signal: AbortSignal.timeout(12_000) });
       return { ok: response.ok, status: response.status, message: response.ok ? 'Provider reachable and credentials accepted.' : await this.responseError(response), latencyMs: Date.now() - started };
     } catch (error) { return { ok: false, status: 0, message: error instanceof Error ? error.message : String(error), latencyMs: Date.now() - started }; }
   }
 
   async listModels(): Promise<string[]> {
-    const config = this.config(); const url = config.aiProvider === 'google' ? `${this.endpoint('/models')}?key=${encodeURIComponent(this.apiKey())}` : this.endpoint('/models');
-    const response = await fetch(url, { headers: this.headers(), signal: AbortSignal.timeout(12_000) });
+    const config = this.config(); const url = this.endpoint('/models');
+    const headers = config.aiProvider === 'google' ? { ...this.headers(), 'x-goog-api-key': this.apiKey() } : this.headers();
+    const response = await fetch(url, { headers, signal: AbortSignal.timeout(12_000) });
     if (!response.ok) throw new Error(`Model discovery failed: ${await this.responseError(response)}`);
     const payload = await response.json() as { data?: Array<{ id?: string; name?: string }>; models?: Array<{ id?: string; name?: string }> };
     return (payload.data ?? payload.models ?? []).map((model) => (model.id ?? model.name ?? '').replace(/^models\//, '')).filter(Boolean).sort();
@@ -95,8 +98,8 @@ export class AgentService {
 
   private async *google(request: AgentCompletionRequest, signal?: AbortSignal): AsyncGenerator<string> {
     const config = this.config(); const prompt = this.compressContext(request.prompt, Math.max(2048, config.compressionContextWindow * 4)).text;
-    const url = `${this.endpoint(`/models/${encodeURIComponent(config.aiModel)}:streamGenerateContent`)}?alt=sse&key=${encodeURIComponent(this.apiKey())}`;
-    const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' }, signal, body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: `${request.systemPrompt || 'You are BibzCode Agent. Be precise and preserve code semantics.'}\n\n${prompt}` }] }], generationConfig: config.thinkingEnabled && config.thinkingMode !== 'off' ? { thinkingConfig: { thinkingBudget: config.thinkingBudget } } : {} }) });
+    const url = `${this.endpoint(`/models/${encodeURIComponent(config.aiModel)}:streamGenerateContent`)}?alt=sse`;
+    const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream', 'x-goog-api-key': this.apiKey() }, signal, body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: `${request.systemPrompt || 'You are BibzCode Agent. Be precise and preserve code semantics.'}\n\n${prompt}` }] }], generationConfig: config.thinkingEnabled && config.thinkingMode !== 'off' ? { thinkingConfig: { thinkingBudget: config.thinkingBudget } } : {} }) });
     if (!response.ok) throw new Error(`Google request failed: ${await this.responseError(response)}`);
     for await (const data of this.sseData(response)) { const chunk = JSON.parse(data) as GoogleChunk; const text = chunk.candidates?.[0]?.content?.parts?.map((part) => part.text ?? '').join('') ?? ''; if (text) yield text; }
   }
@@ -156,8 +159,8 @@ export class AgentService {
     const config = this.config(); const prompt = this.compressContext(request.prompt, Math.max(2048, config.compressionContextWindow * 4)).text;
     const contents: Array<Record<string, unknown>> = [{ role: 'user', parts: [{ text: `${request.systemPrompt || 'You are the BibzCode Agent Manager. Plan, use tools, verify, and report artifacts.'}\\n\\n${prompt}` }] }];
     for (let step = 0; step < 12; step += 1) {
-      const url = `${this.endpoint(`/models/${encodeURIComponent(config.aiModel)}:streamGenerateContent`)}?alt=sse&key=${encodeURIComponent(this.apiKey())}`;
-      const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' }, signal, body: JSON.stringify({ contents, tools: this.googleTools(), toolConfig: { functionCallingConfig: { mode: 'AUTO' } } }) });
+      const url = `${this.endpoint(`/models/${encodeURIComponent(config.aiModel)}:streamGenerateContent`)}?alt=sse`;
+      const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream', 'x-goog-api-key': this.apiKey() }, signal, body: JSON.stringify({ contents, tools: this.googleTools(), toolConfig: { functionCallingConfig: { mode: 'AUTO' } } }) });
       if (!response.ok) throw new Error(`Google agent request failed: ${await this.responseError(response)}`);
       let text = ''; const calls: AgentToolCall[] = [];
       for await (const data of this.sseData(response)) {

@@ -1,5 +1,6 @@
 import { createRequire } from 'node:module';
 import path from 'node:path';
+import { isWithin } from './security.js';
 
 type HostMessage =
   | { type: 'activate'; id: string; installPath: string; entry: string; settings: Record<string, unknown> }
@@ -50,7 +51,8 @@ function installVscodeShim(id: string, settings: Record<string, unknown>): void 
 }
 
 async function activate(message: Extract<HostMessage, { type: 'activate' }>): Promise<void> {
-  const entry = path.resolve(message.installPath, message.entry);
+  const installRoot = path.resolve(message.installPath); const entry = path.resolve(installRoot, message.entry);
+  if (!isWithin(installRoot, entry)) throw new Error('Extension entry path escapes its install directory.');
   send({ type: 'status', id: message.id, state: 'starting', message: `Loading ${message.entry}`, commands: [] });
   try {
     installVscodeShim(message.id, message.settings);
