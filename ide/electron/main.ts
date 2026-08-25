@@ -380,7 +380,7 @@ async function bootstrap(): Promise<void> {
   if (initialWorkspace) processes.setWorkspace(initialWorkspace);
   artifacts = new ArtifactService(workspace, app.getPath('userData'));
   await artifacts.load();
-  extensionHost = new ExtensionHostManager((event) => send(CHANNELS.extensionRuntimeEvent, event), () => ({ theme: settings.get().theme, locale: 'en' }));
+  extensionHost = new ExtensionHostManager((event) => send(CHANNELS.extensionRuntimeEvent, event), () => ({ theme: settings.get().theme, locale: 'en' }), path.join(app.getPath('userData'), 'extensions'));
   for (const installed of await extensions.installedList()) if (installed.enabled && installed.trust === 'trusted' && installed.risk.activationEvents.includes('*')) void extensionHost.start(installed);
   tools = new ToolExecutor(workspace, processes, git, (text, targetChars) => agent.compressContext(text, targetChars), (requestId, operation, relativePath, action, extra) => artifacts.around(requestId, operation, relativePath, action, extra), (requestId, fromPath, toPath, action) => artifacts.aroundRename(requestId, fromPath, toPath, action));
   agent = new AgentService(secrets, () => settings.get(), tools);

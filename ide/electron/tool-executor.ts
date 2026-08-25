@@ -4,7 +4,7 @@ import type { AgentArtifact, ArtifactOperation } from '../shared/contracts.js';
 import { AGENT_TOOL_DEFINITIONS, AGENT_TOOL_MAP } from '../shared/agent-tools.js';
 import { GitService } from './git-service.js';
 import { ProcessManager } from './process-manager.js';
-import { assertRelativePath } from './security.js';
+import { assertRelativePath, isSensitiveRelativePath } from './security.js';
 import { WorkspaceService } from './workspace.js';
 
 const schemas: Record<AgentToolName, z.ZodTypeAny> = {
@@ -43,8 +43,8 @@ export class ToolExecutor {
     let value: unknown;
     switch (name) {
       case 'workspace_list': value = await this.workspace.list(args.path as string); break;
-      case 'workspace_read': value = await this.workspace.read(args.path as string); break;
-      case 'workspace_search': value = await this.workspace.search(args.query as string); break;
+      case 'workspace_read': { const relative = assertRelativePath(args.path as string); if (isSensitiveRelativePath(relative)) throw new Error('Agent access to sensitive credential files is blocked. Open the file manually in the editor if needed.'); value = await this.workspace.read(relative); break; }
+      case 'workspace_search': value = await this.workspace.search(args.query as string, { excludeSensitive: true }); break;
       case 'workspace_write': {
         const action = () => this.workspace.write(args.path as string, args.content as string);
         const artifact = this.captureMutation && requestId ? await this.captureMutation(requestId, 'write', args.path as string, action) : (await action(), undefined);

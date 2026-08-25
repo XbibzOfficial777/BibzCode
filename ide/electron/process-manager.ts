@@ -4,7 +4,7 @@ import { stat } from 'node:fs/promises';
 import type { Readable } from 'node:stream';
 import path from 'node:path';
 import type { ExitEvent, ProcessEvent } from '../shared/contracts.js';
-import { MAX_COMMAND_CHARS, isWithin } from './security.js';
+import { MAX_COMMAND_CHARS, isWithin, safeChildEnvironment } from './security.js';
 
 export type ProcessEmitter = (channel: 'terminal:data' | 'terminal:exit', payload: ProcessEvent | ExitEvent) => void;
 
@@ -65,7 +65,7 @@ export class ProcessManager {
     const { executable, args } = this.shellCommand(trimmed, shellOverride);
     const child = spawn(executable, args, {
       cwd,
-      env: { ...process.env, BIBZCODE_WORKSPACE: workspace, TERM: 'xterm-256color', FORCE_COLOR: '1' },
+      env: safeChildEnvironment({ BIBZCODE_WORKSPACE: workspace, TERM: 'xterm-256color', FORCE_COLOR: '1' }),
       windowsHide: true,
       detached: process.platform !== 'win32',
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -87,7 +87,7 @@ export class ProcessManager {
     if (trimmed.length > MAX_COMMAND_CHARS) throw new Error('Command exceeds 8192 characters');
     const cwd = this.terminalCwd && isWithin(workspace, this.terminalCwd) ? this.terminalCwd : workspace;
     const { executable, args } = this.shellCommand(trimmed, shellOverride);
-    const child = spawn(executable, args, { cwd, env: { ...process.env, BIBZCODE_WORKSPACE: workspace, TERM: 'xterm-256color', FORCE_COLOR: '1' }, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(executable, args, { cwd, env: safeChildEnvironment({ BIBZCODE_WORKSPACE: workspace, TERM: 'xterm-256color', FORCE_COLOR: '1' }), windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
     const limit = 1_000_000; let stdout = ''; let stderr = ''; let timedOut = false;
     child.stdout.on('data', (chunk: Buffer) => { stdout = `${stdout}${chunk.toString()}`.slice(-limit); });
     child.stderr.on('data', (chunk: Buffer) => { stderr = `${stderr}${chunk.toString()}`.slice(-limit); });

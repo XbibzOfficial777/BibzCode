@@ -60,3 +60,11 @@ Good-faith research that stays within accounts and systems you own, minimizes da
 access, avoids disruption, and follows this policy will not be treated as malicious
 by the project. This statement does not authorize testing third-party services,
 accounts, infrastructure, or data and cannot bind third parties.
+
+## IDE secret-handling invariants
+
+The native Electron IDE stores provider keys through Electron `safeStorage` in the per-user data directory. The renderer receives only configured/not-configured status; it never receives the decrypted key. Provider requests must carry credentials in request headers, never in URL query strings. In particular, Google/Gemini requests use `x-goog-api-key`.
+
+Terminal sessions, agent command processes, and the controlled extension host receive an allowlisted runtime environment and do not inherit provider API-key variables from the IDE process. The exception is an explicitly supplied, non-sensitive workspace/runtime variable such as `BIBZCODE_WORKSPACE`.
+
+Every push and pull request runs `scripts/secret_scan.py`. The scanner reports only `path:line:rule` metadata and intentionally omits matched source values from logs. This scanner complements, but does not replace, GitHub secret scanning, CodeQL, dependency audit, and maintainer review. If a real credential is ever exposed, revoke or rotate it immediately and do not paste it into an issue, pull request, log, or test fixture.

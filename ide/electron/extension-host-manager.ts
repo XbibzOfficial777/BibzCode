@@ -1,6 +1,7 @@
 import { fork, type ChildProcess } from 'node:child_process';
 import path from 'node:path';
 import type { ExtensionRuntimeEvent, ExtensionRuntimeStatus, InstalledExtension } from '../shared/contracts.js';
+import { isWithin, safeChildEnvironment } from './security.js';
 
 type HostMessage =
   | { type: 'activate'; id: string; installPath: string; entry: string; settings: Record<string, unknown> }
@@ -16,14 +17,15 @@ export class ExtensionHostManager {
   private process: ChildProcess | null = null;
   private statuses = new Map<string, ExtensionRuntimeStatus>();
   private readonly hostPath: string;
+  private readonly extensionRoot: string;
 
-  constructor(private readonly emit: (event: ExtensionRuntimeEvent) => void, private readonly settings: () => Record<string, unknown>) {
-    this.hostPath = path.join(import.meta.dirname, 'extension-host.cjs');
+  constructor(private readonly emit: (event: ExtensionRuntimeEvent) => void, private readonly settings: () => Record<string, unknown>, extensionRoot: string) {
+    this.hostPath = path.join(import.meta.dirname, 'extension-host.cjs'); this.extensionRoot = path.resolve(extensionRoot);
   }
 
   private ensureProcess(): ChildProcess {
     if (this.process && !this.process.killed) return this.process;
-    const child = fork(this.hostPath, [], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'], detached: false, execArgv: [], env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', BIBZCODE_EXTENSION_HOST: '1' } });
+    const child = fork(this.hostPath, [], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'], detached: false, execArgv: [], env: safeChildEnvironment({ ELECTRON_RUN_AS_NODE: '1', BIBZCODE_EXTENSION_HOST: '1' }) });
     child.on('message', (message: HostEvent) => this.handle(message));
     child.on('exit', (_code, signal) => {
       for (const status of this.statuses.values()) {
@@ -53,10 +55,12 @@ export class ExtensionHostManager {
     if (!extension.enabled) throw new Error('Enable the extension before starting its runtime.');
     if (extension.trust !== 'trusted') throw new Error('Extension is not trusted. Review its risk report and trust it before activation.');
     if (!extension.risk.hasMainEntry || typeof extension.manifest.main !== 'string') throw new Error('This extension has no executable main entry; static contributions do not need a runtime host.');
+    const installPath = path.resolve(extension.installPath); const entry = path.resolve(installPath, extension.manifest.main);
+    if (!isWithin(this.extensionRoot, installPath) || !isWithin(installPath, entry)) throw new Error('Extension entry path escapes the managed extension directory.');
     const starting: ExtensionRuntimeStatus = { id: extension.id, state: 'starting', message: 'Starting guarded extension host…', commands: [] };
     this.statuses.set(extension.id, starting); this.emit({ type: 'status', id: extension.id, status: starting });
     const child = this.ensureProcess();
-    const message: HostMessage = { type: 'activate', id: extension.id, installPath: extension.installPath, entry: extension.manifest.main, settings: this.settings() };
+    const message: HostMessage = { type: 'activate', id: extension.id, installPath, entry: extension.manifest.main, settings: this.settings() };
     child.send(message);
     return starting;
   }
