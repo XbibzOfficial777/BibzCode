@@ -7,6 +7,7 @@ import {
   assertNoSymlinkEscape,
   assertReadableTextFile,
   assertRelativePath,
+  isSensitiveRelativePath,
   assertTextSize,
   resolveWithin,
 } from './security.js';
@@ -103,7 +104,7 @@ export class WorkspaceService {
     await shell.trashItem(target);
   }
 
-  async search(query: string): Promise<SearchMatch[]> {
+  async search(query: string, options: { excludeSensitive?: boolean } = {}): Promise<SearchMatch[]> {
     const root = this.requireRoot();
     const needle = query.trim();
     if (!needle || needle.length > 500) return [];
@@ -117,6 +118,8 @@ export class WorkspaceService {
         if (matches.length >= MAX_SEARCH_RESULTS) break;
         if (entry.isSymbolicLink()) continue;
         const absolute = path.join(directory, entry.name);
+        const relativeEntry = path.relative(root, absolute).split(path.sep).join('/');
+        if (options.excludeSensitive && isSensitiveRelativePath(relativeEntry)) continue;
         if (entry.isDirectory()) {
           if (!SKIP_DIRECTORIES.has(entry.name)) await walk(absolute);
           continue;
@@ -130,7 +133,7 @@ export class WorkspaceService {
           const column = lines[index].toLocaleLowerCase().indexOf(lowered);
           if (column >= 0) {
             matches.push({
-              relativePath: path.relative(root, absolute).split(path.sep).join('/'),
+              relativePath: relativeEntry,
               line: index + 1,
               column: column + 1,
               preview: lines[index].trim().slice(0, 300),

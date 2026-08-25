@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { assertNoSymlinkEscape, assertRelativePath, isWithin, resolveWithin, safeChildEnvironment } from '../electron/security';
+import { assertNoSymlinkEscape, assertRelativePath, isSensitiveRelativePath, isWithin, resolveWithin, safeChildEnvironment } from '../electron/security';
 
 const temporary: string[] = [];
 afterEach(async () => { await Promise.all(temporary.splice(0).map((item) => rm(item, { recursive: true, force: true }))); });
@@ -21,6 +21,14 @@ describe('workspace path boundary', () => {
   it('uses separator-aware containment', () => {
     expect(isWithin('/work/app', '/work/app/src/a.ts')).toBe(true);
     expect(isWithin('/work/app', '/work/application/secret')).toBe(false);
+  });
+
+  it('classifies credential files as sensitive but permits examples', () => {
+    expect(isSensitiveRelativePath('.env')).toBe(true);
+    expect(isSensitiveRelativePath('config/service-account.json')).toBe(true);
+    expect(isSensitiveRelativePath('certs/server.pem')).toBe(true);
+    expect(isSensitiveRelativePath('.env.example')).toBe(false);
+    expect(isSensitiveRelativePath('src/settings.ts')).toBe(false);
   });
 
   it('does not inherit provider secrets into child processes', () => {

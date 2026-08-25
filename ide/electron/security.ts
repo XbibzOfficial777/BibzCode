@@ -13,6 +13,12 @@ export function safeChildEnvironment(extra: Record<string, string> = {}): NodeJS
   return { ...inherited, ...extra };
 }
 
+export function isSensitiveRelativePath(value: string): boolean {
+  const normalized = value.replaceAll('\\', '/').split('/').pop()?.toLowerCase() ?? '';
+  if (normalized === '.env' || (normalized.startsWith('.env.') && !['.env.example', '.env.sample', '.env.template'].includes(normalized))) return true;
+  return /(?:credential|secret|token|password|passwd|private[-_ ]?key|service[-_ ]?account)/i.test(normalized) || /\.(?:pem|key|p12|pfx)$/i.test(normalized);
+}
+
 export function assertRelativePath(value: string): string {
   if (typeof value !== 'string' || !value.trim()) throw new Error('A relative path is required');
   if (value.includes('\0')) throw new Error('NUL bytes are not allowed in paths');
