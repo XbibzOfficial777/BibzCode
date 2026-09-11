@@ -22,6 +22,7 @@ import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlparse
 
 from .net_policy import NetworkPolicyError, validate_url
 
@@ -1312,7 +1313,8 @@ class SeleniumBrowserSession:
         # Step 4: Google email/phone input
         try:
             # Check if we're on Google login page
-            if 'accounts.google.com' in driver.current_url:
+            current_host = (urlparse(driver.current_url).hostname or "").lower()
+            if current_host == 'accounts.google.com':
                 log.append('Step 3: On Google login page')
 
                 # Handle email/identifier input
@@ -2478,7 +2480,14 @@ class SeleniumBrowserSession:
             iframes = driver.find_elements(By.TAG_NAME, 'iframe')
             for iframe in iframes:
                 src = iframe.get_attribute('src') or ''
-                if 'accounts.google.com' in src or 'google.com/signin' in src:
+                parsed_src = urlparse(src)
+                host = (parsed_src.hostname or '').lower()
+                path = parsed_src.path or ''
+                is_google_signin = (
+                    host == 'accounts.google.com'
+                    or ((host == 'google.com' or host.endswith('.google.com')) and path.startswith('/signin'))
+                )
+                if is_google_signin:
                     log.append(f'Found Google login iframe: {src[:80]}')
                     driver.switch_to.frame(iframe)
                     time.sleep(1)

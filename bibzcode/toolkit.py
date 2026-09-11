@@ -1928,17 +1928,37 @@ class ToolRegistry:
         except Exception:
             pass
 
-        # Fallback: regex-based HTML stripping (no bs4 needed)
+        # Fallback: parser-based HTML to text (no bs4 needed)
         import re
-        # Remove scripts, styles
-        text = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL | re.IGNORECASE)
-        text = re.sub(r'<style[^>]*>.*?</style>', '', html, flags=re.DOTALL | re.IGNORECASE)
-        text = re.sub(r'<noscript[^>]*>.*?</noscript>', '', html, flags=re.DOTALL | re.IGNORECASE)
-        # Remove HTML tags
-        text = re.sub(r'<[^>]+>', ' ', text)
-        # Decode common HTML entities
-        text = text.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
-        text = text.replace('&quot;', '"').replace('&#39;', "'").replace('&nbsp;', ' ')
+        from html import unescape
+        from html.parser import HTMLParser
+
+        class _TextExtractor(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self._skip_depth = 0
+                self._parts = []
+
+            def handle_starttag(self, tag, attrs):
+                if tag and tag.lower() in {'script', 'style', 'noscript'}:
+                    self._skip_depth += 1
+
+            def handle_endtag(self, tag):
+                if tag and tag.lower() in {'script', 'style', 'noscript'} and self._skip_depth > 0:
+                    self._skip_depth -= 1
+
+            def handle_data(self, data):
+                if self._skip_depth == 0 and data:
+                    self._parts.append(data)
+
+            def get_text(self):
+                return '\n'.join(self._parts)
+
+        parser = _TextExtractor()
+        parser.feed(html)
+        parser.close()
+        text = unescape(parser.get_text())
+
         # Clean whitespace
         text = re.sub(r'[ \t]+', ' ', text)
         text = re.sub(r'\n{3,}', '\n\n', text)
