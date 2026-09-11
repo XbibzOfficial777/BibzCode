@@ -2480,7 +2480,14 @@ class SeleniumBrowserSession:
             iframes = driver.find_elements(By.TAG_NAME, 'iframe')
             for iframe in iframes:
                 src = iframe.get_attribute('src') or ''
-                if 'accounts.google.com' in src or 'google.com/signin' in src:
+                parsed_src = urlparse(src)
+                host = (parsed_src.hostname or '').lower()
+                path = parsed_src.path or ''
+                is_google_signin = (
+                    host == 'accounts.google.com'
+                    or ((host == 'google.com' or host.endswith('.google.com')) and path.startswith('/signin'))
+                )
+                if is_google_signin:
                     log.append(f'Found Google login iframe: {src[:80]}')
                     driver.switch_to.frame(iframe)
                     time.sleep(1)
